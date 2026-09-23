@@ -90,7 +90,7 @@ header "步骤 1/8 · 安装系统依赖"
 
 if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
   apt-get update -y -qq
-  apt-get install -y -qq curl wget git python3 unzip tar openssl sqlite3 \
+  apt-get install -y -qq curl wget git python3 python3-argon2 unzip tar openssl sqlite3 \
     iptables ca-certificates gnupg lsb-release apt-transport-https
 else
   yum install -y curl wget git python3 unzip tar openssl sqlite iptables ca-certificates 2>/dev/null || \
@@ -344,14 +344,25 @@ try:
     h = hashlib.sha256((salt + "${ADMIN_PASS}").encode("utf-8")).hexdigest()
     pwd_hash = f"{salt}:{h}"
     db.execute("UPDATE proxy_user SET password_hash=? WHERE username='admin'", (pwd_hash,))
+
+    # 同步设置 monitor-hub 的管理员应急密码哈希 (Argon2)
+    try:
+        from argon2 import PasswordHasher
+        ph = PasswordHasher()
+        argon_h = ph.hash("${ADMIN_PASS}")
+        db.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('admin_password_hash', ?)", (argon_h,))
+    except Exception as err:
+        print(f"  [!] Argon2 哈希设置跳过: {err}")
+
     db.commit()
-    print("  [+] 管理员密码已设置成功")
+    print("  [+] 管理员密码已设置成功（统一密码即刻生效）")
 except Exception as e:
     print(f"  [!] 管理员密码设置提示: {e}")
 finally:
     db.close()
 PYEOF
   systemctl restart proxy-manager
+  systemctl restart monitor-hub
   sleep 1
 else
   warn "数据库尚未就绪，请稍后在 /admin 手动设置密码"
