@@ -281,19 +281,42 @@ systemctl restart monitor-hub.service
 sleep 2
 info "monitor-hub 已启动（端口 $HUB_PORT）"
 
-# ---- 步骤 4: 下载 proxy_manager.py 和前端资源 ----
+# ---- 步骤 4: 下载 ProxyProbe 代理管理程序和前端 ----
 header "步骤 4/8 · 下载 ProxyProbe 代理管理程序和前端"
 
-# proxy_manager.py（核心代理管理后端）
-info "正在下载 proxy_manager.py..."
-_TMP_PM="/tmp/proxy_manager-$$.py"
-if curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$_TMP_PM" 2>/dev/null || \
-   wget -qO "$_TMP_PM" "${GITHUB_RAW}/proxy_manager.py" 2>/dev/null || \
-   python3 -c "import urllib.request; urllib.request.urlretrieve('${GITHUB_RAW}/proxy_manager.py', '$_TMP_PM')" 2>/dev/null; then
-  mv -f "$_TMP_PM" "$ROOT/proxy_manager.py"
+# 尝试优先下载编译好的二进制发行版 proxy-manager
+_PM_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/${_LATEST_TAG}/proxy-manager-linux-${ARCH_HUB}"
+_TMP_BIN="/tmp/proxy-manager-$$"
+HAS_BINARY=0
+if [ -n "$_LATEST_TAG" ] && (curl -fsSL "$_PM_BIN_URL" -o "$_TMP_BIN" 2>/dev/null || wget -qO "$_TMP_BIN" "$_PM_BIN_URL" 2>/dev/null); then
+  chmod +x "$_TMP_BIN"
+  mv -f "$_TMP_BIN" "$ROOT/proxy-manager"
+  HAS_BINARY=1
+  info "已下载编译好的二进制管理程序 proxy-manager"
 else
-  rm -f "$_TMP_PM"
-  die "下载 proxy_manager.py 失败，请检查网络"
+  rm -f "$_TMP_BIN"
+fi
+
+# 如果没有二进制发行包，下载 Python 脚本作为兼容运行模式
+if [ "$HAS_BINARY" = "0" ]; then
+  info "正在下载 proxy_manager.py..."
+  _TMP_PM="/tmp/proxy_manager-$$.py"
+  if curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$_TMP_PM" 2>/dev/null || \
+     wget -qO "$_TMP_PM" "${GITHUB_RAW}/proxy_manager.py" 2>/dev/null || \
+     python3 -c "import urllib.request; urllib.request.urlretrieve('${GITHUB_RAW}/proxy_manager.py', '$_TMP_PM')" 2>/dev/null; then
+    mv -f "$_TMP_PM" "$ROOT/proxy_manager.py"
+  else
+    rm -f "$_TMP_PM"
+    die "下载 proxy_manager.py 失败，请检查网络"
+  fi
+
+  # license_guard.py（商业许可证双轨鉴权核心）
+  _TMP_LG="/tmp/license_guard-$$.py"
+  if curl -fsSL "${GITHUB_RAW}/license_guard.py" -o "$_TMP_LG" 2>/dev/null || \
+     wget -qO "$_TMP_LG" "${GITHUB_RAW}/license_guard.py" 2>/dev/null || \
+     python3 -c "import urllib.request; urllib.request.urlretrieve('${GITHUB_RAW}/license_guard.py', '$_TMP_LG')" 2>/dev/null; then
+    mv -f "$_TMP_LG" "$ROOT/license_guard.py"
+  fi
 fi
 
 # install.sh（子节点安装脚本，供 Caddy 对外分发）
@@ -348,6 +371,14 @@ systemctl disable proxy-manager.service 2>/dev/null || true
 rm -f /etc/systemd/system/multi-user.target.wants/proxy-manager.service
 rm -f /etc/systemd/system/proxy-manager.service
 
+if [ -f "$ROOT/proxy-manager" ] && [ -x "$ROOT/proxy-manager" ]; then
+  PM_CMD="$ROOT/proxy-manager --port $PM_PORT"
+  info "使用编译好的二进制程序运行 proxy-manager"
+else
+  PM_CMD="/usr/bin/python3 $ROOT/proxy_manager.py --port $PM_PORT"
+  info "使用 Python 脚本运行 proxy-manager"
+fi
+
 cat > /etc/systemd/system/proxy-manager.service << PM_EOF
 [Unit]
 Description=ProxyProbe Proxy Manager
@@ -356,7 +387,7 @@ After=network.target monitor-hub.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python3 /opt/monitor/proxy_manager.py --port $PM_PORT
+ExecStart=$PM_CMD
 Restart=always
 RestartSec=3
 

@@ -94,7 +94,7 @@ view_status() {
 
     _check_service "caddy" "Caddy 网关服务      "
     _check_service "monitor-hub" "探针主控服务 (Rust) "
-    _check_service "proxy-manager" "代理中枢服务 (Python)"
+    _check_service "proxy-manager" "代理中枢服务 (ProxyManager)"
 
     echo ""
     echo -e "${BOLD}═══════════════════ 网络与访问信息 ═════════════════${N}"
@@ -343,10 +343,31 @@ upgrade_system() {
     echo -e "${BOLD}─── 一键检查并无损升级 ProxyProbe ───${N}"
     info "正在拉取最新代码与静态前端..."
 
-    # 1. 更新 proxy_manager.py
-    curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py.new" && \
-        mv -f "$ROOT/proxy_manager.py.new" "$ROOT/proxy_manager.py" && \
-        info "proxy_manager.py 已更新" || warn "proxy_manager.py 下载跳过"
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64|amd64)   ARCH_HUB="amd64" ;;
+        aarch64|arm64)  ARCH_HUB="arm64" ;;
+        *) ARCH_HUB="amd64" ;;
+    esac
+    _LATEST_TAG=$(curl -sSL "$GITHUB_API" 2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4 || echo "")
+
+    # 1. 优先尝试升级 proxy-manager 二进制
+    if [ -n "$_LATEST_TAG" ]; then
+        if curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${_LATEST_TAG}/proxy-manager-linux-${ARCH_HUB}" -o "$ROOT/proxy-manager.new" 2>/dev/null; then
+            chmod +x "$ROOT/proxy-manager.new"
+            mv -f "$ROOT/proxy-manager.new" "$ROOT/proxy-manager"
+            info "proxy-manager 二进制已更新"
+        fi
+    fi
+
+    # 若未采用二进制，则拉取 Python 脚本与许可证鉴权模块
+    if [ ! -f "$ROOT/proxy-manager" ]; then
+        curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py.new" && \
+            mv -f "$ROOT/proxy_manager.py.new" "$ROOT/proxy_manager.py" && \
+            info "proxy_manager.py 已更新" || warn "proxy_manager.py 下载跳过"
+        curl -fsSL "${GITHUB_RAW}/license_guard.py" -o "$ROOT/license_guard.py.new" 2>/dev/null && \
+            mv -f "$ROOT/license_guard.py.new" "$ROOT/license_guard.py" || true
+    fi
 
     # 2. 更新 install.sh
     curl -fsSL "${GITHUB_RAW}/scripts/install.sh" -o "$SCRIPTS_DIR/install.sh.new" 2>/dev/null && \
@@ -359,13 +380,6 @@ upgrade_system() {
         chmod +x "/usr/local/bin/hhub" || true
 
     # 4. 更新前端 dist
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64|amd64)   ARCH_HUB="amd64" ;;
-        aarch64|arm64)  ARCH_HUB="arm64" ;;
-        *) ARCH_HUB="amd64" ;;
-    esac
-
     _TMP_REPO="/tmp/proxyprobe_upgrade_$$"
     rm -rf "$_TMP_REPO"
     if git clone --depth 1 --filter=blob:none --sparse "https://github.com/${GITHUB_REPO}.git" "$_TMP_REPO" 2>/dev/null; then
@@ -381,7 +395,6 @@ upgrade_system() {
     fi
 
     # 5. 检查 monitor-hub 二进制升级
-    _LATEST_TAG=$(curl -sSL "$GITHUB_API" 2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4 || echo "")
     if [ -n "$_LATEST_TAG" ]; then
         info "正在更新 monitor-hub 二进制 (${_LATEST_TAG})..."
         curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${_LATEST_TAG}/monitor-hub-linux-${ARCH_HUB}" -o "$ROOT/monitor-hub.new" 2>/dev/null && {

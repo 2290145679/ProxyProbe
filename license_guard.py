@@ -1,0 +1,443 @@
+"""
+ProxyProbe 商业许可证双轨混合系统 (License Guard)
+Copyright (c) 2026 ProxyProbe Contributors
+"""
+
+import os
+import sys
+import json
+import time
+import base64
+import hashlib
+import uuid
+import sqlite3
+import threading
+import urllib.request
+import urllib.error
+
+# 内置公钥 (Ed25519 32-byte raw hex)
+MASTER_PUBLIC_KEY_HEX = "6637fdfd836e83fd31aa7c02698ab615d882bdb7533aaf2f83359480a1a5a4c3"
+DEFAULT_AUTH_SERVER = "http://156.226.173.102:18888"
+
+# 尝试加载 cryptography 库，若无则使用纯 Python Ed25519 校验器
+try:
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    _HAS_CRYPTOGRAPHY = True
+except ImportError:
+    _HAS_CRYPTOGRAPHY = False
+
+
+# =============================================================================
+# 纯 Python RFC 8032 Ed25519 验签器 (零外部依赖保底)
+# =============================================================================
+_q = 2**255 - 19
+_l = 2**252 + 27742317777372353535851937790883648493
+
+def _inv(x):
+    return pow(x, _q - 2, _q)
+
+_d = -121665 * _inv(121666) % _q
+_I = pow(2, (_q - 1) // 4, _q)
+
+def _xrecover(y):
+    xx = (y * y - 1) * _inv(_d * y * y + 1)
+    x = pow(xx, (_q + 3) // 8, _q)
+    if (x * x - xx) % _q != 0:
+        x = (x * _I) % _q
+    if x % 2 != 0:
+        x = _q - x
+    return x
+
+_By = 4 * _inv(5) % _q
+_Bx = _xrecover(_By)
+_B = [_Bx % _q, _By % _q]
+
+def _edwards(P, Q):
+    x1, y1 = P[0], P[1]
+    x2, y2 = Q[0], Q[1]
+    denom_x = (1 + _d * x1 * x2 * y1 * y2) % _q
+    denom_y = (1 - _d * x1 * x2 * y1 * y2) % _q
+    x3 = (x1 * y2 + x2 * y1) * _inv(denom_x) % _q
+    y3 = (y1 * y2 + x1 * x2) * _inv(denom_y) % _q
+    return [x3, y3]
+
+def _scalarmult(P, e):
+    if e == 0:
+        return [0, 1]
+    Q = _scalarmult(P, e // 2)
+    Q = _edwards(Q, Q)
+    if e & 1:
+        Q = _edwards(Q, P)
+    return Q
+
+def _decodepoint(s):
+    clamp = int.from_bytes(s, "little")
+    y = clamp & ((1 << 255) - 1)
+    x = _xrecover(y)
+    if bool(x & 1) != bool((s[31] >> 7) & 1):
+        x = _q - x
+    return [x, y]
+
+def _pure_python_verify(pubkey_bytes: bytes, sig_bytes: bytes, msg_bytes: bytes) -> bool:
+    """纯 Python RFC 8032 签名验证"""
+    if len(sig_bytes) != 64 or len(pubkey_bytes) != 32:
+        return False
+    try:
+        Rraw = sig_bytes[:32]
+        S = int.from_bytes(sig_bytes[32:], "little")
+        if S >= _l:
+            return False
+        R = _decodepoint(Rraw)
+        A = _decodepoint(pubkey_bytes)
+        h = hashlib.sha512(Rraw + pubkey_bytes + msg_bytes).digest()
+        k = int.from_bytes(h, "little")
+        v1 = _scalarmult(_B, S)
+        v2 = _edwards(R, _scalarmult(A, k))
+        return v1 == v2
+    except Exception:
+        return False
+
+
+def verify_ed25519_signature(pubkey_bytes: bytes, sig_bytes: bytes, data_bytes: bytes) -> bool:
+    """统一 Ed25519 验签入口"""
+    if _HAS_CRYPTOGRAPHY:
+        try:
+            pub = ed25519.Ed25519PublicKey.from_public_bytes(pubkey_bytes)
+            pub.verify(sig_bytes, data_bytes)
+            return True
+        except Exception:
+            return False
+    else:
+        return _pure_python_verify(pubkey_bytes, sig_bytes, data_bytes)
+
+
+# =============================================================================
+# 机器指纹生成 (Machine ID)
+# =============================================================================
+def get_machine_id() -> str:
+    """
+    生成稳定的 Linux/系统硬件指纹，形如 PP-8A3F-9B12-4C67
+    """
+    raw_pieces = []
+    
+    # 1. Linux machine-id
+    for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"]:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        raw_pieces.append(f"mid:{content}")
+                        break
+            except Exception:
+                pass
+
+    # 2. DMI UUID
+    for dmi in ["/sys/class/dmi/id/product_uuid", "/sys/devices/virtual/dmi/id/product_uuid"]:
+        if os.path.exists(dmi):
+            try:
+                with open(dmi, "r", encoding="utf-8") as f:
+                    u = f.read().strip()
+                    if u:
+                        raw_pieces.append(f"dmi:{u}")
+                        break
+            except Exception:
+                pass
+
+    # 3. 网卡 MAC 地址
+    try:
+        node = uuid.getnode()
+        raw_pieces.append(f"mac:{node:012x}")
+    except Exception:
+        pass
+
+    # 4. Windows 兼容降级
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography")
+            guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+            raw_pieces.append(f"wguid:{guid}")
+        except Exception:
+            pass
+
+    if not raw_pieces:
+        raw_pieces.append("default-fallback-id")
+
+    combined = "|".join(raw_pieces)
+    digest = hashlib.sha256(f"PP-SALT-MACHINE-2026:{combined}".encode("utf-8")).hexdigest().upper()
+    
+    # 格式化为 PP-XXXX-XXXX-XXXX
+    return f"PP-{digest[0:4]}-{digest[4:8]}-{digest[8:12]}"
+
+
+# =============================================================================
+# 许可证解析与验签
+# =============================================================================
+def parse_and_verify_license(license_key: str, public_key_hex: str = MASTER_PUBLIC_KEY_HEX) -> dict:
+    """
+    解析并验证许可证字符串
+    格式: PPLIC-<base64_payload>.<base64_signature>
+    返回 (payload_dict, error_msg)
+    """
+    if not license_key or not isinstance(license_key, str):
+        return None, "许可证为空"
+
+    license_key = license_key.strip()
+    if not license_key.startswith("PPLIC-"):
+        return None, "许可证格式错误（必须以 PPLIC- 开头）"
+
+    content = license_key[6:]
+    parts = content.split(".")
+    if len(parts) != 2:
+        return None, "许可证数据结构损坏"
+
+    payload_b64, sig_b64 = parts[0], parts[1]
+
+    try:
+        # 兼容 URL-safe base64 与标准 base64
+        payload_bytes = base64.urlsafe_b64decode(payload_b64 + "==")
+        sig_bytes = base64.urlsafe_b64decode(sig_b64 + "==")
+    except Exception:
+        return None, "许可证 Base64 解码失败"
+
+    if len(sig_bytes) != 64:
+        return None, f"数字签名长度非法 ({len(sig_bytes)} != 64)"
+
+    pubkey_bytes = bytes.fromhex(public_key_hex)
+    is_valid = verify_ed25519_signature(pubkey_bytes, sig_bytes, payload_bytes)
+    if not is_valid:
+        return None, "数字签名校验失败（许可证已被篡改或非官方签发）"
+
+    try:
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except Exception:
+        return None, "许可证载荷 JSON 解析失败"
+
+    # 校验机器码
+    curr_mid = get_machine_id()
+    lic_mid = payload.get("machine_id", "").strip().upper()
+    if lic_mid != "ANY" and lic_mid != curr_mid:
+        return None, f"机器码不匹配（该许可证绑定: {lic_mid}，本机机器码: {curr_mid}）"
+
+    # 校验过期时间
+    expire_at = payload.get("expire_at", 0)
+    now = int(time.time())
+    if expire_at and expire_at > 0:
+        if now > expire_at:
+            exp_date = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(expire_at))
+            return None, f"许可证已过期（到期时间: {exp_date}）"
+
+    return payload, ""
+
+
+# =============================================================================
+# 数据库存储与时钟水印防篡改
+# =============================================================================
+def init_license_tables(db_conn):
+    """确保 setting 表和 license_log 表存在"""
+    db_conn.execute("CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT)")
+    db_conn.execute("""
+    CREATE TABLE IF NOT EXISTS license_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER,
+        action TEXT,
+        status TEXT,
+        detail TEXT
+    )
+    """)
+    db_conn.commit()
+
+
+def check_and_update_watermark(db_conn) -> bool:
+    """
+    时钟水印防倒流防作弊检查
+    若检测到当前时间比数据库记录的最新运行时间回退超过 300 秒，判定系统时间被篡改。
+    """
+    now = int(time.time())
+    cur = db_conn.cursor()
+    cur.execute("SELECT value FROM setting WHERE key='license_watermark_ts'")
+    row = cur.fetchone()
+    last_ts = int(row[0]) if row and row[0] and row[0].isdigit() else 0
+
+    if last_ts > 0 and now < (last_ts - 300):
+        # 异常时间倒流
+        return False
+
+    # 推进水印
+    new_ts = max(now, last_ts)
+    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_watermark_ts', ?)", (str(new_ts),))
+    db_conn.commit()
+    return True
+
+
+def get_current_license_status(db_conn) -> dict:
+    """
+    综合评估当前许可证状态（供 API 与路由守卫调用）
+    """
+    init_license_tables(db_conn)
+    mid = get_machine_id()
+
+    # 1. 时钟防作弊校验
+    if not check_and_update_watermark(db_conn):
+        return {
+            "active": False,
+            "type": "tampered",
+            "message": "检测到系统时间被异常倒拨，安全防护已锁定！请恢复标准网络时间。",
+            "machine_id": mid,
+            "days_left": 0
+        }
+
+    # 2. 读取存储的 License
+    cur = db_conn.cursor()
+    cur.execute("SELECT value FROM setting WHERE key='license_key'")
+    row = cur.fetchone()
+    lic_key = row[0].strip() if row and row[0] else ""
+
+    if not lic_key:
+        return {
+            "active": False,
+            "type": "free",
+            "message": "未激活商业许可证（当前仅限探针监控功能，创建节点需激活）",
+            "machine_id": mid,
+            "days_left": 0
+        }
+
+    # 3. 检查是否已被在线吊销
+    cur.execute("SELECT value FROM setting WHERE key='license_revoked'")
+    rev_row = cur.fetchone()
+    if rev_row and rev_row[0] == "1":
+        return {
+            "active": False,
+            "type": "revoked",
+            "message": "此许可证已被中心授权服务器吊销或冻结！",
+            "machine_id": mid,
+            "days_left": 0
+        }
+
+    # 4. 离线公钥验签
+    payload, err = parse_and_verify_license(lic_key)
+    if err:
+        return {
+            "active": False,
+            "type": "invalid",
+            "message": err,
+            "machine_id": mid,
+            "days_left": 0
+        }
+
+    # 5. 计算剩余天数
+    expire_at = payload.get("expire_at", 0)
+    now = int(time.time())
+    if expire_at and expire_at > 0:
+        days_left = max(0, int((expire_at - now) / 86400))
+        expire_date = time.strftime("%Y-%m-%d", time.localtime(expire_at))
+    else:
+        days_left = 99999
+        expire_date = "永久买断 (Lifetime)"
+
+    # 读取上次在线打卡时间
+    cur.execute("SELECT value FROM setting WHERE key='license_last_sync_ts'")
+    sync_row = cur.fetchone()
+    last_sync = int(sync_row[0]) if sync_row and sync_row[0] and sync_row[0].isdigit() else 0
+
+    return {
+        "active": True,
+        "type": payload.get("type", "pro"),
+        "plan_name": "商业专业版" if payload.get("type") == "pro" else ("企业旗舰版" if payload.get("type") == "enterprise" else "商业授权版"),
+        "customer": payload.get("customer", "VIP客户"),
+        "license_id": payload.get("id", ""),
+        "max_nodes": payload.get("max_nodes", 0),
+        "expire_at": expire_at,
+        "expire_date": expire_date,
+        "days_left": days_left,
+        "machine_id": mid,
+        "last_sync": last_sync,
+        "message": "许可证有效，商业功能已全部解锁"
+    }
+
+
+def save_license_key(db_conn, license_key: str) -> tuple:
+    """
+    保存并激活许可证
+    返回 (success: bool, msg: str, status_dict)
+    """
+    init_license_tables(db_conn)
+    payload, err = parse_and_verify_license(license_key)
+    if err:
+        return False, err, None
+
+    # 保存许可证
+    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_key', ?)", (license_key.strip(),))
+    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
+    now = int(time.time())
+    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
+    db_conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'activate', 'success', ?)",
+                    (now, f"License ID: {payload.get('id')} Customer: {payload.get('customer')}"))
+    db_conn.commit()
+
+    status = get_current_license_status(db_conn)
+    return True, "许可证激活成功！", status
+
+
+# =============================================================================
+# 在线心跳巡检与 7 天宽限期 (Dual-Track Online Sync)
+# =============================================================================
+def ping_auth_server(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER):
+    """单次在线心跳打卡与黑名单同步"""
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM setting WHERE key='license_key'")
+        row = cur.fetchone()
+        lic_key = row[0].strip() if row and row[0] else ""
+        if not lic_key:
+            conn.close()
+            return
+
+        mid = get_machine_id()
+        req_data = json.dumps({
+            "license_key": lic_key,
+            "machine_id": mid,
+            "version": "1.0.0",
+            "timestamp": int(time.time())
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            f"{auth_url}/api/v1/license/ping",
+            data=req_data,
+            headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/1.0"}
+        )
+
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            status = body.get("status", "ok")
+            now = int(time.time())
+            if status == "revoked":
+                conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '1')")
+                conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'heartbeat', 'revoked', '远程吊销')", (now,))
+            else:
+                conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
+                conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        # 心跳失败时静默容灾（不锁死用户，容纳 7 天断网宽限期）
+        pass
+
+
+def start_heartbeat_thread(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER):
+    """启动后台守护心跳线程 (每 12 小时检查一次)"""
+    def _worker():
+        # 启动后延时 30 秒首次打卡
+        time.sleep(30)
+        while True:
+            try:
+                ping_auth_server(db_path, auth_url)
+            except Exception:
+                pass
+            time.sleep(12 * 3600)
+
+    t = threading.Thread(target=_worker, daemon=True, name="license_heartbeat")
+    t.start()
+    return t

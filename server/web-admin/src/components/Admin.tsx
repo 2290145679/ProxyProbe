@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { Bell, CalendarClock, ChevronRight, Copy, Database, Download, Globe, GripVertical, Palette, Pencil, Plus, Radio, RefreshCw, Search, Send, Server, Settings, Shield, Trash2, Upload, Users } from "lucide-react"
+import { Bell, CalendarClock, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Palette, Pencil, Plus, Radio, RefreshCw, Search, Send, Server, Settings, Shield, Trash2, Upload, Users } from "lucide-react"
 import { toast } from "sonner"
 
 import { ProxyNodes } from "./ProxyNodes"
 import { ProxyUsers } from "./ProxyUsers"
+import { LicenseManager } from "./LicenseManager"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -2269,6 +2270,7 @@ const ADMIN_SECTIONS = [
   { path: "/admin/nodes", label: "节点", icon: Server },
   { path: "/admin/proxy", label: "代理协议", icon: Globe },
   { path: "/admin/users", label: "用户管理", icon: Users },
+  { path: "/admin/license", label: "商业授权", icon: KeyRound },
   { path: "/admin/ping", label: "延迟", icon: Radio },
   { path: "/admin/notify", label: "通知", icon: Bell },
   { path: "/admin/data", label: "数据", icon: Database },
@@ -2318,6 +2320,8 @@ export function Admin({
           <ProxyNodes nodes={nodes} />
         ) : path === "/admin/users" ? (
           <ProxyUsers />
+        ) : path === "/admin/license" ? (
+          <LicenseManager />
         ) : path === "/admin/ping" ? (
           <Ping nodes={nodes} />
         ) : path === "/admin/notify" ? (

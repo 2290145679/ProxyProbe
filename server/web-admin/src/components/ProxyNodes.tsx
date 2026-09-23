@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { 
   GitFork, Layers, Plus, RefreshCw, Copy, Check, Trash2, 
-  QrCode, Box, Activity, Download, AlertCircle, ArrowRightLeft
+  QrCode, Box, Activity, Download, AlertCircle, ArrowRightLeft, AlertTriangle
 } from "lucide-react"
 import { toast } from "sonner"
 import QRCode from "qrcode"
@@ -122,6 +122,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [qrDataUrl, setQrDataUrl] = useState<string>("")
 
   // Create Modal State
+  const [licenseStatus, setLicenseStatus] = useState<any>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [form, setForm] = useState({
@@ -209,6 +210,15 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           setServers(sData.servers)
         }
       }
+
+      // Fetch license status
+      try {
+        const licRes = await fetch("/api/proxy/license/status")
+        if (licRes.ok) {
+          const licData = await licRes.json()
+          setLicenseStatus(licData)
+        }
+      } catch {}
     } catch (e: any) {
       toast.error(e.message || "加载代理节点失败")
     } finally {
@@ -311,6 +321,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     : (isSingboxProto ? Boolean(currentSelectedServer?.singbox_installed) : Boolean(currentSelectedServer?.xray_installed))
 
   const openCreateDialog = () => {
+    if (licenseStatus && !licenseStatus.active) {
+      toast.error(licenseStatus.message || "当前未激活商业许可证！仅能使用探针功能，请先前往左侧【商业授权】菜单激活。")
+      return
+    }
+
     setIpType("ipv4")
     const defaultServer = serverOptions.length > 0 ? serverOptions[0] : null
     const sId = defaultServer ? String(defaultServer.id) : "0"
@@ -736,6 +751,19 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
       {/* Bottom Card: 已配置的代理节点 */}
       <Card className="rounded-xl border bg-card shadow-sm overflow-hidden">
+        {licenseStatus && !licenseStatus.active && (
+          <div className="bg-amber-500/10 border-b border-amber-500/20 px-5 py-3 text-xs text-amber-800 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="size-4 text-amber-500 shrink-0" />
+              <span>
+                <strong>商业功能受限：</strong>当前未激活商业许可证（仅限探针监控）。创建代理节点与多用户订阅需激活商业授权。
+              </span>
+            </div>
+            <span className="font-semibold text-amber-600 dark:text-amber-400 shrink-0">
+              请前往左侧【商业授权】菜单激活
+            </span>
+          </div>
+        )}
         <div className="p-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b bg-card">
           <div>
             <h3 className="font-semibold text-base">已配置的代理节点</h3>

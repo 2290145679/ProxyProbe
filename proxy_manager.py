@@ -12,6 +12,7 @@ import uuid
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlparse
+import license_guard
 
 DB_PATH = "/opt/monitor/data/monitor.db"
 XRAY_BIN = "/usr/local/bin/xray"
@@ -2472,6 +2473,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_text(PROXY_AGENT_PY, 200, "text/x-python; charset=utf-8")
             return
 
+        # License status API
+        if path == "/api/proxy/license/status":
+            conn = get_db()
+            lic_status = license_guard.get_current_license_status(conn)
+            conn.close()
+            self.send_json(lic_status)
+            return
+
         # 1. Client subscription endpoint (Authenticated via token)
         if path == "/api/proxy/sub":
             token = qs.get("token", [""])[0]
@@ -3142,6 +3151,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "sub_token": new_token, "sub_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={new_token}"})
             return
 
+        # License activation API (允许已登录管理员，或本机 127.0.0.1 终端激活)
+        if path == "/api/proxy/license/activate":
+            if not check_auth(self.headers) and self.client_address[0] not in ("127.0.0.1", "::1"):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            lic_key = req.get("license_key", "").strip()
+            conn = get_db()
+            ok, msg, lic_status = license_guard.save_license_key(conn, lic_key)
+            conn.close()
+            if ok:
+                self.send_json({"ok": True, "message": msg, "status": lic_status})
+            else:
+                self.send_json({"ok": False, "message": msg}, 400)
+            return
+
         # 2. Admin required for all other POST endpoints
         if not check_auth(self.headers):
             self.send_json({"error": "Unauthorized"}, 401)
@@ -3297,6 +3321,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/proxy/nodes":
+            # 商业许可证有效性鉴权拦截
+            conn_lic = get_db()
+            lic_status = license_guard.get_current_license_status(conn_lic)
+            conn_lic.close()
+            if not lic_status.get("active"):
+                self.send_json({
+                    "ok": False,
+                    "error": "license_required",
+                    "message": lic_status.get("message", "创建代理节点功能需要商业许可证激活"),
+                    "machine_id": lic_status.get("machine_id")
+                }, 403)
+                return
+
             server_id = int(req.get("server_id", 0))
             server_name = req.get("server_name", "本机")
             server_host = req.get("server_host", "189.24.108.25")
@@ -3440,6 +3477,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         elif path.startswith("/api/proxy/nodes/") and path.endswith("/toggle"):
+            # 商业许可证有效性鉴权拦截
+            conn_lic = get_db()
+            lic_status = license_guard.get_current_license_status(conn_lic)
+            conn_lic.close()
+            if not lic_status.get("active"):
+                self.send_json({
+                    "ok": False,
+                    "error": "license_required",
+                    "message": lic_status.get("message", "管理代理节点功能需要商业许可证激活"),
+                    "machine_id": lic_status.get("machine_id")
+                }, 403)
+                return
+
             try:
                 node_id = int(path.split("/")[-2])
             except ValueError:
@@ -3486,6 +3536,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
         path = parsed.path
         m = re.match(r"^/api/proxy/nodes/(\d+)$", path)
         if m:
+            # 商业许可证有效性鉴权拦截
+            conn_lic = get_db()
+            lic_status = license_guard.get_current_license_status(conn_lic)
+            conn_lic.close()
+            if not lic_status.get("active"):
+                self.send_json({
+                    "ok": False,
+                    "error": "license_required",
+                    "message": lic_status.get("message", "管理代理节点功能需要商业许可证激活"),
+                    "machine_id": lic_status.get("machine_id")
+                }, 403)
+                return
+
             node_id = int(m.group(1))
             conn = get_db()
             with conn:
@@ -3517,6 +3580,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     init_db()
+    license_guard.start_heartbeat_thread(DB_PATH, "http://156.226.173.102:18888")
     t = threading.Thread(target=traffic_collector_loop, daemon=True)
     t.start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), ProxyHandler)
