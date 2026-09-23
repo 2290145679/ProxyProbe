@@ -205,6 +205,10 @@ info "Caddy 已就绪: $(caddy version 2>/dev/null || /usr/local/bin/caddy versi
 # ---- 步骤 3: 下载 ProxyProbe monitor-hub ----
 header "步骤 3/8 · 安装 ProxyProbe 探针主控 (monitor-hub)"
 
+# 若服务器此前运行过旧服务或中途中断，先停止运行，防止 Linux 内核锁定二进制文件(ETXTBSY / Error on write)
+systemctl stop monitor-hub.service 2>/dev/null || true
+systemctl stop proxy-manager.service 2>/dev/null || true
+
 mkdir -p "$ROOT" "$DATA" "$SCRIPTS_DIR"
 
 # 获取最新 Release 版本号
@@ -220,10 +224,18 @@ else
 fi
 
 info "正在下载 monitor-hub-linux-${ARCH_HUB}..."
-curl -fsSL "$_DOWNLOAD_URL" -o "$ROOT/monitor-hub" || \
+_TMP_HUB="/tmp/monitor-hub-$$"
+rm -f "$_TMP_HUB"
+if curl -fsSL "$_DOWNLOAD_URL" -o "$_TMP_HUB" 2>/dev/null || \
+   wget -qO "$_TMP_HUB" "$_DOWNLOAD_URL" 2>/dev/null || \
+   python3 -c "import urllib.request; urllib.request.urlretrieve('$_DOWNLOAD_URL', '$_TMP_HUB')" 2>/dev/null; then
+  chmod +x "$_TMP_HUB"
+  mv -f "$_TMP_HUB" "$ROOT/monitor-hub"
+  info "monitor-hub 已就绪"
+else
+  rm -f "$_TMP_HUB"
   die "下载失败！请确认 GitHub Release 中已有编译好的二进制文件。\n  访问 https://github.com/${GITHUB_REPO}/releases 查看"
-chmod +x "$ROOT/monitor-hub"
-info "monitor-hub 已就绪"
+fi
 
 # 创建系统用户
 id -u monitor >/dev/null 2>&1 || \
@@ -274,16 +286,25 @@ header "步骤 4/8 · 下载 ProxyProbe 代理管理程序和前端"
 
 # proxy_manager.py（核心代理管理后端）
 info "正在下载 proxy_manager.py..."
-curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py" || \
+_TMP_PM="/tmp/proxy_manager-$$.py"
+if curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$_TMP_PM" 2>/dev/null || \
+   wget -qO "$_TMP_PM" "${GITHUB_RAW}/proxy_manager.py" 2>/dev/null || \
+   python3 -c "import urllib.request; urllib.request.urlretrieve('${GITHUB_RAW}/proxy_manager.py', '$_TMP_PM')" 2>/dev/null; then
+  mv -f "$_TMP_PM" "$ROOT/proxy_manager.py"
+else
+  rm -f "$_TMP_PM"
   die "下载 proxy_manager.py 失败，请检查网络"
+fi
 
 # install.sh（子节点安装脚本，供 Caddy 对外分发）
-curl -fsSL "${GITHUB_RAW}/scripts/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || true
+curl -fsSL "${GITHUB_RAW}/scripts/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || \
+  wget -qO "$SCRIPTS_DIR/install.sh" "${GITHUB_RAW}/scripts/install.sh" 2>/dev/null || true
 chmod +x "$SCRIPTS_DIR/install.sh" 2>/dev/null || true
 
 # hhub（运维控制台 CLI 工具）
 info "正在安装 hhub 终端控制台工具..."
-curl -fsSL "${GITHUB_RAW}/scripts/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || true
+curl -fsSL "${GITHUB_RAW}/scripts/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || \
+  wget -qO "/usr/local/bin/hhub" "${GITHUB_RAW}/scripts/hhub.sh" 2>/dev/null || true
 chmod +x "/usr/local/bin/hhub" 2>/dev/null || true
 
 # 前端 dist（通过 git sparse-checkout 或 GitHub tarball 拉取）
