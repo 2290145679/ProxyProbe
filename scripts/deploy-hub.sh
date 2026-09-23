@@ -326,23 +326,35 @@ info "Caddy 已配置并启动"
 # ---- 步骤 7: 初始化管理员账户 ----
 header "步骤 7/8 · 初始化管理员账户"
 
-# 等待 proxy-manager 初始化数据库
+# 等待 proxy-manager 初始化数据库及 proxy_user 表
 _DB="$DATA/monitor.db"
-for i in $(seq 1 20); do [ -f "$_DB" ] && break; sleep 1; done
+for i in $(seq 1 30); do
+  if [ -f "$_DB" ] && python3 -c "import sqlite3; conn=sqlite3.connect('$_DB'); conn.execute('SELECT id FROM proxy_user LIMIT 1'); conn.close()" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
 
 if [ -f "$_DB" ]; then
   python3 - << PYEOF
-import sqlite3, hashlib
+import sqlite3, hashlib, secrets
 db = sqlite3.connect("$_DB")
-db.execute("UPDATE proxy_user SET password=? WHERE username='admin'",
-           (hashlib.sha256("${ADMIN_PASS}".encode()).hexdigest(),))
-db.commit(); db.close()
-print("  [+] 管理员密码已设置")
+try:
+    salt = secrets.token_hex(16)
+    h = hashlib.sha256((salt + "${ADMIN_PASS}").encode("utf-8")).hexdigest()
+    pwd_hash = f"{salt}:{h}"
+    db.execute("UPDATE proxy_user SET password_hash=? WHERE username='admin'", (pwd_hash,))
+    db.commit()
+    print("  [+] 管理员密码已设置成功")
+except Exception as e:
+    print(f"  [!] 管理员密码设置提示: {e}")
+finally:
+    db.close()
 PYEOF
   systemctl restart proxy-manager
   sleep 1
 else
-  warn "数据库尚未创建，请稍后在 /admin 手动设置密码"
+  warn "数据库尚未就绪，请稍后在 /admin 手动设置密码"
 fi
 
 # ---- 步骤 8: 防火墙 ----

@@ -883,6 +883,12 @@ def init_db():
                 conn.execute(f"ALTER TABLE node_proxy_status ADD COLUMN {col_name} {col_type}")
             except Exception:
                 pass
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS setting (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """)
         # Check if sub_token exists in setting
         cur = conn.execute("SELECT value FROM setting WHERE key = 'proxy_sub_token'")
         tok_row = cur.fetchone()
