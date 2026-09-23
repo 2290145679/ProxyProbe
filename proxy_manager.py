@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import uuid
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -427,11 +428,40 @@ def sync_step(server, token, last_hash):
 
         full_config = {
             "log": { "loglevel": "warning" },
-            "inbounds": applied_inbounds,
+            "stats": {},
+            "api": {
+                "tag": "api",
+                "services": ["StatsService"]
+            },
+            "policy": {
+                "levels": {
+                    "0": {
+                        "statsUserUplink": True,
+                        "statsUserDownlink": True
+                    }
+                },
+                "system": {
+                    "statsInboundUplink": True,
+                    "statsInboundDownlink": True
+                }
+            },
+            "inbounds": [{
+                "tag": "api",
+                "listen": "127.0.0.1",
+                "port": 10085,
+                "protocol": "dokodemo-door",
+                "settings": {"address": "127.0.0.1"}
+            }] + applied_inbounds,
             "outbounds": [
                 { "protocol": "freedom", "tag": "direct" },
-                { "protocol": "blackhole", "tag": "block" }
-            ]
+                { "protocol": "blackhole", "tag": "block" },
+                { "protocol": "freedom", "tag": "api" }
+            ],
+            "routing": {
+                "rules": [
+                    { "inboundTag": ["api"], "outboundTag": "api", "type": "field" }
+                ]
+            }
         }
 
         os.makedirs(os.path.dirname(XRAY_CONFIG), exist_ok=True)
@@ -463,6 +493,11 @@ def sync_step(server, token, last_hash):
             allow_ports(sb_ports)
             sb_config = {
                 "log": { "level": "warn" },
+                "experimental": {
+                    "clash_api": {
+                        "external_controller": "127.0.0.1:9090"
+                    }
+                },
                 "inbounds": singbox_inbounds,
                 "outbounds": [{ "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" }]
             }
@@ -566,6 +601,46 @@ def sync_step(server, token, last_hash):
     xr_installed = os.path.exists(XRAY_BIN)
     xr_running = is_active
 
+    user_stats = []
+    if xr_running:
+        try:
+            res = subprocess.run(
+                [XRAY_BIN, "api", "statsquery", "--server=127.0.0.1:10085", "-reset=true"],
+                capture_output=True, text=True, timeout=5
+            )
+            if res.returncode == 0 and res.stdout:
+                st_data = json.loads(res.stdout)
+                raw_stats = st_data.get("stat") or []
+                user_traffic = {}
+                for item in raw_stats:
+                    name = item.get("name", "")
+                    val = int(item.get("value", 0))
+                    if val <= 0:
+                        continue
+                    parts = name.split(">>>")
+                    if len(parts) >= 4 and parts[0] == "user" and parts[2] == "traffic":
+                        email = parts[1]
+                        direction = parts[3]
+                        uid = None
+                        if email.startswith("user_"):
+                            try:
+                                uid = int(email.split("_")[1])
+                            except ValueError:
+                                pass
+                        elif email in ("default", "default@vless", "default@trojan", "default@vmess"):
+                            uid = 1
+                        if uid is not None:
+                            if uid not in user_traffic:
+                                user_traffic[uid] = {"user_id": uid, "upload": 0, "download": 0}
+                            if direction == "uplink":
+                                user_traffic[uid]["upload"] += val
+                            elif direction == "downlink":
+                                user_traffic[uid]["download"] += val
+                if user_traffic:
+                    user_stats = list(user_traffic.values())
+        except Exception:
+            pass
+
     post_url = f"{server}/api/proxy/agent-sync"
     payload = json.dumps({
         "token": token,
@@ -578,7 +653,8 @@ def sync_step(server, token, last_hash):
         "singbox_installed": 1 if sb_installed else 0,
         "singbox_running": 1 if sb_running else 0,
         "singbox_version": sb_version,
-        "log": xray_log
+        "log": xray_log,
+        "user_stats": user_stats
     }).encode("utf-8")
     
     post_req = urllib.request.Request(
@@ -805,64 +881,103 @@ def check_auth(headers):
     user = get_current_user(headers)
     return user is not None and user.get("is_admin") == 1
 
-def collect_iptables_traffic():
-    try:
-        res_in = subprocess.run(["iptables", "-nvx", "-L", "INPUT"], capture_output=True, text=True)
-        res_out = subprocess.run(["iptables", "-nvx", "-L", "OUTPUT"], capture_output=True, text=True)
-        in_bytes = 0
-        out_bytes = 0
-        for line in res_in.stdout.splitlines():
-            if "dpt:" in line and "ACCEPT" in line:
-                parts = line.split()
-                if len(parts) >= 2 and parts[1].isdigit():
-                    in_bytes += int(parts[1])
-        for line in res_out.stdout.splitlines():
-            if "spt:" in line and "ACCEPT" in line:
-                parts = line.split()
-                if len(parts) >= 2 and parts[1].isdigit():
-                    out_bytes += int(parts[1])
-        return in_bytes, out_bytes
-    except Exception:
-        return 0, 0
+def ensure_user_credentials(user):
+    user_id = user["id"]
+    sub_token = user.get("sub_token") or f"user_{user_id}"
+    u_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"monitor_user_{user_id}_{sub_token}"))
+    u_pwd = f"u{user_id}_{sub_token[:12]}"
+    return u_uuid, u_pwd
 
-_last_in_bytes = 0
-_last_out_bytes = 0
+def get_active_users():
+    conn = get_db()
+    cur = conn.execute("SELECT * FROM proxy_user")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    now = int(time.time())
+    active = []
+    for u in rows:
+        used = u.get("upload_bytes", 0) + u.get("download_bytes", 0)
+        limit = u.get("traffic_limit_bytes", 0)
+        is_over = (limit > 0 and used >= limit)
+        is_exp = (u.get("expires_at", 0) > 0 and now > u.get("expires_at", 0))
+        is_dis = (u.get("enabled", 1) == 0)
+        if not is_over and not is_exp and not is_dis:
+            active.append(u)
+    return active
+
+_last_active_user_ids = set()
 
 def traffic_collector_loop():
-    global _last_in_bytes, _last_out_bytes
-    time.sleep(5)
-    _last_in_bytes, _last_out_bytes = collect_iptables_traffic()
+    global _last_active_user_ids
+    time.sleep(3)
+    try:
+        _last_active_user_ids = {u["id"] for u in get_active_users()}
+    except Exception:
+        pass
+
     while True:
         try:
-            time.sleep(15)
-            curr_in, curr_out = collect_iptables_traffic()
-            if _last_in_bytes == 0 and _last_out_bytes == 0:
-                _last_in_bytes, _last_out_bytes = curr_in, curr_out
-                continue
-            delta_in = max(0, curr_in - _last_in_bytes)
-            delta_out = max(0, curr_out - _last_out_bytes)
-            _last_in_bytes, _last_out_bytes = curr_in, curr_out
+            time.sleep(3)
+            # 1. Query Xray StatsService via local API
+            if os.path.exists(XRAY_BIN):
+                res = subprocess.run(
+                    [XRAY_BIN, "api", "statsquery", "--server=127.0.0.1:10085", "-reset=true"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if res.returncode == 0 and res.stdout:
+                    try:
+                        data = json.loads(res.stdout)
+                        stats = data.get("stat") or []
+                        user_traffic = {}
+                        for item in stats:
+                            name = item.get("name", "")
+                            val = int(item.get("value", 0))
+                            if val <= 0:
+                                continue
+                            parts = name.split(">>>")
+                            if len(parts) >= 4 and parts[0] == "user" and parts[2] == "traffic":
+                                email = parts[1]
+                                direction = parts[3]
+                                uid = None
+                                if email.startswith("user_"):
+                                    try:
+                                        uid = int(email.split("_")[1])
+                                    except ValueError:
+                                        pass
+                                elif email in ("default", "default@vless", "default@trojan", "default@vmess"):
+                                    uid = 1
+                                
+                                if uid is not None:
+                                    if uid not in user_traffic:
+                                        user_traffic[uid] = {"up": 0, "down": 0}
+                                    if direction == "uplink":
+                                        user_traffic[uid]["up"] += val
+                                    elif direction == "downlink":
+                                        user_traffic[uid]["down"] += val
+                        
+                        if user_traffic:
+                            conn = get_db()
+                            with conn:
+                                for uid, tf in user_traffic.items():
+                                    conn.execute("""
+                                        UPDATE proxy_user
+                                        SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                                        WHERE id = ?
+                                    """, (tf["up"], tf["down"], uid))
+                            conn.close()
+                    except Exception as e:
+                        pass
 
-            if delta_in > 0 or delta_out > 0:
-                conn = get_db()
-                with conn:
-                    cur = conn.execute("SELECT id FROM proxy_user WHERE enabled = 1 AND is_admin = 0")
-                    users = cur.fetchall()
-                    if not users:
-                        cur = conn.execute("SELECT id FROM proxy_user WHERE enabled = 1")
-                        users = cur.fetchall()
-                    if users:
-                        per_user_in = delta_in // len(users)
-                        per_user_out = delta_out // len(users)
-                        for u in users:
-                            conn.execute("""
-                                UPDATE proxy_user
-                                SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
-                                WHERE id = ?
-                            """, (per_user_in, per_user_out, u["id"]))
-                conn.close()
+            # 2. Check if active user set changed (e.g. user reached quota or renewed/restored)
+            curr_active_users = get_active_users()
+            curr_active_ids = {u["id"] for u in curr_active_users}
+            if curr_active_ids != _last_active_user_ids:
+                print(f"[*] User active set changed from {_last_active_user_ids} to {curr_active_ids}. Re-applying configs...")
+                _last_active_user_ids = curr_active_ids
+                apply_all_configs()
+
         except Exception as e:
-            time.sleep(10)
+            time.sleep(3)
 
 def gen_ss2022_key(method="2022-blake3-aes-128-gcm"):
     import base64
@@ -1032,9 +1147,15 @@ def test_node_connectivity(node):
     else:
         return True, f"TCP 端口连通正常 (延迟 ~{tcp_ms}ms)", tcp_ms
 
-def format_node_link(node):
+def format_node_link(node, user=None):
     proto = node["protocol"]
-    uuid = node.get("uuid") or ""
+    uuid_str = node.get("uuid") or ""
+    pwd_str = node.get("password") or uuid_str
+    if user:
+        u_uuid, u_pwd = ensure_user_credentials(user)
+        uuid_str = u_uuid
+        pwd_str = u_pwd
+
     host = node.get("server_host") or "189.24.108.25"
     port = node.get("port") or 20443
     if node.get("is_relay"):
@@ -1047,18 +1168,18 @@ def format_node_link(node):
         sid = node.get("short_id") or ""
         sni = node.get("sni") or "www.apple.com"
         flow = node.get("flow") or "xtls-rprx-vision"
-        return f"vless://{uuid}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome&spx=%2F&type=tcp&flow={flow}&sni={sni}&sid={sid}#{name}"
+        return f"vless://{uuid_str}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome&spx=%2F&type=tcp&flow={flow}&sni={sni}&sid={sid}#{name}"
     
     elif proto == "vless_reality_xhttp":
         pbk = node.get("public_key") or ""
         sid = node.get("short_id") or ""
         sni = node.get("sni") or "www.apple.com"
         xpath = quote(node.get("ws_path") or "/xhttp")
-        return f"vless://{uuid}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome&type=xhttp&sni={sni}&sid={sid}&path={xpath}&mode=auto#{name}"
+        return f"vless://{uuid_str}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome&type=xhttp&sni={sni}&sid={sid}&path={xpath}&mode=auto#{name}"
 
     elif proto == "vless_ws":
         ws_path = quote(node.get("ws_path") or "/ws-proxy")
-        return f"vless://{uuid}@{host}:{port}?security=none&encryption=none&type=ws&path={ws_path}#{name}"
+        return f"vless://{uuid_str}@{host}:{port}?security=none&encryption=none&type=ws&path={ws_path}#{name}"
 
     elif proto == "vmess_ws":
         ps_label = f"[{node.get('server_name', '中转')}] ➔ {node.get('name', '落地')}" if node.get("is_relay") else f"[{node.get('server_name', '本机')}] {node.get('name', 'node')}"
@@ -1067,7 +1188,7 @@ def format_node_link(node):
             "ps": ps_label,
             "add": host,
             "port": str(port),
-            "id": uuid,
+            "id": uuid_str,
             "aid": "0",
             "scy": "auto",
             "net": "ws",
@@ -1080,34 +1201,31 @@ def format_node_link(node):
         return f"vmess://{b64_json}"
 
     elif proto == "trojan":
-        pwd = node.get("password") or uuid
-        return f"trojan://{pwd}@{host}:{port}?security=none&headerType=none&type=tcp#{name}"
+        return f"trojan://{pwd_str}@{host}:{port}?security=none&headerType=none&type=tcp#{name}"
 
     elif proto == "ss2022":
         import base64
         method = node.get("method") or "2022-blake3-aes-128-gcm"
-        pwd = node.get("password") or uuid
-        userinfo = base64.b64encode(f"{method}:{pwd}".encode('utf-8')).decode('utf-8')
+        userinfo = base64.b64encode(f"{method}:{pwd_str}".encode('utf-8')).decode('utf-8')
         return f"ss://{userinfo}@{host}:{port}#{name}"
 
     elif proto == "socks5":
         uname = (node.get("username") or "").strip()
-        pwd = (node.get("password") or "").strip()
+        if user:
+            uname = user.get("username", "")
         if uname:
-            return f"socks5://{quote(uname)}:{quote(pwd)}@{host}:{port}#{name}"
+            return f"socks5://{quote(uname)}:{quote(pwd_str)}@{host}:{port}#{name}"
         else:
             return f"socks5://{host}:{port}#{name}"
 
     elif proto == "hysteria2":
-        pwd = node.get("password") or uuid
         sni = node.get("sni") or "bing.com"
-        return f"hysteria2://{pwd}@{host}:{port}?sni={sni}&alpn=h3&insecure=1&allowInsecure=1#{name}"
+        return f"hysteria2://{pwd_str}@{host}:{port}?sni={sni}&alpn=h3&insecure=1&allowInsecure=1#{name}"
 
     elif proto == "tuic":
-        uid = uuid or gen_random_password(16)
-        pwd = node.get("password") or gen_random_password(16)
+        uid_val = uuid_str or gen_random_password(16)
         sni = node.get("sni") or "bing.com"
-        return f"tuic://{uid}:{pwd}@{host}:{port}?congestion_control=bbr&alpn=h3&sni={sni}&udp_relay_mode=native&allow_insecure=1#{name}"
+        return f"tuic://{uid_val}:{pwd_str}@{host}:{port}?congestion_control=bbr&alpn=h3&sni={sni}&udp_relay_mode=native&allow_insecure=1#{name}"
 
     return ""
 
@@ -1117,22 +1235,45 @@ def is_local_node(node):
     s_name = node.get("server_name", "")
     return s_id == 0 or (s_host in LOCAL_HOSTS) or (s_name == "本机")
 
-def build_inbounds_for_nodes(nodes):
+def build_inbounds_for_nodes(nodes, active_users=None):
+    if active_users is None:
+        active_users = get_active_users()
+
     inbounds = []
     for n in nodes:
         proto = n["protocol"]
         port = n["port"]
         uid = n.get("uuid") or ""
+        pwd = n.get("password") or uid
         tag = f"inbound-{n.get('id', port)}"
 
         if proto == "vless_reality":
+            vless_clients = []
+            seen_ids = set()
+            if uid and uid not in seen_ids:
+                seen_ids.add(uid)
+                vless_clients.append({
+                    "id": uid,
+                    "email": "default@vless",
+                    "flow": n.get("flow") or "xtls-rprx-vision"
+                })
+            for u in active_users:
+                u_uuid, _ = ensure_user_credentials(u)
+                if u_uuid not in seen_ids:
+                    seen_ids.add(u_uuid)
+                    vless_clients.append({
+                        "id": u_uuid,
+                        "email": f"user_{u['id']}",
+                        "flow": n.get("flow") or "xtls-rprx-vision"
+                    })
+
             inbounds.append({
                 "tag": tag,
                 "listen": "0.0.0.0",
                 "port": port,
                 "protocol": "vless",
                 "settings": {
-                    "clients": [{ "id": uid, "flow": n.get("flow") or "xtls-rprx-vision" }],
+                    "clients": vless_clients,
                     "decryption": "none"
                 },
                 "streamSettings": {
@@ -1153,13 +1294,24 @@ def build_inbounds_for_nodes(nodes):
             xpath = n.get("ws_path") or "/xhttp"
             if not xpath.startswith("/"):
                 xpath = "/" + xpath
+            vless_clients = []
+            seen_ids = set()
+            if uid and uid not in seen_ids:
+                seen_ids.add(uid)
+                vless_clients.append({ "id": uid, "email": "default@vless" })
+            for u in active_users:
+                u_uuid, _ = ensure_user_credentials(u)
+                if u_uuid not in seen_ids:
+                    seen_ids.add(u_uuid)
+                    vless_clients.append({ "id": u_uuid, "email": f"user_{u['id']}" })
+
             inbounds.append({
                 "tag": tag,
                 "listen": "0.0.0.0",
                 "port": port,
                 "protocol": "vless",
                 "settings": {
-                    "clients": [{ "id": uid }],
+                    "clients": vless_clients,
                     "decryption": "none"
                 },
                 "streamSettings": {
@@ -1184,13 +1336,24 @@ def build_inbounds_for_nodes(nodes):
             ws_path = n.get("ws_path") or "/ws-proxy"
             if not ws_path.startswith("/"):
                 ws_path = "/" + ws_path
+            vless_clients = []
+            seen_ids = set()
+            if uid and uid not in seen_ids:
+                seen_ids.add(uid)
+                vless_clients.append({ "id": uid, "email": "default@vless" })
+            for u in active_users:
+                u_uuid, _ = ensure_user_credentials(u)
+                if u_uuid not in seen_ids:
+                    seen_ids.add(u_uuid)
+                    vless_clients.append({ "id": u_uuid, "email": f"user_{u['id']}" })
+
             inbounds.append({
                 "tag": tag,
                 "listen": "0.0.0.0",
                 "port": port,
                 "protocol": "vless",
                 "settings": {
-                    "clients": [{ "id": uid }],
+                    "clients": vless_clients,
                     "decryption": "none"
                 },
                 "streamSettings": {
@@ -1203,13 +1366,24 @@ def build_inbounds_for_nodes(nodes):
             ws_path = n.get("ws_path") or "/vmess-ws"
             if not ws_path.startswith("/"):
                 ws_path = "/" + ws_path
+            vmess_clients = []
+            seen_ids = set()
+            if uid and uid not in seen_ids:
+                seen_ids.add(uid)
+                vmess_clients.append({ "id": uid, "alterId": 0, "email": "default@vmess" })
+            for u in active_users:
+                u_uuid, _ = ensure_user_credentials(u)
+                if u_uuid not in seen_ids:
+                    seen_ids.add(u_uuid)
+                    vmess_clients.append({ "id": u_uuid, "alterId": 0, "email": f"user_{u['id']}" })
+
             inbounds.append({
                 "tag": tag,
                 "listen": "0.0.0.0",
                 "port": port,
                 "protocol": "vmess",
                 "settings": {
-                    "clients": [{ "id": uid, "alterId": 0 }]
+                    "clients": vmess_clients
                 },
                 "streamSettings": {
                     "network": "ws",
@@ -1219,20 +1393,29 @@ def build_inbounds_for_nodes(nodes):
                 "sniffing": { "enabled": True, "destOverride": ["http", "tls", "quic"] }
             })
         elif proto == "trojan":
-            pwd = n.get("password") or uid
+            trojan_clients = []
+            seen_pwds = set()
+            if pwd and pwd not in seen_pwds:
+                seen_pwds.add(pwd)
+                trojan_clients.append({ "password": pwd, "email": "default@trojan" })
+            for u in active_users:
+                _, u_pwd = ensure_user_credentials(u)
+                if u_pwd not in seen_pwds:
+                    seen_pwds.add(u_pwd)
+                    trojan_clients.append({ "password": u_pwd, "email": f"user_{u['id']}" })
+
             inbounds.append({
                 "tag": tag,
                 "listen": "0.0.0.0",
                 "port": port,
                 "protocol": "trojan",
                 "settings": {
-                    "clients": [{ "password": pwd }]
+                    "clients": trojan_clients
                 },
                 "streamSettings": { "network": "tcp", "security": "none" }
             })
         elif proto == "ss2022":
             method = n.get("method") or "2022-blake3-aes-128-gcm"
-            pwd = n.get("password") or uid
             inbounds.append({
                 "tag": tag,
                 "listen": "0.0.0.0",
@@ -1246,7 +1429,6 @@ def build_inbounds_for_nodes(nodes):
             })
         elif proto == "socks5":
             uname = (n.get("username") or "").strip()
-            pwd = (n.get("password") or "").strip()
             settings = {
                 "auth": "password" if uname else "noauth",
                 "udp": True
@@ -1262,7 +1444,10 @@ def build_inbounds_for_nodes(nodes):
             })
     return inbounds
 
-def build_singbox_inbounds_for_nodes(nodes):
+def build_singbox_inbounds_for_nodes(nodes, active_users=None):
+    if active_users is None:
+        active_users = get_active_users()
+
     inbounds = []
     for n in nodes:
         proto = n["protocol"]
@@ -1276,14 +1461,23 @@ def build_singbox_inbounds_for_nodes(nodes):
             masq = f"https://{host_only}"
 
         if proto == "hysteria2":
+            hy2_users = []
+            seen_pwds = set()
+            if pwd and pwd not in seen_pwds:
+                seen_pwds.add(pwd)
+                hy2_users.append({ "name": "default", "password": pwd })
+            for u in active_users:
+                _, u_pwd = ensure_user_credentials(u)
+                if u_pwd not in seen_pwds:
+                    seen_pwds.add(u_pwd)
+                    hy2_users.append({ "name": f"user_{u['id']}", "password": u_pwd })
+
             inbounds.append({
                 "type": "hysteria2",
                 "tag": tag,
                 "listen": "::",
                 "listen_port": port,
-                "users": [
-                    { "password": pwd }
-                ],
+                "users": hy2_users,
                 "ignore_client_bandwidth": True,
                 "tls": {
                     "enabled": True,
@@ -1312,6 +1506,11 @@ def apply_singbox_config():
         "log": {
             "level": "warn",
             "timestamp": True
+        },
+        "experimental": {
+            "clash_api": {
+                "external_controller": "127.0.0.1:9090"
+            }
         },
         "inbounds": inbounds,
         "outbounds": [
@@ -1632,13 +1831,48 @@ def apply_xray_config():
             "settings": { "auth": "noauth" }
         })
 
+    api_inbound = {
+        "tag": "api",
+        "listen": "127.0.0.1",
+        "port": 10085,
+        "protocol": "dokodemo-door",
+        "settings": { "address": "127.0.0.1" }
+    }
+
     config = {
         "log": { "loglevel": "warning" },
-        "inbounds": inbounds,
+        "stats": {},
+        "api": {
+            "tag": "api",
+            "services": ["StatsService"]
+        },
+        "policy": {
+            "levels": {
+                "0": {
+                    "statsUserUplink": True,
+                    "statsUserDownlink": True
+                }
+            },
+            "system": {
+                "statsInboundUplink": True,
+                "statsInboundDownlink": True
+            }
+        },
+        "inbounds": [api_inbound] + inbounds,
         "outbounds": [
             { "protocol": "freedom", "tag": "direct" },
-            { "protocol": "blackhole", "tag": "block" }
-        ]
+            { "protocol": "blackhole", "tag": "block" },
+            { "protocol": "freedom", "tag": "api" }
+        ],
+        "routing": {
+            "rules": [
+                {
+                    "inboundTag": ["api"],
+                    "outboundTag": "api",
+                    "type": "field"
+                }
+            ]
+        }
     }
 
     with open(XRAY_CONFIG, "w", encoding="utf-8") as f:
@@ -1745,7 +1979,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 if sid in node_ip_map and is_private_ip(n.get("server_host")):
                     n["server_host"] = node_ip_map[sid]
 
-            links = [format_node_link(n) for n in nodes if format_node_link(n)]
+            links = [format_node_link(n, user=user) for n in nodes if format_node_link(n, user=user)]
             import base64
             encoded = base64.b64encode("\n".join(links).encode("utf-8"))
             self.send_response(200)
@@ -2202,6 +2436,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     node_id, status, version, ports_json, listening_ports_json, xray_log, now,
                     xray_installed, xray_running, singbox_installed, singbox_running, singbox_version
                 ))
+            user_stats = req.get("user_stats", [])
+            if user_stats:
+                with conn:
+                    for st in user_stats:
+                        uid = st.get("user_id")
+                        up = int(st.get("upload") or 0)
+                        down = int(st.get("download") or 0)
+                        if uid and (up > 0 or down > 0):
+                            conn.execute("""
+                                UPDATE proxy_user
+                                SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                                WHERE id = ?
+                            """, (up, down, uid))
             conn.close()
             self.send_json({"ok": True})
             return
@@ -2313,6 +2560,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     """, (username, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time())))
                     new_id = cur.lastrowid
                 conn.close()
+                apply_all_configs()
                 self.send_json({"ok": True, "id": new_id, "sub_token": sub_token, "message": "用户创建成功"})
             except sqlite3.IntegrityError:
                 conn.close()
@@ -2325,6 +2573,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             with conn:
                 conn.execute("UPDATE proxy_user SET upload_bytes = 0, download_bytes = 0 WHERE id = ?", (user_id,))
             conn.close()
+            apply_all_configs()
             self.send_json({"ok": True, "message": "流量已重置为 0"})
             return
 
@@ -2335,6 +2584,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             with conn:
                 conn.execute("UPDATE proxy_user SET sub_token = ? WHERE id = ?", (new_token, user_id))
             conn.close()
+            apply_all_configs()
             self.send_json({"ok": True, "sub_token": new_token, "message": "订阅 Token 已重置"})
             return
 
@@ -2344,6 +2594,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             with conn:
                 conn.execute("UPDATE proxy_user SET enabled = 1 - enabled WHERE id = ?", (user_id,))
             conn.close()
+            apply_all_configs()
             self.send_json({"ok": True, "message": "用户状态已变更"})
             return
 
@@ -2363,6 +2614,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 if new_pwd:
                     conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (hash_password(new_pwd), user_id))
             conn.close()
+            apply_all_configs()
             self.send_json({"ok": True, "message": "用户信息已更新"})
             return
 
@@ -2639,6 +2891,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 conn.execute("DELETE FROM proxy_user WHERE id = ?", (user_id,))
                 conn.execute("DELETE FROM proxy_session_user WHERE user_id = ?", (user_id,))
             conn.close()
+            apply_all_configs()
             self.send_json({"ok": True, "message": "用户已删除"})
             return
 

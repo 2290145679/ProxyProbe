@@ -93,6 +93,25 @@ export function UserDashboard({
   const [qrOpen, setQrOpen] = useState(false)
   const [qrUrl, setQrUrl] = useState("")
   const [resettingToken, setResettingToken] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // 实时轮询用户流量与订阅状态 (每 3 秒自动刷新)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      refreshUser()
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [refreshUser])
+
+  // 手动点击刷新
+  async function handleManualRefresh() {
+    setRefreshing(true)
+    try {
+      await refreshUser()
+    } finally {
+      setTimeout(() => setRefreshing(false), 500)
+    }
+  }
 
   // 加载节点列表
   useEffect(() => {
@@ -239,8 +258,8 @@ export function UserDashboard({
               <p className="text-xs text-muted-foreground">实时统计所有代理节点产生的双向网络吞吐流量</p>
             </div>
 
-            <Button variant="outline" size="sm" onClick={refreshUser} className="text-xs gap-1.5 shrink-0 self-start sm:self-auto">
-              <RefreshCw className="size-3.5" /> 刷新统计
+            <Button variant="outline" size="sm" onClick={handleManualRefresh} disabled={refreshing} className="text-xs gap-1.5 shrink-0 self-start sm:self-auto">
+              <RefreshCw className={`size-3.5 ${refreshing ? "animate-spin text-primary" : ""}`} /> 刷新统计
             </Button>
           </div>
 

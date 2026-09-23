@@ -98,7 +98,20 @@ export function ProxyUsers() {
 
   useEffect(() => {
     loadUsers()
-  }, [])
+    const timer = setInterval(() => {
+      if (!createOpen && !editOpen) {
+        fetch("/api/proxy/users")
+          .then(res => res.json())
+          .then(data => {
+            if (data.ok && Array.isArray(data.users)) {
+              setUsers(data.users)
+            }
+          })
+          .catch(() => {})
+      }
+    }, 4000)
+    return () => clearInterval(timer)
+  }, [createOpen, editOpen])
 
   // 创建用户
   const handleCreate = async (e: React.FormEvent) => {
