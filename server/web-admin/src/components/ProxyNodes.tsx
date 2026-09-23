@@ -321,8 +321,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     : (isSingboxProto ? Boolean(currentSelectedServer?.singbox_installed) : Boolean(currentSelectedServer?.xray_installed))
 
   const openCreateDialog = () => {
-    if (licenseStatus && !licenseStatus.active) {
-      toast.error(licenseStatus.message || "当前未激活商业许可证！仅能使用探针功能，请先前往左侧【商业授权】菜单激活。")
+    if (licenseStatus && !licenseStatus.active && proxyNodes.length >= 1) {
+      toast.error("免费版仅支持创建 1 个代理节点，添加更多节点请前往左侧【商业授权】激活商业版！")
       return
     }
 
@@ -756,11 +756,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
             <div className="flex items-center gap-2">
               <AlertTriangle className="size-4 text-amber-500 shrink-0" />
               <span>
-                <strong>商业功能受限：</strong>当前未激活商业许可证（仅限探针监控）。创建代理节点与多用户订阅需激活商业授权。
+                <strong>免费体验模式：</strong>未激活商业版仅支持体验 1 个代理节点与 1 个用户（当前已建 {proxyNodes.length}/1 节点）。解锁无限节点与用户请激活商业授权。
               </span>
             </div>
             <span className="font-semibold text-amber-600 dark:text-amber-400 shrink-0">
-              请前往左侧【商业授权】菜单激活
+              前往【商业授权】激活
             </span>
           </div>
         )}

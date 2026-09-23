@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import {
   AlertCircle,
+  AlertTriangle,
   Copy,
   Edit2,
   KeyRound,
@@ -64,6 +65,7 @@ export function ProxyUsers() {
   const [loading, setLoading] = useState(false)
 
   // 新建用户弹窗状态
+  const [licenseStatus, setLicenseStatus] = useState<any>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState({
     username: "",
@@ -93,6 +95,13 @@ export function ProxyUsers() {
       if (data.ok && Array.isArray(data.users)) {
         setUsers(data.users)
       }
+      try {
+        const licRes = await fetch("/api/proxy/license/status")
+        if (licRes.ok) {
+          const licData = await licRes.json()
+          setLicenseStatus(licData)
+        }
+      } catch {}
     } catch {
       toast.error("加载用户列表失败")
     } finally {
@@ -282,7 +291,18 @@ export function ProxyUsers() {
           <Button variant="outline" size="sm" onClick={loadUsers} disabled={loading} className="gap-1.5 text-xs">
             <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} /> 刷新
           </Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 text-xs">
+          <Button 
+            size="sm" 
+            onClick={() => {
+              const nonAdminCount = users.filter(u => !u.is_admin).length
+              if (licenseStatus && !licenseStatus.active && nonAdminCount >= 1) {
+                toast.error("免费版仅支持创建 1 个客户端用户，添加更多用户请前往左侧【商业授权】激活商业版！")
+                return
+              }
+              setCreateOpen(true)
+            }} 
+            className="gap-1.5 text-xs"
+          >
             <Plus className="size-3.5" /> 新建用户
           </Button>
         </div>
@@ -290,6 +310,19 @@ export function ProxyUsers() {
 
       {/* 用户列表 */}
       <Card className="overflow-hidden border shadow-sm">
+        {licenseStatus && !licenseStatus.active && (
+          <div className="bg-amber-500/10 border-b border-amber-500/20 px-5 py-3 text-xs text-amber-800 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="size-4 text-amber-500 shrink-0" />
+              <span>
+                <strong>免费体验模式：</strong>未激活商业版仅支持添加 1 个客户端用户（当前已添加 {users.filter(u => !u.is_admin).length}/1 个）。需添加更多用户或分配不同权限请激活商业授权。
+              </span>
+            </div>
+            <span className="font-semibold text-amber-600 dark:text-amber-400 shrink-0">
+              前往【商业授权】激活
+            </span>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-muted/50 border-b text-muted-foreground">

@@ -2477,7 +2477,23 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if path == "/api/proxy/license/status":
             conn = get_db()
             lic_status = license_guard.get_current_license_status(conn)
+            
+            # 统计当前资源占用
+            server_count = conn.execute("SELECT COUNT(*) FROM node").fetchone()[0]
+            node_count = conn.execute("SELECT COUNT(*) FROM proxy_node").fetchone()[0]
+            user_count = conn.execute("SELECT COUNT(*) FROM proxy_user WHERE is_admin = 0").fetchone()[0]
             conn.close()
+
+            lic_status["usage"] = {
+                "server_count": server_count,
+                "node_count": node_count,
+                "user_count": user_count,
+                "free_limits": {
+                    "max_servers": 1,
+                    "max_nodes": 1,
+                    "max_users": 1
+                }
+            }
             self.send_json(lic_status)
             return
 
@@ -3172,6 +3188,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/proxy/users":
+            # 商业许可证/免费配额检查 (免费版允许创建 1 个客户端用户)
+            conn_chk = get_db()
+            lic_status = license_guard.get_current_license_status(conn_chk)
+            curr_user_count = conn_chk.execute("SELECT COUNT(*) FROM proxy_user WHERE is_admin = 0").fetchone()[0]
+            conn_chk.close()
+            if not lic_status.get("active") and curr_user_count >= 1:
+                self.send_json({
+                    "ok": False,
+                    "error": "license_required",
+                    "message": "免费版仅支持创建 1 个客户端用户，添加更多用户请激活商业许可证！",
+                    "machine_id": lic_status.get("machine_id")
+                }, 403)
+                return
+
             username = req.get("username", "").strip()
             password = req.get("password", "").strip()
             limit_gb = float(req.get("traffic_limit_gb", 200))
@@ -3321,15 +3351,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/proxy/nodes":
-            # 商业许可证有效性鉴权拦截
+            # 商业许可证/免费配额检查 (免费版允许创建 1 个代理节点)
             conn_lic = get_db()
             lic_status = license_guard.get_current_license_status(conn_lic)
+            curr_node_count = conn_lic.execute("SELECT COUNT(*) FROM proxy_node").fetchone()[0]
             conn_lic.close()
-            if not lic_status.get("active"):
+            if not lic_status.get("active") and curr_node_count >= 1:
                 self.send_json({
                     "ok": False,
                     "error": "license_required",
-                    "message": lic_status.get("message", "创建代理节点功能需要商业许可证激活"),
+                    "message": "免费版仅支持创建 1 个代理节点，添加更多节点请激活商业许可证！",
                     "machine_id": lic_status.get("machine_id")
                 }, 403)
                 return
@@ -3477,18 +3508,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         elif path.startswith("/api/proxy/nodes/") and path.endswith("/toggle"):
-            # 商业许可证有效性鉴权拦截
-            conn_lic = get_db()
-            lic_status = license_guard.get_current_license_status(conn_lic)
-            conn_lic.close()
-            if not lic_status.get("active"):
-                self.send_json({
-                    "ok": False,
-                    "error": "license_required",
-                    "message": lic_status.get("message", "管理代理节点功能需要商业许可证激活"),
-                    "machine_id": lic_status.get("machine_id")
-                }, 403)
-                return
 
             try:
                 node_id = int(path.split("/")[-2])
@@ -3536,19 +3555,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
         path = parsed.path
         m = re.match(r"^/api/proxy/nodes/(\d+)$", path)
         if m:
-            # 商业许可证有效性鉴权拦截
-            conn_lic = get_db()
-            lic_status = license_guard.get_current_license_status(conn_lic)
-            conn_lic.close()
-            if not lic_status.get("active"):
-                self.send_json({
-                    "ok": False,
-                    "error": "license_required",
-                    "message": lic_status.get("message", "管理代理节点功能需要商业许可证激活"),
-                    "machine_id": lic_status.get("machine_id")
-                }, 403)
-                return
-
             node_id = int(m.group(1))
             conn = get_db()
             with conn:

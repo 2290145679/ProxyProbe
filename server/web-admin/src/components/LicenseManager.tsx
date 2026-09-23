@@ -191,8 +191,8 @@ export function LicenseManager() {
               <div className="bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 rounded-lg p-3 text-xs flex items-start gap-2.5">
                 <AlertTriangle className="size-4 shrink-0 text-amber-500 mt-0.5" />
                 <div>
-                  <span className="font-semibold block mb-0.5">功能限制提示</span>
-                  当前系统仅能作为服务器状态监控面板。若需创建代理节点、分配订阅给用户或进行流量限制，请在右侧输入购买的许可证密钥完成激活。
+                  <span className="font-semibold block mb-0.5">免费体验配额</span>
+                  未激活商业版支持体验：<strong>最多 1 台服务器、1 个代理协议节点、1 个客户端用户</strong>。若需解锁无限服务器、多协议节点集群与无限用户订阅分发，请激活商业授权。
                 </div>
               </div>
             )}

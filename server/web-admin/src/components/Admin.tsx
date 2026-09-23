@@ -940,6 +940,7 @@ function InstallDialog({ node, site, onClose, onRotated }: {
 }
 
 function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () => void; site: string; refusal: string }) {
+  const [licenseStatus, setLicenseStatus] = useState<any>(null)
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Node | null>(null)
   const [billing, setBilling] = useState<Node | null>(null)
@@ -952,6 +953,13 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
   const [query, setQuery] = useState("")
   const [dragging, setDragging] = useState<number | null>(null)
   const orderBeforeDrag = useRef<number[]>([])
+
+  useEffect(() => {
+    fetch("/api/proxy/license/status")
+      .then(r => r.json())
+      .then(d => setLicenseStatus(d))
+      .catch(() => {})
+  }, [])
   const byId = new Map(nodes.map((node) => [node.id, node]))
   const orderedIds = new Set(manualOrder)
   const order = [
@@ -1009,15 +1017,42 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
 
   return (
     <div className="space-y-4">
+      {licenseStatus && !licenseStatus.active && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3.5 text-xs text-amber-800 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="font-bold">免费体验模式：</span>
+            <span>未激活商业版仅支持添加 1 台服务器（当前已添加 {nodes.length}/1 台）。添加更多服务器请前往左侧【商业授权】激活。</span>
+          </div>
+        </div>
+      )}
       {refusal && <p className="text-sm text-muted-foreground">{refusal}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <NodeSearch className="mr-auto w-full sm:w-64" value={query} onChange={setQuery} />
         {/* An open window is visible from the list itself, so nobody has to
             remember they left one open. */}
-        <Button variant="outline" disabled={!!refusal} onClick={() => setRegistering(true)}>
+        <Button 
+          variant="outline" 
+          disabled={!!refusal} 
+          onClick={() => {
+            if (licenseStatus && !licenseStatus.active && nodes.length >= 1) {
+              toast.error("免费版仅支持添加 1 台服务器，批量添加请先激活商业授权！")
+              return
+            }
+            setRegistering(true)
+          }}
+        >
           <Server /> 批量添加{reg.left > 0 && ` · ${Math.ceil(reg.left / 60)} 分`}
         </Button>
-        <Button disabled={!!refusal} onClick={() => setCreating(true)}>
+        <Button 
+          disabled={!!refusal} 
+          onClick={() => {
+            if (licenseStatus && !licenseStatus.active && nodes.length >= 1) {
+              toast.error("免费版仅支持添加 1 台服务器，添加更多服务器请前往左侧【商业授权】激活！")
+              return
+            }
+            setCreating(true)
+          }}
+        >
           <Plus /> 添加服务器
         </Button>
       </div>
