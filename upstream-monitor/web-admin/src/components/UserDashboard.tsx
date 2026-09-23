@@ -38,6 +38,7 @@ export type UserProfile = {
   is_admin: boolean
   sub_token: string
   sub_url: string
+  clash_url?: string
   traffic_limit_bytes: number
   upload_bytes: number
   download_bytes: number
@@ -373,7 +374,7 @@ export function UserDashboard({
                   asChild
                   className="h-9 text-xs justify-start gap-2 hover:border-primary/50"
                 >
-                  <a href={`clash://install-config?url=${encodeURIComponent(user.sub_url)}&name=${encodeURIComponent(subName)}`}>
+                  <a href={`clash://install-config?url=${encodeURIComponent(user.clash_url || (user.sub_url + (user.sub_url.includes('?') ? '&clash=1' : '?clash=1')))}&name=${encodeURIComponent(subName)}`}>
                     <Send className="size-3.5 text-blue-500" />
                     <span>导入 Clash / Verge</span>
                   </a>

@@ -181,7 +181,7 @@ EOF
     { "tag": "dummy", "listen": "127.0.0.1", "port": 39999, "protocol": "socks", "settings": { "auth": "noauth" } }
   ],
   "outbounds": [
-    { "protocol": "freedom", "tag": "direct" },
+    { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIPv4" } },
     { "protocol": "blackhole", "tag": "block" }
   ]
 }
@@ -237,11 +237,6 @@ if [ "$INSTALL_SINGBOX" = "1" ]; then
     cat > /etc/sing-box/config.json << 'EOF'
 {
   "log": { "level": "warn" },
-  "experimental": {
-    "clash_api": {
-      "external_controller": "127.0.0.1:9090"
-    }
-  },
   "inbounds": [],
   "outbounds": [{ "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" }]
 }
@@ -569,7 +564,7 @@ def sync_step(server, token, last_hash):
                 "settings": {"address": "127.0.0.1"}
             }] + applied_inbounds,
             "outbounds": [
-                { "protocol": "freedom", "tag": "direct" },
+                { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIPv4" } },
                 { "protocol": "blackhole", "tag": "block" },
                 { "protocol": "freedom", "tag": "api" }
             ],
@@ -609,11 +604,6 @@ def sync_step(server, token, last_hash):
             allow_ports(sb_ports)
             sb_config = {
                 "log": { "level": "warn" },
-                "experimental": {
-                    "clash_api": {
-                        "external_controller": "127.0.0.1:9090"
-                    }
-                },
                 "inbounds": singbox_inbounds,
                 "outbounds": [{ "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" }]
             }
@@ -1282,30 +1272,36 @@ def format_node_link(node, user=None):
     host = node.get("server_host") or "189.24.108.25"
     port = node.get("port") or 20443
     if node.get("is_relay"):
-        name = quote(f"[{node.get('server_name', '中转')}] ➔ {node.get('name', '落地')}")
+        name_raw = f"[{node.get('server_name', '中转')}] ➔ {node.get('name', '落地')}"
     else:
-        name = quote(f"[{node.get('server_name', '本机')}] {node.get('name', 'node')}")
+        name_raw = f"[{node.get('server_name', '本机')}] {node.get('name', 'node')}"
+    name = quote(name_raw, safe=":/[] -_()@➔")
     
     if proto == "vless_reality":
         pbk = node.get("public_key") or ""
         sid = node.get("short_id") or ""
         sni = node.get("sni") or "www.apple.com"
         flow = node.get("flow") or "xtls-rprx-vision"
-        return f"vless://{uuid_str}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome&spx=%2F&type=tcp&flow={flow}&sni={sni}&sid={sid}#{name}"
+        flow_param = f"&flow={flow}" if flow else ""
+        spx = node.get("spider_x") or ""
+        spx_param = f"&spx={quote(spx)}" if (spx and spx != "/") else ""
+        return f"vless://{uuid_str}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=tcp{flow_param}&sni={sni}&sid={sid}#{name}"
     
     elif proto == "vless_reality_xhttp":
         pbk = node.get("public_key") or ""
         sid = node.get("short_id") or ""
         sni = node.get("sni") or "www.apple.com"
         xpath = quote(node.get("ws_path") or "/xhttp")
-        return f"vless://{uuid_str}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome&type=xhttp&sni={sni}&sid={sid}&path={xpath}&mode=auto#{name}"
+        spx = node.get("spider_x") or ""
+        spx_param = f"&spx={quote(spx)}" if (spx and spx != "/") else ""
+        return f"vless://{uuid_str}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=xhttp&sni={sni}&sid={sid}&path={xpath}&mode=auto#{name}"
 
     elif proto == "vless_ws":
         ws_path = quote(node.get("ws_path") or "/ws-proxy")
         return f"vless://{uuid_str}@{host}:{port}?security=none&encryption=none&type=ws&path={ws_path}#{name}"
 
     elif proto == "vmess_ws":
-        ps_label = f"[{node.get('server_name', '中转')}] ➔ {node.get('name', '落地')}" if node.get("is_relay") else f"[{node.get('server_name', '本机')}] {node.get('name', 'node')}"
+        ps_label = name_raw
         vmess_data = {
             "v": "2",
             "ps": ps_label,
@@ -1343,7 +1339,7 @@ def format_node_link(node, user=None):
 
     elif proto == "hysteria2":
         sni = node.get("sni") or "bing.com"
-        return f"hysteria2://{pwd_str}@{host}:{port}?sni={sni}&alpn=h3&insecure=1&allowInsecure=1#{name}"
+        return f"hysteria2://{pwd_str}@{host}:{port}/?sni={sni}&alpn=h3&insecure=1#{name}"
 
     elif proto == "tuic":
         uid_val = uuid_str or gen_random_password(16)
@@ -1351,6 +1347,304 @@ def format_node_link(node, user=None):
         return f"tuic://{uid_val}:{pwd_str}@{host}:{port}?congestion_control=bbr&alpn=h3&sni={sni}&udp_relay_mode=native&allow_insecure=1#{name}"
 
     return ""
+
+def generate_clash_yaml(nodes, user=None, warning_msg=None):
+    if warning_msg:
+        cfg = {
+            "port": 7890,
+            "socks-port": 7891,
+            "allow-lan": False,
+            "mode": "rule",
+            "log-level": "info",
+            "proxies": [
+                {
+                    "name": warning_msg,
+                    "type": "socks5",
+                    "server": "127.0.0.1",
+                    "port": 1080
+                }
+            ],
+            "proxy-groups": [
+                {
+                    "name": "PROXY",
+                    "type": "select",
+                    "proxies": [warning_msg]
+                }
+            ],
+            "rules": [
+                "MATCH,DIRECT"
+            ]
+        }
+        try:
+            import yaml
+            return yaml.dump(cfg, allow_unicode=True, sort_keys=False)
+        except Exception:
+            return f"""port: 7890
+socks-port: 7891
+mode: rule
+proxies:
+  - name: "{warning_msg}"
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - "{warning_msg}"
+rules:
+  - MATCH,DIRECT
+"""
+
+    proxies = []
+    names = []
+    for n in nodes:
+        proto = n.get("protocol")
+        host = n.get("server_host") or "189.24.108.25"
+        port = int(n.get("port") or 20443)
+        uuid_str = n.get("uuid") or ""
+        pwd_str = n.get("password") or uuid_str
+        if user:
+            u_uuid, u_pwd = ensure_user_credentials(user)
+            uuid_str = u_uuid
+            pwd_str = u_pwd
+
+        if n.get("is_relay"):
+            name = f"[{n.get('server_name', '中转')}] ➔ {n.get('name', '落地')}"
+        else:
+            name = f"[{n.get('server_name', '本机')}] {n.get('name', 'node')}"
+
+        base_name = name
+        counter = 2
+        while name in names:
+            name = f"{base_name} ({counter})"
+            counter += 1
+
+        proxy_item = None
+        if proto == "vless_reality":
+            pbk = n.get("public_key") or ""
+            sid = n.get("short_id") or ""
+            sni = n.get("sni") or "www.apple.com"
+            flow = n.get("flow") or "xtls-rprx-vision"
+            proxy_item = {
+                "name": name,
+                "type": "vless",
+                "server": host,
+                "port": port,
+                "uuid": uuid_str,
+                "network": "tcp",
+                "tls": True,
+                "udp": True,
+                "flow": flow,
+                "servername": sni,
+                "reality-opts": {
+                    "public-key": pbk,
+                    "short-id": sid
+                },
+                "client-fingerprint": "chrome"
+            }
+        elif proto == "vless_reality_xhttp":
+            pbk = n.get("public_key") or ""
+            sid = n.get("short_id") or ""
+            sni = n.get("sni") or "www.apple.com"
+            xpath = n.get("ws_path") or "/xhttp"
+            proxy_item = {
+                "name": name,
+                "type": "vless",
+                "server": host,
+                "port": port,
+                "uuid": uuid_str,
+                "network": "xhttp",
+                "tls": True,
+                "udp": True,
+                "servername": sni,
+                "reality-opts": {
+                    "public-key": pbk,
+                    "short-id": sid
+                },
+                "client-fingerprint": "chrome",
+                "xhttp-opts": {
+                    "path": xpath,
+                    "mode": "auto"
+                }
+            }
+        elif proto == "vless_ws":
+            ws_path = n.get("ws_path") or "/ws-proxy"
+            proxy_item = {
+                "name": name,
+                "type": "vless",
+                "server": host,
+                "port": port,
+                "uuid": uuid_str,
+                "network": "ws",
+                "tls": False,
+                "udp": True,
+                "ws-opts": {
+                    "path": ws_path
+                }
+            }
+        elif proto == "vmess_ws":
+            ws_path = n.get("ws_path") or "/vmess-ws"
+            proxy_item = {
+                "name": name,
+                "type": "vmess",
+                "server": host,
+                "port": port,
+                "uuid": uuid_str,
+                "alterId": 0,
+                "cipher": "auto",
+                "network": "ws",
+                "tls": False,
+                "udp": True,
+                "ws-opts": {
+                    "path": ws_path
+                }
+            }
+        elif proto == "hysteria2":
+            sni = n.get("sni") or "bing.com"
+            proxy_item = {
+                "name": name,
+                "type": "hysteria2",
+                "server": host,
+                "port": port,
+                "password": pwd_str,
+                "sni": sni,
+                "skip-cert-verify": True
+            }
+        elif proto == "trojan":
+            sni = n.get("sni") or host
+            proxy_item = {
+                "name": name,
+                "type": "trojan",
+                "server": host,
+                "port": port,
+                "password": pwd_str,
+                "sni": sni,
+                "skip-cert-verify": True,
+                "udp": True
+            }
+        elif proto == "ss2022":
+            method = n.get("method") or "2022-blake3-aes-128-gcm"
+            proxy_item = {
+                "name": name,
+                "type": "ss",
+                "server": host,
+                "port": port,
+                "cipher": method,
+                "password": pwd_str,
+                "udp": True
+            }
+        elif proto == "socks5":
+            uname = (n.get("username") or "").strip()
+            if user:
+                uname = user.get("username", "")
+            proxy_item = {
+                "name": name,
+                "type": "socks5",
+                "server": host,
+                "port": port
+            }
+            if uname:
+                proxy_item["username"] = uname
+                proxy_item["password"] = pwd_str
+
+        if proxy_item:
+            proxies.append(proxy_item)
+            names.append(name)
+
+    if not names:
+        names = ["DIRECT"]
+
+    clash_cfg = {
+        "port": 7890,
+        "socks-port": 7891,
+        "allow-lan": False,
+        "mode": "rule",
+        "log-level": "info",
+        "unified-delay": True,
+        "proxies": proxies,
+        "proxy-groups": [
+            {
+                "name": "节点选择",
+                "type": "select",
+                "proxies": ["自动选择"] + names
+            },
+            {
+                "name": "自动选择",
+                "type": "url-test",
+                "url": "http://www.gstatic.com/generate_204",
+                "interval": 300,
+                "tolerance": 50,
+                "proxies": list(names)
+            }
+        ],
+        "rules": [
+            "GEOIP,LAN,DIRECT",
+            "MATCH,节点选择"
+        ]
+    }
+
+    try:
+        import yaml
+        return yaml.dump(clash_cfg, allow_unicode=True, sort_keys=False)
+    except Exception:
+        lines = [
+            "port: 7890",
+            "socks-port: 7891",
+            "allow-lan: false",
+            "mode: rule",
+            "log-level: info",
+            "unified-delay: true",
+            "proxies:"
+        ]
+        for p in proxies:
+            lines.append(f"  - name: \"{p['name']}\"")
+            lines.append(f"    type: {p['type']}")
+            lines.append(f"    server: \"{p['server']}\"")
+            lines.append(f"    port: {p['port']}")
+            if "uuid" in p:
+                lines.append(f"    uuid: \"{p['uuid']}\"")
+            if "password" in p:
+                lines.append(f"    password: \"{p['password']}\"")
+            if "network" in p:
+                lines.append(f"    network: {p['network']}")
+            if "tls" in p:
+                lines.append(f"    tls: {'true' if p['tls'] else 'false'}")
+            if "udp" in p:
+                lines.append(f"    udp: {'true' if p['udp'] else 'false'}")
+            if "flow" in p and p['flow']:
+                lines.append(f"    flow: {p['flow']}")
+            if "servername" in p:
+                lines.append(f"    servername: \"{p['servername']}\"")
+            if "sni" in p:
+                lines.append(f"    sni: \"{p['sni']}\"")
+            if "skip-cert-verify" in p:
+                lines.append("    skip-cert-verify: true")
+            if "reality-opts" in p:
+                lines.append("    reality-opts:")
+                lines.append(f"      public-key: \"{p['reality-opts']['public-key']}\"")
+                lines.append(f"      short-id: \"{p['reality-opts']['short-id']}\"")
+            if "client-fingerprint" in p:
+                lines.append(f"    client-fingerprint: {p['client-fingerprint']}")
+        lines.append("proxy-groups:")
+        lines.append("  - name: \"节点选择\"")
+        lines.append("    type: select")
+        lines.append("    proxies:")
+        lines.append("      - \"自动选择\"")
+        for n in names:
+            lines.append(f"      - \"{n}\"")
+        lines.append("  - name: \"自动选择\"")
+        lines.append("    type: url-test")
+        lines.append("    url: http://www.gstatic.com/generate_204")
+        lines.append("    interval: 300")
+        lines.append("    tolerance: 50")
+        lines.append("    proxies:")
+        for n in names:
+            lines.append(f"      - \"{n}\"")
+        lines.append("rules:")
+        lines.append("  - GEOIP,LAN,DIRECT")
+        lines.append("  - MATCH,节点选择")
+        return "\n".join(lines)
 
 def is_local_node(node):
     s_id = node.get("server_id", 0)
@@ -1629,11 +1923,6 @@ def apply_singbox_config():
         "log": {
             "level": "warn",
             "timestamp": True
-        },
-        "experimental": {
-            "clash_api": {
-                "external_controller": "127.0.0.1:9090"
-            }
         },
         "inbounds": inbounds,
         "outbounds": [
@@ -1983,7 +2272,7 @@ def apply_xray_config():
         },
         "inbounds": [api_inbound] + inbounds,
         "outbounds": [
-            { "protocol": "freedom", "tag": "direct" },
+            { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIPv4" } },
             { "protocol": "blackhole", "tag": "block" },
             { "protocol": "freedom", "tag": "api" }
         ],
@@ -2076,19 +2365,33 @@ class ProxyHandler(BaseHTTPRequestHandler):
             exp_time = user.get("expires_at", 0)
             sub_userinfo = f"upload={u_bytes}; download={d_bytes}; total={limit}; expire={exp_time}"
 
+            ua = self.headers.get("User-Agent", "").lower()
+            is_clash = ("clash" in ua or "meta" in ua or "mihomo" in ua or qs.get("clash", [""])[0] == "1")
+
             if not is_enabled or is_expired or is_over_quota:
                 conn.close()
                 status_reason = "流量已超额" if is_over_quota else ("订阅已到期" if is_expired else "账户已停用")
-                warning_link = f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:0?security=none#{quote('⚠️ ' + status_reason + '，请联系管理员')}"
-                import base64
-                encoded = base64.b64encode(warning_link.encode("utf-8"))
-                self.send_response(200)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.send_header("Subscription-Userinfo", sub_userinfo)
-                self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.txt"')
-                self.send_header("Content-Length", str(len(encoded)))
-                self.end_headers()
-                self.wfile.write(encoded)
+                if is_clash:
+                    yaml_content = generate_clash_yaml([], user=user, warning_msg=f"⚠️ {status_reason}，请联系管理员")
+                    encoded = yaml_content.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/yaml; charset=utf-8")
+                    self.send_header("Subscription-Userinfo", sub_userinfo)
+                    self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.yaml"')
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
+                else:
+                    warning_link = f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:0?security=none#{quote('⚠️ ' + status_reason + '，请联系管理员')}"
+                    import base64
+                    encoded = base64.b64encode(warning_link.encode("utf-8"))
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Subscription-Userinfo", sub_userinfo)
+                    self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.txt"')
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
                 return
 
             cur = conn.execute("SELECT * FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
@@ -2101,6 +2404,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 sid = n.get("server_id")
                 if sid in node_ip_map and is_private_ip(n.get("server_host")):
                     n["server_host"] = node_ip_map[sid]
+
+            if is_clash:
+                yaml_content = generate_clash_yaml(nodes, user=user)
+                encoded = yaml_content.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/yaml; charset=utf-8")
+                self.send_header("Subscription-Userinfo", sub_userinfo)
+                self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.yaml"')
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
 
             links = [format_node_link(n, user=user) for n in nodes if format_node_link(n, user=user)]
             import base64
@@ -2171,6 +2486,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "is_admin": bool(user.get("is_admin", 0)),
                     "sub_token": sub_token,
                     "sub_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={sub_token}",
+                    "clash_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={sub_token}&clash=1",
                     "traffic_limit_bytes": limit,
                     "upload_bytes": user.get("upload_bytes", 0),
                     "download_bytes": user.get("download_bytes", 0),
@@ -2202,6 +2518,31 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "nodes": nodes})
             return
 
+        if path.startswith("/api/proxy/nodes/") and path.endswith("/test"):
+            user = get_current_user(self.headers)
+            if not user:
+                self.send_json({"ok": False, "error": "未登录"}, 401)
+                return
+            node_id = int(path.split("/")[-2])
+            conn = get_db()
+            cur = conn.execute("SELECT * FROM proxy_node WHERE id = ?", (node_id,))
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                self.send_json({"ok": False, "message": "节点不存在"}, 404)
+                return
+            node = dict(row)
+            if is_private_ip(node.get("server_host")):
+                cur_s = conn.execute("SELECT id, ip, ipv4 FROM node WHERE id = ?", (node.get("server_id"),))
+                s_row = cur_s.fetchone()
+                if s_row:
+                    node["server_host"] = resolve_server_host(dict(s_row))
+            conn.close()
+
+            ok, msg, ms = test_node_connectivity(node)
+            self.send_json({"ok": ok, "message": msg, "latency_ms": ms})
+            return
+
         # 4. Admin-only endpoints
         if not check_auth(self.headers):
             self.send_json({"error": "Unauthorized"}, 401)
@@ -2224,6 +2565,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 u["remaining_bytes"] = remaining
                 u["status"] = "disabled" if u.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else "active"))
                 u["sub_url"] = f"https://tz.yohoo.xyz/api/proxy/sub?token={u['sub_token']}"
+                u["clash_url"] = f"https://tz.yohoo.xyz/api/proxy/sub?token={u['sub_token']}&clash=1"
             self.send_json({"ok": True, "users": users})
             return
 
@@ -2286,27 +2628,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "sub_token": get_sub_token(),
                 "recommended_port": get_free_port()
             })
-            return
-
-        elif path.startswith("/api/proxy/nodes/") and path.endswith("/test"):
-            node_id = int(path.split("/")[-2])
-            conn = get_db()
-            cur = conn.execute("SELECT * FROM proxy_node WHERE id = ?", (node_id,))
-            row = cur.fetchone()
-            if not row:
-                conn.close()
-                self.send_json({"ok": False, "message": "节点不存在"}, 404)
-                return
-            node = dict(row)
-            if is_private_ip(node.get("server_host")):
-                cur_s = conn.execute("SELECT id, ip, ipv4 FROM node WHERE id = ?", (node.get("server_id"),))
-                s_row = cur_s.fetchone()
-                if s_row:
-                    node["server_host"] = resolve_server_host(dict(s_row))
-            conn.close()
-
-            ok, msg, ms = test_node_connectivity(node)
-            self.send_json({"ok": ok, "message": msg, "latency_ms": ms})
             return
 
         elif path == "/api/proxy/servers":
