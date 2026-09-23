@@ -297,72 +297,37 @@ else
   rm -f "$_TMP_BIN"
 fi
 
-# 如果没有二进制发行包，下载 Python 脚本作为兼容运行模式
+# 如果没有二进制发行包，部署中止（仓库已私有，无法下载 Python 脚本）
 if [ "$HAS_BINARY" = "0" ]; then
-  info "正在下载 proxy_manager.py..."
-  _TMP_PM="/tmp/proxy_manager-$$.py"
-  if curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$_TMP_PM" 2>/dev/null || \
-     wget -qO "$_TMP_PM" "${GITHUB_RAW}/proxy_manager.py" 2>/dev/null || \
-     python3 -c "import urllib.request; urllib.request.urlretrieve('${GITHUB_RAW}/proxy_manager.py', '$_TMP_PM')" 2>/dev/null; then
-    mv -f "$_TMP_PM" "$ROOT/proxy_manager.py"
-  else
-    rm -f "$_TMP_PM"
-    die "下载 proxy_manager.py 失败，请检查网络"
-  fi
-
-  # license_guard.py（商业许可证双轨鉴权核心）
-  _TMP_LG="/tmp/license_guard-$$.py"
-  if curl -fsSL "${GITHUB_RAW}/license_guard.py" -o "$_TMP_LG" 2>/dev/null || \
-     wget -qO "$_TMP_LG" "${GITHUB_RAW}/license_guard.py" 2>/dev/null || \
-     python3 -c "import urllib.request; urllib.request.urlretrieve('${GITHUB_RAW}/license_guard.py', '$_TMP_LG')" 2>/dev/null; then
-    mv -f "$_TMP_LG" "$ROOT/license_guard.py"
-  fi
+  die "无法下载 proxy-manager 二进制！请访问 https://github.com/${GITHUB_REPO}/releases 确认 Release 中有 proxy-manager-linux-${ARCH_HUB} 文件"
 fi
 
-# install.sh（子节点安装脚本，供 Caddy 对外分发）
-curl -fsSL "${GITHUB_RAW}/scripts/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || \
-  wget -qO "$SCRIPTS_DIR/install.sh" "${GITHUB_RAW}/scripts/install.sh" 2>/dev/null || true
+# install.sh（子节点安装脚本，供 Caddy 对外分发）—— 从 Release 下载
+info "正在下载 install.sh..."
+curl -fsSL "${GITHUB_RELEASES}/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || \
+  wget -qO "$SCRIPTS_DIR/install.sh" "${GITHUB_RELEASES}/install.sh" 2>/dev/null || true
 chmod +x "$SCRIPTS_DIR/install.sh" 2>/dev/null || true
 
-# hhub（运维控制台 CLI 工具）
+# hhub（运维控制台 CLI 工具）—— 从 Release 下载
 info "正在安装 hhub 终端控制台工具..."
-curl -fsSL "${GITHUB_RAW}/scripts/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || \
-  wget -qO "/usr/local/bin/hhub" "${GITHUB_RAW}/scripts/hhub.sh" 2>/dev/null || true
+curl -fsSL "${GITHUB_RELEASES}/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || \
+  wget -qO "/usr/local/bin/hhub" "${GITHUB_RELEASES}/hhub.sh" 2>/dev/null || true
 chmod +x "/usr/local/bin/hhub" 2>/dev/null || true
 
-# 前端 dist（通过 git sparse-checkout 或 GitHub tarball 拉取）
+# 前端 dist —— 从 Release 下载 web-admin-dist.tar.gz
 info "正在下载前端资源..."
 mkdir -p "$WEB_DIST"
-_TMP_REPO="/tmp/proxyprobe_$$"
-rm -rf "$_TMP_REPO"
-
-if git clone --depth 1 --filter=blob:none --sparse \
-    "https://github.com/${GITHUB_REPO}.git" "$_TMP_REPO" 2>/dev/null; then
-  cd "$_TMP_REPO"
-  git sparse-checkout set web-admin/dist scripts 2>/dev/null || true
-  git checkout 2>/dev/null || true
-  [ -d "$_TMP_REPO/web-admin/dist" ] && cp -r "$_TMP_REPO/web-admin/dist/." "$WEB_DIST/"
-  [ -f "$_TMP_REPO/scripts/install.sh" ] && cp "$_TMP_REPO/scripts/install.sh" "$SCRIPTS_DIR/install.sh"
-  [ -f "$_TMP_REPO/scripts/hhub.sh" ] && cp "$_TMP_REPO/scripts/hhub.sh" "/usr/local/bin/hhub" && chmod +x "/usr/local/bin/hhub"
-  cd /
-  rm -rf "$_TMP_REPO"
-fi
-
-if [ ! -f "$WEB_DIST/index.html" ]; then
-  info "正在通过 GitHub 归档包拉取前端构建资源..."
-  curl -fsSL "https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz" | tar -xz -C /tmp/
-  if [ -d "/tmp/ProxyProbe-main/web-admin/dist" ]; then
-    cp -r /tmp/ProxyProbe-main/web-admin/dist/. "$WEB_DIST/"
-    [ -f "/tmp/ProxyProbe-main/scripts/install.sh" ] && cp /tmp/ProxyProbe-main/scripts/install.sh "$SCRIPTS_DIR/install.sh"
-    [ -f "/tmp/ProxyProbe-main/scripts/hhub.sh" ] && cp /tmp/ProxyProbe-main/scripts/hhub.sh "/usr/local/bin/hhub" && chmod +x "/usr/local/bin/hhub"
-  fi
-  rm -rf /tmp/ProxyProbe-main
+_TMP_DIST="/tmp/web-admin-dist-$$.tar.gz"
+if curl -fsSL "${GITHUB_RELEASES}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
+   wget -qO "$_TMP_DIST" "${GITHUB_RELEASES}/web-admin-dist.tar.gz" 2>/dev/null; then
+  tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null && info "前端资源已就绪" || warn "前端资源解压失败"
+  rm -f "$_TMP_DIST"
+else
+  rm -f "$_TMP_DIST"
+  warn "前端资源下载失败，请检查 Release 中是否有 web-admin-dist.tar.gz"
 fi
 
 [ -f "/usr/local/bin/hhub" ] && cp "/usr/local/bin/hhub" "$SCRIPTS_DIR/hhub.sh" 2>/dev/null || true
-
-[ -f "$WEB_DIST/index.html" ] && info "前端资源已就绪" || \
-  warn "前端资源可能未完整下载，请检查 $WEB_DIST"
 
 # ---- 步骤 5: 配置 proxy-manager 服务 ----
 header "步骤 5/8 · 启动代理管理服务 (proxy-manager)"

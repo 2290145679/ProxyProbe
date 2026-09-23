@@ -350,58 +350,48 @@ upgrade_system() {
         *) ARCH_HUB="amd64" ;;
     esac
     _LATEST_TAG=$(curl -sSL "$GITHUB_API" 2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4 || echo "")
+    _REL_BASE="https://github.com/${GITHUB_REPO}/releases/latest/download"
 
-    # 1. 优先尝试升级 proxy-manager 二进制
+    # 1. 升级 proxy-manager 二进制
     if [ -n "$_LATEST_TAG" ]; then
-        if curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${_LATEST_TAG}/proxy-manager-linux-${ARCH_HUB}" -o "$ROOT/proxy-manager.new" 2>/dev/null; then
+        info "正在更新 proxy-manager 二进制 (${_LATEST_TAG})..."
+        curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${_LATEST_TAG}/proxy-manager-linux-${ARCH_HUB}" \
+            -o "$ROOT/proxy-manager.new" 2>/dev/null && {
             chmod +x "$ROOT/proxy-manager.new"
             mv -f "$ROOT/proxy-manager.new" "$ROOT/proxy-manager"
             info "proxy-manager 二进制已更新"
-        fi
+        } || warn "proxy-manager 二进制下载跳过或已是最新"
     fi
 
-    # 若未采用二进制，则拉取 Python 脚本与许可证鉴权模块
-    if [ ! -f "$ROOT/proxy-manager" ]; then
-        curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py.new" && \
-            mv -f "$ROOT/proxy_manager.py.new" "$ROOT/proxy_manager.py" && \
-            info "proxy_manager.py 已更新" || warn "proxy_manager.py 下载跳过"
-        curl -fsSL "${GITHUB_RAW}/license_guard.py" -o "$ROOT/license_guard.py.new" 2>/dev/null && \
-            mv -f "$ROOT/license_guard.py.new" "$ROOT/license_guard.py" || true
-    fi
-
-    # 2. 更新 install.sh
-    curl -fsSL "${GITHUB_RAW}/scripts/install.sh" -o "$SCRIPTS_DIR/install.sh.new" 2>/dev/null && \
+    # 2. 更新 install.sh（从 Release）
+    curl -fsSL "${_REL_BASE}/install.sh" -o "$SCRIPTS_DIR/install.sh.new" 2>/dev/null && \
         mv -f "$SCRIPTS_DIR/install.sh.new" "$SCRIPTS_DIR/install.sh" && \
-        chmod +x "$SCRIPTS_DIR/install.sh" || true
+        chmod +x "$SCRIPTS_DIR/install.sh" && info "install.sh 已更新" || true
 
-    # 3. 更新 hhub 控制台脚本本身
-    curl -fsSL "${GITHUB_RAW}/scripts/hhub.sh" -o "/usr/local/bin/hhub.new" 2>/dev/null && \
+    # 3. 更新 hhub 控制台脚本本身（从 Release）
+    curl -fsSL "${_REL_BASE}/hhub.sh" -o "/usr/local/bin/hhub.new" 2>/dev/null && \
         mv -f "/usr/local/bin/hhub.new" "/usr/local/bin/hhub" && \
-        chmod +x "/usr/local/bin/hhub" || true
+        chmod +x "/usr/local/bin/hhub" && info "hhub 控制台已更新" || true
 
-    # 4. 更新前端 dist
-    _TMP_REPO="/tmp/proxyprobe_upgrade_$$"
-    rm -rf "$_TMP_REPO"
-    if git clone --depth 1 --filter=blob:none --sparse "https://github.com/${GITHUB_REPO}.git" "$_TMP_REPO" 2>/dev/null; then
-        cd "$_TMP_REPO"
-        git sparse-checkout set web-admin/dist 2>/dev/null || true
-        git checkout 2>/dev/null || true
-        if [ -d "$_TMP_REPO/web-admin/dist" ]; then
-            cp -r "$_TMP_REPO/web-admin/dist/." "$WEB_DIST/"
-            info "前端管理面板资源已更新完毕"
-        fi
-        cd /
-        rm -rf "$_TMP_REPO"
+    # 4. 更新前端 dist（从 Release 下载 tar.gz）
+    _TMP_DIST="/tmp/web-admin-dist-upgrade-$$.tar.gz"
+    if curl -fsSL "${_REL_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null; then
+        tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null && info "前端管理面板资源已更新完毕" || warn "前端资源解压失败"
+        rm -f "$_TMP_DIST"
+    else
+        rm -f "$_TMP_DIST"
+        warn "前端资源下载跳过"
     fi
 
     # 5. 检查 monitor-hub 二进制升级
     if [ -n "$_LATEST_TAG" ]; then
         info "正在更新 monitor-hub 二进制 (${_LATEST_TAG})..."
-        curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${_LATEST_TAG}/monitor-hub-linux-${ARCH_HUB}" -o "$ROOT/monitor-hub.new" 2>/dev/null && {
+        curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${_LATEST_TAG}/monitor-hub-linux-${ARCH_HUB}" \
+            -o "$ROOT/monitor-hub.new" 2>/dev/null && {
             chmod +x "$ROOT/monitor-hub.new"
             mv -f "$ROOT/monitor-hub.new" "$ROOT/monitor-hub"
             info "monitor-hub 核心已更新"
-        } || warn "二进制下载跳过或已是最新"
+        } || warn "monitor-hub 下载跳过或已是最新"
     fi
 
     # 重启服务
