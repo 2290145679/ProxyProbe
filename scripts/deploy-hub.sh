@@ -60,12 +60,12 @@ echo ""
 header "📋 配置信息"
 
 if [ -z "${DOMAIN:-}" ]; then
-  read -r -p "  请输入你的域名（已解析到本机 IP）: " DOMAIN
+  read -r -p "  请输入你的域名（已解析到本机 IP）: " DOMAIN </dev/tty || true
 fi
 [ -z "$DOMAIN" ] && die "域名不能为空"
 
 if [ -z "${ADMIN_PASS:-}" ]; then
-  read -r -p "  请输入管理员密码（留空则随机生成）: " ADMIN_PASS
+  read -r -p "  请输入管理员密码（留空则随机生成）: " ADMIN_PASS </dev/tty || true
 fi
 if [ -z "$ADMIN_PASS" ]; then
   ADMIN_PASS=$(tr -dc 'A-Za-z0-9!@#%^&*' < /dev/urandom | head -c 16)
@@ -77,7 +77,12 @@ echo -e "  域名:       ${BOLD}${DOMAIN}${N}"
 echo -e "  管理密码:   ${BOLD}${ADMIN_PASS}${N}"
 echo -e "  下载来源:   ${BOLD}github.com/${GITHUB_REPO}${N}"
 echo ""
-read -r -p "  确认以上配置并开始安装？[y/N] " _CONFIRM
+
+if [ -n "${NON_INTERACTIVE:-}" ] || [ -n "${YES:-}" ] || [ ! -t 0 ]; then
+  _CONFIRM="y"
+else
+  read -r -p "  确认以上配置并开始安装？[y/N] " _CONFIRM
+fi
 case "$_CONFIRM" in y|Y|yes) ;; *) echo "  已取消"; exit 0 ;; esac
 
 # ---- 步骤 1: 安装系统依赖 ----
@@ -97,14 +102,19 @@ info "系统依赖安装完成"
 header "步骤 2/8 · 安装 Caddy（自动 SSL）"
 
 if ! command -v caddy >/dev/null 2>&1; then
+  INSTALLED=0
   if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-      | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-      | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
-    apt-get update -y -qq && apt-get install -y -qq caddy
-  else
-    # 通用：直接下载二进制
+    (
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+        | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+        | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+      apt-get update -y -qq && apt-get install -y -qq caddy
+    ) 2>/dev/null && INSTALLED=1 || true
+  fi
+
+  if [ "$INSTALLED" = "0" ] && ! command -v caddy >/dev/null 2>&1; then
+    info "正在通过官方发布包下载 Caddy..."
     _CADDY_VER=$(curl -sSL "https://api.github.com/repos/caddyserver/caddy/releases/latest" \
       2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4 || echo "v2.9.1")
     curl -fsSL "https://github.com/caddyserver/caddy/releases/download/${_CADDY_VER}/caddy_${_CADDY_VER#v}_linux_${ARCH_HUB}.tar.gz" \
@@ -162,6 +172,7 @@ info "monitor-hub 已就绪"
 id -u monitor >/dev/null 2>&1 || \
   useradd --system --no-create-home --shell /usr/sbin/nologin monitor 2>/dev/null || true
 chown -R monitor:monitor "$DATA" 2>/dev/null || true
+chmod 775 "$DATA" 2>/dev/null || true
 
 # 创建 monitor-hub systemd 服务
 cat > /etc/systemd/system/monitor-hub.service << EOF
@@ -175,7 +186,7 @@ Type=simple
 User=monitor
 Group=monitor
 WorkingDirectory=$ROOT
-ExecStart=$ROOT/monitor-hub --listen :28080 --data $DATA --site https://$DOMAIN
+ExecStart=$ROOT/monitor-hub --listen 127.0.0.1:28080 --db $DATA/monitor.db --site https://$DOMAIN
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
@@ -202,7 +213,7 @@ curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py" || \
 curl -fsSL "${GITHUB_RAW}/scripts/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || true
 chmod +x "$SCRIPTS_DIR/install.sh" 2>/dev/null || true
 
-# 前端 dist（通过 git sparse-checkout 只拉取 web-admin/dist）
+# 前端 dist（通过 git sparse-checkout 或 GitHub tarball 拉取）
 info "正在下载前端资源..."
 mkdir -p "$WEB_DIST"
 _TMP_REPO="/tmp/proxyprobe_$$"
@@ -217,6 +228,16 @@ if git clone --depth 1 --filter=blob:none --sparse \
   [ -f "$_TMP_REPO/scripts/install.sh" ] && cp "$_TMP_REPO/scripts/install.sh" "$SCRIPTS_DIR/install.sh"
   cd /
   rm -rf "$_TMP_REPO"
+fi
+
+if [ ! -f "$WEB_DIST/index.html" ]; then
+  info "正在通过 GitHub 归档包拉取前端构建资源..."
+  curl -fsSL "https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz" | tar -xz -C /tmp/
+  if [ -d "/tmp/ProxyProbe-main/web-admin/dist" ]; then
+    cp -r /tmp/ProxyProbe-main/web-admin/dist/. "$WEB_DIST/"
+    [ -f "/tmp/ProxyProbe-main/scripts/install.sh" ] && cp /tmp/ProxyProbe-main/scripts/install.sh "$SCRIPTS_DIR/install.sh"
+  fi
+  rm -rf /tmp/ProxyProbe-main
 fi
 
 [ -f "$WEB_DIST/index.html" ] && info "前端资源已就绪" || \
