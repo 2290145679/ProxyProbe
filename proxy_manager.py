@@ -138,7 +138,7 @@ if [ "$INSTALL_XRAY" = "1" ]; then
   TMP_ZIP="/tmp/xray.zip"
 
   echo "[+] 正在下载并配置最新版 Xray-core..."
-  curl -fsSL "$HUB_SERVER/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" || \
+  curl -fsSL "$HUB_SERVER/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" 2>/dev/null || \
   curl -fsSL "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" || \
   curl -fsSL "https://ghproxy.net/https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP"
 
@@ -212,7 +212,7 @@ if [ "$INSTALL_SINGBOX" = "1" ]; then
   SB_VER="${LATEST_SB_TAG#v}"
   [ -z "$SB_VER" ] && SB_VER="1.14.1"
 
-  curl -fsSL "$HUB_SERVER/sing-box-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || \
+  curl -fsSL "$HUB_SERVER/sing-box-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" 2>/dev/null || \
   curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || \
   curl -fsSL "https://ghproxy.net/https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || true
 
@@ -283,7 +283,7 @@ if [ "$INSTALL_REALM" = "1" ]; then
   TMP_REALM_TAR="/tmp/realm.tar.gz"
 
   echo "[+] 正在下载并配置最新版 Realm 端口转发核心..."
-  curl -fsSL "$HUB_SERVER/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" || \
+  curl -fsSL "$HUB_SERVER/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" 2>/dev/null || \
   curl -fsSL "https://github.com/zhboner/realm/releases/latest/download/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" || \
   curl -fsSL "https://ghproxy.net/https://github.com/zhboner/realm/releases/latest/download/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" || true
 
