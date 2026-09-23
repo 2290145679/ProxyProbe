@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            asset_name: monitor-hub-linux-amd64
+          - target: aarch64-unknown-linux-musl
+            asset_name: monitor-hub-linux-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (cross)
+        working-directory: server
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Rename binary
+        run: |
+          cp server/target/${{ matrix.target }}/release/monitor-hub ${{ matrix.asset_name }}
+          chmod +x ${{ matrix.asset_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "ProxyProbe ${{ github.ref_name }}"
+          body: |
+            ## ProxyProbe ${{ github.ref_name }}
+
+            ### 下载
+
+            | 架构 | 文件 |
+            |------|------|
+            | x86_64 (amd64) | `monitor-hub-linux-amd64` |
+            | ARM64 | `monitor-hub-linux-arm64` |
+
+            ### 一键部署主控端
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe/main/scripts/deploy-hub.sh | bash
+            ```
+          files: |
+            artifacts/monitor-hub-linux-amd64/monitor-hub-linux-amd64
+            artifacts/monitor-hub-linux-arm64/monitor-hub-linux-arm64
+          draft: false
+          prerelease: false

@@ -137,29 +137,26 @@ npm run build
 
 ```
 ProxyProbe/
-├── proxy_manager.py           # 核心代理管理后端守护进程 (双核心调度/配置下发/鉴权)
-├── config/
-│   ├── Caddyfile              # 生产环境网关路由及 SSL 反代规则模板
-│   ├── agent.env.example      # 探针环境变量参考示例
-│   └── xray-config.json       # Xray 默认模板配置
-├── database/
-│   ├── schema.sql             # 基础数据库表结构 (包含 proxy_node, node_proxy_status)
-│   └── dump.sql               # 初始数据备份
-├── scripts/
-│   ├── install-hub.sh         # 主控端自动化部署脚本
-│   ├── install.sh             # 探针节点一键安装增强脚本
-│   └── vless-server.sh        # 单机一键部署备用工具
-├── systemd/
-│   ├── monitor-hub.service    # 探针主控守护进程服务
-│   ├── monitor-agent.service  # 探针被控端服务
-│   └── proxy-manager.service  # 代理管理守护进程服务
-├── upstream-monitor/          # 探针监控核心源码与管理后台前端
-│   ├── src/                   # Rust 探针主控服务端源码
-│   └── web-admin/             # React + Vite 前端管理后台源码
+├── proxy_manager.py           # 代理管理后端（用户/节点/流量/设备限制/订阅生成）
+├── server/                    # Rust 探针主控（monitor-hub）
+│   ├── src/                   # Rust 源码（axum + tokio + rusqlite）
+│   ├── Cargo.toml             # 包定义（repository 指向本仓库）
+│   └── web-admin/             # 管理后台前端源码（Vite + React + Tailwind）
 │       └── src/components/
-│           ├── ProxyNodes.tsx # 代理协议管理核心组件 (双核心卡片/节点列表/测速/防呆)
-│           └── Admin.tsx      # 管理后台主容器
-└── README.md                  # 项目详细文档
+│           ├── UserDashboard.tsx  # 用户界面（订阅、节点、IP隐藏、探针入口）
+│           ├── ProxyUsers.tsx     # 用户管理（设备限制、流量配额）
+│           ├── ProxyNodes.tsx     # 节点管理（双核心/防呆拦截）
+│           └── ProxyServers.tsx   # 服务器管理（一键安装指令生成）
+├── web-admin/dist/            # 前端构建产物（部署时使用）
+├── scripts/
+│   ├── deploy-hub.sh          # 主控端一键部署（仅从本仓库下载）
+│   └── install.sh             # 子节点一键安装（探针+代理核心）
+├── .github/workflows/
+│   └── release.yml            # 打 tag 时自动编译 monitor-hub 二进制并发布 Release
+├── systemd/
+│   └── proxy-manager.service  # proxy-manager 系统服务定义
+└── config/
+    └── Caddyfile              # Caddy 反向代理配置模板
 ```
 
 ---

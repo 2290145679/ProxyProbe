@@ -1,10 +1,12 @@
 [package]
 name = "monitor-hub"
-version = "1.2.0"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
-description = "Lightweight server monitoring hub"
-repository = "https://github.com/monitor-probe/monitor"
+description = "ProxyProbe server monitoring hub — distributed probe & proxy management platform"
+repository = "https://github.com/2290145679/ProxyProbe"
+homepage = "https://github.com/2290145679/ProxyProbe"
+authors = ["ProxyProbe"]
 
 [dependencies]
 anyhow = "1"
