@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,42 +14,60 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            asset_name: monitor-hub-linux-amd64
-          - target: aarch64-unknown-linux-musl
-            asset_name: monitor-hub-linux-arm64
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 1. 下载探针主题资源（build.rs 和 rust-embed 需要）
+      - name: Download default theme
+        working-directory: server
+        run: sh scripts/theme.sh
+
+      # 2. 构建前端（Rust binary 会通过 rust-embed 内嵌 dist/）
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/web-admin/package-lock.json
+
+      - name: Build frontend
+        working-directory: server/web-admin
+        run: npm ci && npm run build
+
+      # 3. 安装 Rust 工具链
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross
+      # 4. 安装 cross（用于交叉编译 musl 静态二进制）
+      - name: Install cross
+        run: cargo install --locked cross
 
-      - name: Build (cross)
+      # 5. 编译
+      - name: Build
         working-directory: server
-        run: cross build --release --target ${{ matrix.target }}
+        run: cross build --release --locked --target ${{ matrix.target }}
 
-      - name: Rename binary
+      # 6. 整理产物，统一命名为 monitor-hub-linux-amd64 / monitor-hub-linux-arm64
+      - name: Prepare artifact
         run: |
-          cp server/target/${{ matrix.target }}/release/monitor-hub ${{ matrix.asset_name }}
-          chmod +x ${{ matrix.asset_name }}
+          ARCH=$(echo "${{ matrix.target }}" | grep -q 'aarch64' && echo 'arm64' || echo 'amd64')
+          cp "server/target/${{ matrix.target }}/release/monitor-hub" "monitor-hub-linux-${ARCH}"
+          chmod +x "monitor-hub-linux-${ARCH}"
+          echo "ASSET_NAME=monitor-hub-linux-${ARCH}" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ matrix.asset_name }}
+          name: ${{ env.ASSET_NAME }}
+          path: ${{ env.ASSET_NAME }}
 
   release:
-    name: Create Release
+    name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -59,29 +77,28 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: bin
+          merge-multiple: true
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "ProxyProbe ${{ github.ref_name }}"
-          body: |
-            ## ProxyProbe ${{ github.ref_name }}
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          (cd bin && sha256sum monitor-hub-linux-* > sha256sums.txt)
+          gh release create "$GITHUB_REF_NAME" bin/monitor-hub-linux-* bin/sha256sums.txt \
+            --title "ProxyProbe $GITHUB_REF_NAME" \
+            --notes "## ProxyProbe ${GITHUB_REF_NAME}
 
-            ### 下载
+          ### 一键部署主控端
 
-            | 架构 | 文件 |
-            |------|------|
-            | x86_64 (amd64) | `monitor-hub-linux-amd64` |
-            | ARM64 | `monitor-hub-linux-arm64` |
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe/main/scripts/deploy-hub.sh | bash
+          \`\`\`
 
-            ### 一键部署主控端
+          ### 下载
 
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe/main/scripts/deploy-hub.sh | bash
-            ```
-          files: |
-            artifacts/monitor-hub-linux-amd64/monitor-hub-linux-amd64
-            artifacts/monitor-hub-linux-arm64/monitor-hub-linux-arm64
-          draft: false
-          prerelease: false
+          | 架构 | 文件 |
+          |------|------|
+          | x86_64 (amd64) | \`monitor-hub-linux-amd64\` |
+          | ARM64 | \`monitor-hub-linux-arm64\` |"
+        env:
+          GH_TOKEN: ${{ github.token }}

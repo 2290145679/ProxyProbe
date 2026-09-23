@@ -6,6 +6,8 @@ __pycache__/
 # Node / Frontend
 node_modules/
 dist/
+!web-admin/dist/
+!web-admin/dist/**
 .vite/
 *.local
 
