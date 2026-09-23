@@ -1,0 +1,30 @@
+[Unit]
+Description=monitor agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/monitor/agent.env
+ExecStart=/opt/monitor/monitor-agent --interval 1
+Restart=always
+RestartSec=5
+# A fixed user rather than DynamicUser=: when the mount namespace cannot be
+# created, as in an LXC container without nesting, systemd skips ProtectSystem=
+# and the other mount sandboxing for a unit with a static User=, but refuses to
+# start one with DynamicUser= and exits 226/NAMESPACE. DynamicUser= also implied
+# RestrictSUIDSGID=, which is therefore stated below.
+User=monitor-agent
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+# AF_NETLINK is how getifaddrs(3) obtains this host's own addresses from the
+# kernel; without it the agent reports none.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

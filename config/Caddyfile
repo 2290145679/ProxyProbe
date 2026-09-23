@@ -1,0 +1,40 @@
+tz.yohoo.xyz {
+    # 代理协议与订阅 API
+    handle /api/proxy/* {
+        reverse_proxy 127.0.0.1:28090
+    }
+
+    # 远端一键代理脚本
+    handle /proxy-agent.sh {
+        reverse_proxy 127.0.0.1:28090
+    }
+
+    # 增强探针安装脚本与 Xray 离线分发
+    handle /install.sh {
+        root * /opt/monitor/scripts
+        try_files /install.sh
+        file_server
+    }
+
+    handle /Xray-linux-*.zip {
+        root * /opt/monitor/scripts
+        file_server
+    }
+
+    handle /sing-box-linux-*.tar.gz {
+        root * /opt/monitor/scripts
+        file_server
+    }
+
+    # 后台静态资源
+    handle_path /admin* {
+        root * /opt/monitor/web-admin/dist
+        try_files {path} /index.html
+        file_server
+    }
+
+    # 原 Monitor 探针 API、WebSocket 与公开状态页
+    handle {
+        reverse_proxy 127.0.0.1:28080
+    }
+}

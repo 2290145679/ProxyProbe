@@ -1,0 +1,95 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "inbound-1",
+      "listen": "0.0.0.0",
+      "port": 28443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "b5303143-f9e5-4396-af1d-e28bf2efa231",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": [
+            "www.apple.com"
+          ],
+          "privateKey": "YMjPHkHJwgHkKVaER2opSEf3z6BYVZd2pOI32nRcUkg",
+          "shortIds": [
+            "7ab47dddfe6a2e57"
+          ]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    },
+    {
+      "tag": "inbound-2",
+      "listen": "0.0.0.0",
+      "port": 21207,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "637a123d-6007-4b10-b96d-61201203fcfa",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": [
+            "www.apple.com"
+          ],
+          "privateKey": "eA3rCYRg0tYrJMnNZH-uLBJLoutlRX5KW4skoQ6Wrmg",
+          "shortIds": [
+            "f9184f22c13e89aa"
+          ]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block"
+    }
+  ]
+}

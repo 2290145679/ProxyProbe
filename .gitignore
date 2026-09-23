@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+*.local
+
+# Database files
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+# Keep SQL schema definitions
+!database/schema.sql
+!database/dump.sql
+
+# Rust build output
+target/
+
+# Sensitive environments and keys
+*.env
+!*.env.example
+*.pem
+*.key
+*.crt
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Large pre-downloaded archive files
+*.zip
+*.tar.gz

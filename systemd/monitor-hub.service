@@ -1,0 +1,26 @@
+[Unit]
+Description=monitor hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/monitor/monitor-hub --listen 127.0.0.1:28080 --db /opt/monitor/data/monitor.db
+Restart=always
+RestartSec=5
+# The database and the themes/ directory beside it live in data/, which is the
+# only path this service may write to, excluding even the binary above it.
+User=monitor
+WorkingDirectory=/opt/monitor
+ReadWritePaths=/opt/monitor/data
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

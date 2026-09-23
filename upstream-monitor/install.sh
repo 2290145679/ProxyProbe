@@ -1,0 +1,355 @@
+#!/bin/sh
+# Installs monitor-agent as a systemd or OpenRC service.
+#   curl -fsSL https://hub.example.com/install.sh | sh -s -- --server URL --token TOKEN [options]
+#   curl -fsSL https://hub.example.com/install.sh | sh -s -- --server URL --register KEY [options]
+#   curl -fsSL https://hub.example.com/install.sh | sh -s -- --uninstall
+set -eu
+# useradd and rc-update reside in sbin, which a root shell entered through `su`
+# without `-` lacks on Debian: su keeps the caller's PATH unless ALWAYS_SET_PATH
+# is set, and Debian does not set it.
+PATH="$PATH:/usr/sbin:/sbin"
+
+# Binary and token in one directory, the same one the hub uses, giving a node a
+# single path to inspect and a single path to remove.
+ROOT="/opt/monitor"
+BIN="$ROOT/monitor-agent"
+ENV_FILE="$ROOT/agent.env"
+UNIT_FILE="/etc/systemd/system/monitor-agent.service"
+RC_FILE="/etc/init.d/monitor-agent"
+LOG_FILE="/var/log/monitor-agent.log"
+SERVER=""
+TOKEN=""
+REGISTER=""
+IFACE=""
+IFACE_SET=""
+INTERVAL=""
+INSECURE=""
+UNINSTALL=""
+
+while [ $# -gt 0 ]; do
+	# A flag with no argument: under set -u, `$2` aborts with the shell's own
+	# message rather than the usage below, and `shift 2` cannot proceed.
+	case "$1" in
+	--server | --token | --register | --iface | --interval)
+		[ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; } ;;
+	esac
+	case "$1" in
+	--server) SERVER="$2"; shift 2 ;;
+	--token) TOKEN="$2"; shift 2 ;;
+	--register) REGISTER="$2"; shift 2 ;;
+	--iface) IFACE="$2"; IFACE_SET=1; shift 2 ;;
+	--interval) INTERVAL="$2"; shift 2 ;;
+	--insecure) INSECURE=1; shift ;;
+	--uninstall) UNINSTALL=1; shift ;;
+	*) echo "unknown option: $1" >&2; exit 2 ;;
+	esac
+done
+
+[ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+
+# Removes exactly what an install writes and nothing else, for both init
+# systems: the one present now need not be the one the install found, and
+# systemctl fails outright where systemd is not PID 1 (WSL, containers) although
+# the install left its files there. Each step therefore tolerates failure. The
+# hub may be installed in $ROOT as well, so the directory is removed only once
+# empty.
+if [ -n "$UNINSTALL" ]; then
+	rc-service monitor-agent stop 2>/dev/null || true
+	rc-update del monitor-agent default >/dev/null 2>&1 || true
+	systemctl disable --now monitor-agent 2>/dev/null || true
+	rm -f "$UNIT_FILE" "$RC_FILE" "$LOG_FILE" "$BIN" "$ENV_FILE"
+	systemctl daemon-reload 2>/dev/null || true
+	userdel monitor-agent 2>/dev/null || true
+	rmdir "$ROOT" 2>/dev/null || true
+	echo "monitor-agent uninstalled"
+	exit 0
+fi
+
+[ -n "$SERVER" ] && { [ -n "$TOKEN" ] || [ -n "$REGISTER" ]; } || {
+	echo "usage: install.sh --server URL (--token TOKEN | --register KEY) [--interval SECONDS] [--iface LIST] [--insecure]" >&2
+	echo "       install.sh --uninstall" >&2
+	exit 2
+}
+# A setting of this machine, kept by a rerun without the flag for the reason
+# given for --iface below: the batch command carries none. It is read back from
+# the service definition the last install wrote; a first install takes 1.
+if [ -z "$INTERVAL" ]; then
+	INTERVAL=$(cat "$UNIT_FILE" "$RC_FILE" 2>/dev/null | sed -n \
+		-e 's/^ExecStart=.* --interval \([0-9][0-9]*\).*/\1/p' \
+		-e 's/^command_args="--interval \([0-9][0-9]*\).*/\1/p' | tail -n 1)
+	if [ -n "$INTERVAL" ]; then echo "keeping --interval $INTERVAL from the previous install"; else INTERVAL=1; fi
+fi
+case "$INTERVAL" in "" | *[!0-9]*) echo "interval must be an integer from 1 to 3600" >&2; exit 2 ;; esac
+[ "$INTERVAL" -ge 1 ] && [ "$INTERVAL" -le 3600 ] || { echo "interval must be from 1 to 3600" >&2; exit 2; }
+# Which interfaces carry this machine's traffic is known only on the machine,
+# and the batch command a fleet shares cannot carry one value per machine. A
+# rerun without --iface, the documented upgrade, therefore keeps the value in
+# the env file; --iface '' clears it.
+#
+# A kept value is written back as found, the last assignment being the one
+# systemd and OpenRC apply: root wrote it, both already read it, and a hand edit
+# with quotes must not block every later upgrade. A value given here is held to
+# what the agent accepts -- full names separated by commas, each optionally led
+# by one `-` -- since the agent refuses anything else at startup and would
+# restart forever while this script reported success. The character set also
+# keeps it inert where OpenRC sources the file as shell.
+if [ -z "$IFACE_SET" ]; then
+	IFACE=$(sed -n 's/^MONITOR_IFACE=//p' "$ENV_FILE" 2>/dev/null | tail -n 1)
+	[ -z "$IFACE" ] || echo "keeping --iface $IFACE from the previous install"
+else
+	case ",$IFACE," in
+	*[!A-Za-z0-9._,-]* | *,-,* | *,--*)
+		echo "--iface takes full interface names separated by commas, each optionally led by -, not: $IFACE" >&2
+		exit 2
+		;;
+	esac
+fi
+# A bare host implies TLS, matching the upgrade the agent's ws_url() performs,
+# and the same reversal under --insecure where the hub has no TLS to upgrade to.
+# Without this the two diverge: the agent would dial wss:// while curl below
+# defaults a scheme-less URL to http://, fetching over plaintext the binary about
+# to run as root.
+if [ -n "$INSECURE" ]; then SCHEME=http; else SCHEME=https; fi
+case "$SERVER" in *://*) ;; *) SERVER="$SCHEME://$SERVER" ;; esac
+# The agent already refuses plaintext ws:// to a remote hub, since the token
+# would travel in the clear. The same address fetches the binary about to run as
+# root here, so the same rule applies: over plain HTTP anyone on the path can
+# substitute a binary of their own.
+#
+# --insecure overrides both halves for a hub reached at ip:port with no TLS in
+# front, and says so explicitly: this is the one step of the install that cannot
+# be corrected afterwards, because a substituted binary is already running as
+# root by then.
+#
+# The test applies to the host alone, with scheme, port and path removed, and
+# matches an address rather than a prefix: `127.evil.com` is a registered name
+# resolving wherever its owner points it, and reading it as loopback would hand
+# this plaintext channel to that owner.
+HOST="${SERVER#*://}"
+HOST="${HOST%%/*}"
+# RFC 3986 places userinfo before the host, so `127.0.0.1:28080@evil.example.com`
+# leaves a loopback address where the test below looks while curl, which parses
+# the URL correctly, fetches from the owner of that name -- over plain HTTP, with
+# the bytes installed 0755 and started as root a few lines below. A hub address
+# never requires userinfo; the agent's own ws_url rejects it as well.
+case "$HOST" in
+*@*) echo "server URL must not contain '@': the host is whatever follows it" >&2; exit 2 ;;
+esac
+case "$HOST" in
+"["*) HOST="${HOST#\[}"; HOST="${HOST%%]*}" ;;
+*) HOST="${HOST%%:*}" ;;
+esac
+# A full dotted quad in 127/8 and nothing shorter, matching what the agent's
+# is_loopback() accepts, since Rust's IpAddr parser accepts nothing shorter
+# either -- `127.1` is a name to it, not an address. The two must agree, or this
+# installs over plaintext against a hub the agent then refuses to dial: the unit
+# is written, the service started, and it crash-loops on RestartSec while this
+# script has reported success.
+#
+# The first arm excludes anything containing a letter, which is a registered name
+# however it begins, and anything with more than four components, which is not an
+# address.
+case "$HOST" in
+localhost | ::1) LOCAL=1 ;;
+*[!0-9.]* | *.*.*.*.*) LOCAL="" ;;
+127.[0-9]*.[0-9]*.[0-9]*) LOCAL=1 ;;
+*) LOCAL="" ;;
+esac
+case "$SERVER" in
+http://*)
+	if [ -z "$LOCAL" ]; then
+		[ -n "$INSECURE" ] || {
+			echo "refusing plaintext http:// to a remote hub; use https://, or --insecure if it has no TLS" >&2
+			exit 2
+		}
+		echo "warning: --insecure over plain HTTP to $SERVER" >&2
+		echo "         the token and every report travel in the clear, and the binary" >&2
+		echo "         installed below is fetched over the same unverified channel" >&2
+	fi
+	;;
+esac
+if command -v systemctl >/dev/null; then
+	INIT=systemd
+elif command -v rc-update >/dev/null; then
+	INIT=openrc
+else
+	echo "this installer needs systemd or OpenRC" >&2
+	exit 1
+fi
+
+# The service user the unit below runs as, created before the download and the
+# registration, so a host where this fails keeps the agent it already runs and
+# spends no registration key. OpenRC has no equivalent and Alpine ships no
+# useradd, which is why this is confined to systemd.
+if [ "$INIT" = systemd ]; then
+	id -u monitor-agent >/dev/null 2>&1 ||
+		useradd --system --no-create-home --shell /usr/sbin/nologin monitor-agent ||
+		{ echo "cannot create the system user monitor-agent" >&2; exit 1; }
+fi
+
+case "$(uname -m)" in
+x86_64 | amd64) ARCH=x86_64 ;;
+aarch64 | arm64) ARCH=aarch64 ;;
+*) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+# The hub relays the binary, so a node need only reach the hub it already talks
+# to: an IPv6-only or blocked machine cannot resolve github.com. A hub unable to
+# fetch releases itself is configured with a GitHub proxy in its own settings,
+# which is why none is requested here.
+URL="${SERVER%/}/agent/$ARCH"
+TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
+
+echo "downloading monitor-agent ($ARCH)"
+curl -fsSL --max-time 300 "$URL" -o "$TMP"
+
+# Downloaded before the registration below, because that step spends a node: the
+# key returns a token and the panel gains a row, while the env file recording it
+# is only written once the binary is in place. A download that fails after
+# registering therefore leaves an unusable node behind, and the rerun -- the
+# documented way to recover -- registers a second one.
+#
+# --register exchanges a key for this node's own token, which is what allows one
+# command to provision a batch of machines. The key is valid only within the
+# window the panel opened and never becomes the credential the agent runs with.
+if [ -z "$TOKEN" ]; then
+	# Re-running the same command must not add a second node, so the token this
+	# machine already holds travels with the key. The hub returns it unchanged
+	# while it still opens a node, also after the window has closed; otherwise
+	# the request is a new registration, which needs an open window. The env file
+	# alone cannot tell a node deleted from the panel, and trusting it would keep
+	# a revoked token while this installer reported success.
+	#
+	# Only for the same hub: a token issued by hub A means nothing to hub B.
+	HELD=""
+	CACHED=$(sed -n 's/^MONITOR_SERVER=//p' "$ENV_FILE" 2>/dev/null || true)
+	if [ "${CACHED%/}" = "${SERVER%/}" ]; then
+		HELD=$(sed -n 's/^MONITOR_TOKEN=//p' "$ENV_FILE" 2>/dev/null || true)
+	fi
+	# The hub trims and bounds this as well; here it is restricted to characters
+	# a hostname may contain, so nothing unexpected travels in the body.
+	NAME=$(hostname 2>/dev/null | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+	echo "registering $NAME with the hub"
+	# curl sends no header at all for an empty $HELD. The status follows the body
+	# on a line of its own, so a refusal shows the hub's own reason: a closed
+	# window, a lockout, an entry that is not an https domain and a database
+	# error share one exit status under --fail. A request that got no response
+	# stops here, with curl's own message.
+	REPLY=$(curl -sS --max-time 30 -w '\n%{http_code}' -H "Authorization: Bearer $REGISTER" \
+		-H "X-Node-Token: $HELD" --data-binary "$NAME" "${SERVER%/}/api/agent/register") || exit 1
+	CODE=$(printf '%s\n' "$REPLY" | tail -n 1)
+	TOKEN=$(printf '%s\n' "$REPLY" | sed '$d')
+	if [ "$CODE" != 200 ]; then
+		# The hub answers in one line of text. A proxy or CDN in front may answer
+		# with a page of HTML instead, of which the first line is enough.
+		printf 'registration failed (HTTP %s): %s\n' "$CODE" "$(printf '%s\n' "$TOKEN" | head -n 1 | cut -c1-500)" >&2
+		[ -z "$HELD" ] || echo "if this machine's node was deleted or its token reissued, the token it holds no longer counts." >&2
+		exit 1
+	fi
+	[ -n "$TOKEN" ] || { echo "the hub answered without a token" >&2; exit 1; }
+	if [ "$TOKEN" = "$HELD" ]; then
+		echo "this machine is already registered; keeping its token"
+	elif [ -n "$HELD" ]; then
+		echo "the token this machine held no longer opens a node; registered as a new node."
+		echo "if that token was reissued rather than its node deleted, delete the old node in the panel."
+	fi
+fi
+
+# Stop an agent already running here before replacing its binary. The service
+# name is fixed, so a reinstall could never start a second copy, but without this
+# the new binary lands beneath a live process and only the restart at the end
+# picks it up. Stopping first also means the copy does not depend on `install`
+# unlinking rather than failing with ETXTBSY. Placed after the download, so a
+# node that cannot fetch the binary keeps running.
+if [ "$INIT" = openrc ]; then
+	rc-service monitor-agent stop 2>/dev/null || true
+else
+	systemctl stop monitor-agent 2>/dev/null || true
+fi
+install -d -m 0755 "$ROOT"
+install -m 0755 "$TMP" "$BIN"
+
+# The token lives in a root-only environment file rather than the unit, keeping
+# it out of `systemctl cat` and the world-readable journal. 0600 root is what
+# keeps it private, since $ROOT itself is readable and holds the binaries. Set in
+# a subshell, because the unit file written below is read by anyone debugging
+# with `systemctl cat` and need not be 0600.
+(
+	umask 077
+	cat >"$ENV_FILE" <<ENV
+MONITOR_SERVER=$SERVER
+MONITOR_TOKEN=$TOKEN
+ENV
+	[ -z "$IFACE" ] || printf 'MONITOR_IFACE=%s\n' "$IFACE" >>"$ENV_FILE"
+)
+
+if [ "$INIT" = openrc ]; then
+	cat >"$RC_FILE" <<RC
+#!/sbin/openrc-run
+description="monitor agent"
+command="$BIN"
+command_args="--interval $INTERVAL${INSECURE:+ --insecure}"
+supervisor="supervise-daemon"
+respawn_delay=5
+output_log="$LOG_FILE"
+error_log="$LOG_FILE"
+
+depend() {
+	need net
+}
+
+# The token stays in the root-only env file rather than the service script.
+start_pre() {
+	set -a
+	. $ENV_FILE
+	set +a
+}
+RC
+	chmod 0755 "$RC_FILE"
+	rc-update add monitor-agent default >/dev/null
+	rc-service monitor-agent restart
+	echo "monitor-agent installed; follow it with: tail -f $LOG_FILE"
+	exit 0
+fi
+
+cat >"$UNIT_FILE" <<UNIT
+[Unit]
+Description=monitor agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=$ENV_FILE
+ExecStart=$BIN --interval $INTERVAL${INSECURE:+ --insecure}
+Restart=always
+RestartSec=5
+# A fixed user rather than DynamicUser=: when the mount namespace cannot be
+# created, as in an LXC container without nesting, systemd skips ProtectSystem=
+# and the other mount sandboxing for a unit with a static User=, but refuses to
+# start one with DynamicUser= and exits 226/NAMESPACE. DynamicUser= also implied
+# RestrictSUIDSGID=, which is therefore stated below.
+User=monitor-agent
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+# AF_NETLINK is how getifaddrs(3) obtains this host's own addresses from the
+# kernel; without it the agent reports none.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable monitor-agent >/dev/null
+# restart rather than `enable --now`: --now leaves an already-running service
+# untouched, so reinstalling over a live agent would keep the old binary
+# running.
+systemctl restart monitor-agent
+echo "monitor-agent installed; follow it with: journalctl -u monitor-agent -f"
