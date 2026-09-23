@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { 
   GitFork, Layers, Plus, RefreshCw, Copy, Check, Trash2, 
-  QrCode, Box, Activity, Download, AlertCircle
+  QrCode, Box, Activity, Download, AlertCircle, ArrowRightLeft
 } from "lucide-react"
 import { toast } from "sonner"
 import QRCode from "qrcode"
@@ -39,6 +39,12 @@ export interface ProxyNode {
   enabled: number
   created_at: number
   link?: string
+  is_relay?: number
+  relay_server_id?: number
+  relay_port?: number
+  remote_host?: string
+  remote_port?: number
+  target_node_id?: number
 }
 
 export interface ProxyServer {
@@ -53,6 +59,9 @@ export interface ProxyServer {
   singbox_installed: boolean
   singbox_running: boolean
   singbox_version?: string
+  realm_installed?: boolean
+  realm_running?: boolean
+  realm_version?: string
   last_seen?: number
 }
 
@@ -91,6 +100,14 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     version: "sing-box version 1.14.1 (linux/amd64)",
     running: true,
   })
+  const [realmStatus, setRealmStatus] = useState<CoreStatus>({
+    installed: false,
+    version: "",
+    running: false,
+  })
+  const [nodeMode, setNodeMode] = useState<"direct" | "relay">("direct")
+  const [relayTargetMode, setRelayTargetMode] = useState<"link_existing" | "custom">("link_existing")
+  const [selectedTargetNodeId, setSelectedTargetNodeId] = useState<string>("")
   const [testingId, setTestingId] = useState<number | null>(null)
   const [testResult, setTestResult] = useState<Record<number, { ok: boolean; msg: string; ms: number }>>({})
 
@@ -122,6 +139,10 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     method: "2022-blake3-aes-128-gcm",
     password: "",
     username: "",
+    is_relay: 0,
+    remote_host: "",
+    remote_port: "",
+    target_node_id: 0,
   })
 
   const loadStatus = useCallback(async () => {
@@ -137,6 +158,9 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         }
         if (data.singbox) {
           setSingboxStatus(data.singbox)
+        }
+        if (data.realm) {
+          setRealmStatus(data.realm)
         }
       }
     } catch {
@@ -189,8 +213,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     }
   }, [])
 
-  const handleCoreAction = async (core: "xray" | "singbox", action: "install" | "uninstall") => {
-    const coreName = core === "xray" ? "Xray-Core" : "Sing-box"
+  const handleCoreAction = async (core: "xray" | "singbox" | "realm", action: "install" | "uninstall") => {
+    const coreName = core === "xray" ? "Xray-Core" : (core === "singbox" ? "Sing-box" : "Realm")
     const actionName = action === "install" ? "安装" : "卸载"
     if (action === "uninstall" && !confirm(`确定要${actionName} ${coreName} 核心吗？卸载后依赖此核心的节点将停止服务。`)) {
       return
@@ -256,7 +280,9 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       xray_installed: xrayStatus.installed,
       xray_running: xrayStatus.running,
       singbox_installed: singboxStatus.installed,
-      singbox_running: singboxStatus.running
+      singbox_running: singboxStatus.running,
+      realm_installed: realmStatus.installed,
+      realm_running: realmStatus.running
     },
     ...nodes.map(n => ({
       id: n.id,
@@ -267,15 +293,17 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       xray_installed: false,
       xray_running: false,
       singbox_installed: false,
-      singbox_running: false
+      singbox_running: false,
+      realm_installed: false,
+      realm_running: false
     }))
   ]
 
   const currentSelectedServer = serverOptions.find(s => String(s.id) === form.server_id)
   const isSingboxProto = form.protocol === "hysteria2" || form.protocol === "tuic"
-  const isRequiredCoreInstalled = isSingboxProto
-    ? Boolean(currentSelectedServer?.singbox_installed)
-    : Boolean(currentSelectedServer?.xray_installed)
+  const isRequiredCoreInstalled = nodeMode === "relay"
+    ? Boolean(currentSelectedServer?.realm_installed)
+    : (isSingboxProto ? Boolean(currentSelectedServer?.singbox_installed) : Boolean(currentSelectedServer?.xray_installed))
 
   const openCreateDialog = () => {
     const defaultServer = serverOptions.length > 0 ? serverOptions[0] : null
@@ -283,6 +311,9 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     const sName = defaultServer ? defaultServer.name : "本机"
     const sHost = defaultServer ? defaultServer.host : "189.24.108.25"
 
+    setNodeMode("direct")
+    setRelayTargetMode("link_existing")
+    setSelectedTargetNodeId("")
     setForm({
       server_id: sId,
       server_name: sName,
@@ -301,6 +332,10 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       method: "2022-blake3-aes-128-gcm",
       password: "",
       username: "",
+      is_relay: 0,
+      remote_host: "",
+      remote_port: "",
+      target_node_id: 0,
     })
     setDialogOpen(true)
     handleKeygen("vless_reality")
@@ -322,7 +357,35 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         server_id: sId, 
         server_name: s.name, 
         server_host: s.host,
-        name: `${s.name}-${cleanProto}`
+        name: nodeMode === "relay" 
+          ? `[中转] ${s.name} ➔ ${prev.remote_host || "落地"}`
+          : `${s.name}-${cleanProto}`
+      }))
+    }
+  }
+
+  const handleSelectTargetNode = (targetId: string) => {
+    setSelectedTargetNodeId(targetId)
+    const targetNode = proxyNodes.find(n => String(n.id) === targetId)
+    if (targetNode) {
+      setForm(prev => ({
+        ...prev,
+        target_node_id: targetNode.id,
+        name: `[中转] ${prev.server_name} ➔ ${targetNode.name}`,
+        protocol: targetNode.protocol,
+        remote_host: targetNode.server_host,
+        remote_port: String(targetNode.port),
+        uuid: targetNode.uuid || prev.uuid,
+        flow: targetNode.flow || prev.flow,
+        sni: targetNode.sni || prev.sni,
+        dest: targetNode.dest || prev.dest,
+        public_key: targetNode.public_key || prev.public_key,
+        private_key: targetNode.private_key || prev.private_key,
+        short_id: targetNode.short_id || prev.short_id,
+        ws_path: targetNode.ws_path || prev.ws_path,
+        method: targetNode.method || prev.method,
+        password: targetNode.password || prev.password,
+        username: targetNode.username || prev.username,
       }))
     }
   }
@@ -331,8 +394,19 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     e.preventDefault()
 
     if (!isRequiredCoreInstalled) {
-      toast.error(`所选服务器【${form.server_name}】未安装 ${isSingboxProto ? "Sing-box" : "Xray-Core"} 核心，无法创建节点！`)
+      if (nodeMode === "relay") {
+        toast.error(`中转服务器【${form.server_name}】未安装 Realm 核心，无法创建中转落地节点！`)
+      } else {
+        toast.error(`所选服务器【${form.server_name}】未安装 ${isSingboxProto ? "Sing-box" : "Xray-Core"} 核心，无法创建节点！`)
+      }
       return
+    }
+
+    if (nodeMode === "relay") {
+      if (!form.remote_host || !form.remote_port) {
+        toast.error("请完善落地目标服务器的地址与端口！")
+        return
+      }
     }
 
     setSubmitting(true)
@@ -357,7 +431,13 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           ws_path: form.ws_path,
           method: form.method,
           password: form.password,
-          username: form.username
+          username: form.username,
+          is_relay: nodeMode === "relay" ? 1 : 0,
+          relay_server_id: nodeMode === "relay" ? Number(form.server_id) : 0,
+          relay_port: Number(form.port),
+          remote_host: nodeMode === "relay" ? form.remote_host : "",
+          remote_port: nodeMode === "relay" ? Number(form.remote_port) : 0,
+          target_node_id: nodeMode === "relay" ? Number(form.target_node_id || 0) : 0,
         })
       })
       const data = await res.json()
@@ -467,8 +547,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
   return (
     <div className="space-y-5">
-      {/* Row 1: Dual Core Status: Xray & Sing-box side by side */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {/* Row 1: Triple Core Status: Xray & Sing-box & Realm side by side */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Left Card: Xray-Core 核心状态 */}
         <Card className="p-5 flex flex-col justify-between rounded-xl border bg-card shadow-sm">
           <div>
@@ -598,6 +678,71 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
             )}
           </div>
         </Card>
+
+        {/* Third Card: Realm 端口转发核心状态 (样式与 Xray/Sing-box 1:1 对齐) */}
+        <Card className="p-5 flex flex-col justify-between rounded-xl border bg-card shadow-sm">
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <ArrowRightLeft className="size-4 text-foreground/80" />
+                <h3 className="font-semibold text-sm">Realm 转发核心状态</h3>
+              </div>
+              {!realmStatus.installed ? (
+                <Badge variant="outline" className="border-neutral-300 text-muted-foreground rounded-full px-2.5 py-0.5 text-xs font-normal">
+                  未安装
+                </Badge>
+              ) : (
+                <Badge 
+                  className={realmStatus.running ? "bg-emerald-600 hover:bg-emerald-600 text-white rounded-full px-2.5 py-0.5 text-xs font-normal" : "bg-destructive text-destructive-foreground rounded-full px-2.5 py-0.5 text-xs font-normal"}
+                >
+                  {realmStatus.running ? "运行中" : "未运行"}
+                </Badge>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground leading-relaxed font-mono whitespace-pre-wrap break-all mb-4">
+              {!realmStatus.installed
+                ? "当前服务器尚未安装 Realm 核心。安装后支持极速 TCP/UDP 端口转发与中转落地。"
+                : (realmStatus.version || "Realm 2.9 (rust musl)")}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2.5 pt-2">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => { loadStatus(); loadData() }} 
+              disabled={statusLoading || loading || !!coreActionLoading}
+              className="text-xs h-8 gap-1.5"
+            >
+              <RefreshCw className={`size-3.5 ${(statusLoading || loading) ? "animate-spin" : ""}`} />
+              刷新状态
+            </Button>
+
+            {!realmStatus.installed ? (
+              <Button 
+                size="sm" 
+                onClick={() => handleCoreAction("realm", "install")}
+                disabled={!!coreActionLoading}
+                className="text-xs h-8 gap-1.5 bg-black hover:bg-neutral-800 text-white dark:bg-white dark:text-black dark:hover:bg-neutral-200"
+              >
+                <Download className="size-3.5" />
+                {coreActionLoading === "realm-install" ? "正在安装..." : "安装核心"}
+              </Button>
+            ) : (
+              <Button 
+                variant="outline"
+                size="sm" 
+                onClick={() => handleCoreAction("realm", "uninstall")}
+                disabled={!!coreActionLoading}
+                className="text-xs h-8 gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 border-red-200 dark:border-red-900/50"
+              >
+                <Trash2 className="size-3.5" />
+                {coreActionLoading === "realm-uninstall" ? "正在卸载..." : "卸载核心"}
+              </Button>
+            )}
+          </div>
+        </Card>
       </div>
 
       {/* Row 2: 聚合订阅服务 (一键导入所有节点) - 独立全宽下移 */}
@@ -682,9 +827,19 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 <TableRow key={n.id} className="hover:bg-muted/30">
                   <TableCell className="text-xs">
                     <div className="flex items-center gap-2">
-                      <span className="size-2 rounded-full bg-emerald-500 shrink-0" />
+                      <span className={`size-2 rounded-full shrink-0 ${n.is_relay ? "bg-blue-500" : "bg-emerald-500"}`} />
                       <span className="font-medium text-foreground">{n.server_name}</span>
+                      {n.is_relay === 1 && (
+                        <Badge variant="outline" className="text-[10px] py-0 px-1 border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30">
+                          中转
+                        </Badge>
+                      )}
                     </div>
+                    {n.is_relay === 1 && (
+                      <div className="text-[11px] text-muted-foreground mt-0.5 font-mono truncate max-w-[150px]" title={`转发至落地 ${n.remote_host}:${n.remote_port}`}>
+                        ➔ {n.remote_host}:{n.remote_port}
+                      </div>
+                    )}
                   </TableCell>
 
                   <TableCell className="text-xs font-medium">
@@ -692,17 +847,30 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   </TableCell>
 
                   <TableCell className="text-xs">
-                    <span className="inline-block bg-[#7c3aed] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium shadow-sm">
-                      {formatProtocolBadge(n.protocol)}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="inline-block bg-[#7c3aed] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium shadow-sm">
+                        {formatProtocolBadge(n.protocol)}
+                      </span>
+                      {n.is_relay === 1 && (
+                        <span className="inline-block bg-sky-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-medium shadow-sm">
+                          Realm
+                        </span>
+                      )}
+                    </div>
                   </TableCell>
 
                   <TableCell className="text-xs font-mono text-muted-foreground">
-                    {n.port}
+                    {n.is_relay === 1 ? (
+                      <span title={`中转端口 ${n.port} ➔ 落地端口 ${n.remote_port}`}>
+                        {n.port} <span className="text-blue-500 font-bold">➔</span> {n.remote_port}
+                      </span>
+                    ) : (
+                      n.port
+                    )}
                   </TableCell>
 
                   <TableCell className="text-xs font-mono text-muted-foreground">
-                    {n.sni || "—"}
+                    {n.sni || (n.is_relay === 1 ? n.remote_host : "—")}
                   </TableCell>
 
                   <TableCell>
@@ -815,57 +983,194 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           </DialogHeader>
 
           <form onSubmit={handleCreateNode} className="space-y-4 py-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">所属服务器</Label>
-                <Select value={form.server_id} onValueChange={handleServerChange}>
-                  <SelectTrigger className="text-xs h-9">
-                    <SelectValue placeholder="选择服务器">
-                      {(() => {
-                        const cur = serverOptions.find(s => String(s.id) === form.server_id)
-                        if (!cur) return form.server_name
-                        return (
-                          <div className="flex items-center justify-between w-full pr-1 gap-2">
-                            <span className="truncate">{cur.name} ({cur.host})</span>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span className="inline-flex items-center gap-1 text-[11px]">
-                                <span className={`size-2 rounded-full ${cur.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                                <span className={cur.xray_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Xray</span>
-                              </span>
-                              <span className="inline-flex items-center gap-1 text-[11px]">
-                                <span className={`size-2 rounded-full ${cur.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                                <span className={cur.singbox_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Sing-box</span>
-                              </span>
-                            </div>
-                          </div>
-                        )
-                      })()}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {serverOptions.map(s => (
-                      <SelectItem key={s.id} value={String(s.id)}>
-                        <div className="flex items-center justify-between w-full min-w-[280px] gap-3">
-                          <span className="truncate font-medium text-xs">
-                            {s.name} ({s.host})
-                          </span>
-                          <div className="flex items-center gap-2 shrink-0">
+            {/* 节点模式选择：直连 vs 中转落地 */}
+            <div className="flex p-1 bg-muted/60 rounded-lg text-xs font-medium">
+              <button
+                type="button"
+                className={`flex-1 py-1.5 px-3 rounded-md transition-all ${
+                  nodeMode === "direct"
+                    ? "bg-card text-foreground shadow-sm font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => {
+                  setNodeMode("direct")
+                  setForm(prev => ({ ...prev, is_relay: 0 }))
+                }}
+              >
+                🟢 普通直连节点 (Direct)
+              </button>
+              <button
+                type="button"
+                className={`flex-1 py-1.5 px-3 rounded-md transition-all ${
+                  nodeMode === "relay"
+                    ? "bg-card text-foreground shadow-sm font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => {
+                  setNodeMode("relay")
+                  setForm(prev => ({ 
+                    ...prev, 
+                    is_relay: 1,
+                    name: `[中转] ${prev.server_name} ➔ 落地`
+                  }))
+                }}
+              >
+                🔄 中转落地节点 (Realm 转发)
+              </button>
+            </div>
+
+            {/* 所属服务器 / 入口中转机 */}
+            <div className="space-y-1.5 w-full">
+              <Label className="text-xs">{nodeMode === "relay" ? "入口中转服务器" : "所属服务器"}</Label>
+              <Select value={form.server_id} onValueChange={handleServerChange}>
+                <SelectTrigger className="text-xs h-9 w-full">
+                  <SelectValue placeholder="选择服务器">
+                    {(() => {
+                      const cur = serverOptions.find(s => String(s.id) === form.server_id)
+                      if (!cur) return form.server_name
+                      return (
+                        <div className="flex items-center justify-between w-full pr-1 gap-2 overflow-hidden">
+                          <span className="truncate font-medium">{cur.name} ({cur.host})</span>
+                          <div className="flex items-center gap-2.5 shrink-0">
                             <span className="inline-flex items-center gap-1 text-[11px]">
-                              <span className={`size-2 rounded-full ${s.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                              <span className={s.xray_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Xray</span>
+                              <span className={`size-2 rounded-full ${cur.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                              <span className={cur.xray_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Xray</span>
                             </span>
                             <span className="inline-flex items-center gap-1 text-[11px]">
-                              <span className={`size-2 rounded-full ${s.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                              <span className={s.singbox_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Sing-box</span>
+                              <span className={`size-2 rounded-full ${cur.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                              <span className={cur.singbox_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Sing-box</span>
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[11px]">
+                              <span className={`size-2 rounded-full ${cur.realm_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                              <span className={cur.realm_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Realm</span>
                             </span>
                           </div>
                         </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                      )
+                    })()}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {serverOptions.map(s => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      <div className="flex items-center justify-between w-full min-w-[320px] gap-3">
+                        <span className="truncate font-medium text-xs">
+                          {s.name} ({s.host})
+                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="inline-flex items-center gap-1 text-[11px]">
+                            <span className={`size-2 rounded-full ${s.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                            <span className={s.xray_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Xray</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[11px]">
+                            <span className={`size-2 rounded-full ${s.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                            <span className={s.singbox_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Sing-box</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[11px]">
+                            <span className={`size-2 rounded-full ${s.realm_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                            <span className={s.realm_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Realm</span>
+                          </span>
+                        </div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
+            {/* 中转落地专属：落地机目标设置 */}
+            {nodeMode === "relay" && (
+              <div className="rounded-xl border p-3.5 bg-muted/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                    <ArrowRightLeft className="size-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>落地机目标设置</span>
+                  </div>
+                  <div className="flex gap-1 bg-muted p-0.5 rounded-md text-[11px]">
+                    <button
+                      type="button"
+                      className={`px-2 py-0.5 rounded transition-all ${
+                        relayTargetMode === "link_existing"
+                          ? "bg-card text-foreground shadow-xs font-medium"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      onClick={() => setRelayTargetMode("link_existing")}
+                    >
+                      关联已有节点 (推荐)
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-2 py-0.5 rounded transition-all ${
+                        relayTargetMode === "custom"
+                          ? "bg-card text-foreground shadow-xs font-medium"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      onClick={() => setRelayTargetMode("custom")}
+                    >
+                      自定义外部目标
+                    </button>
+                  </div>
+                </div>
+
+                {relayTargetMode === "link_existing" ? (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">选择关联的落地节点</Label>
+                    <Select value={selectedTargetNodeId} onValueChange={handleSelectTargetNode}>
+                      <SelectTrigger className="text-xs h-9">
+                        <SelectValue placeholder="点击选择落地代理节点..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {proxyNodes.filter(n => !n.is_relay).map(n => (
+                          <SelectItem key={n.id} value={String(n.id)}>
+                            <div className="flex items-center justify-between w-full min-w-[320px] gap-3">
+                              <span className="font-medium text-xs truncate">
+                                [{n.server_name}] {n.name}
+                              </span>
+                              <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-muted-foreground font-mono">
+                                <span>{n.server_host}:{n.port}</span>
+                                <Badge variant="secondary" className="text-[10px] py-0 px-1">{formatProtocolBadge(n.protocol)}</Badge>
+                              </div>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {form.remote_host && (
+                      <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                        ✓ 已自动继承落地目标: {form.remote_host}:{form.remote_port} ({formatProtocolBadge(form.protocol)}) 及其全部解密凭证
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">落地服务器 IP / 域名</Label>
+                      <Input
+                        className="text-xs h-8 font-mono"
+                        placeholder="如 156.226.173.102"
+                        value={form.remote_host}
+                        onChange={e => setForm(prev => ({ ...prev, remote_host: e.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">落地监听端口</Label>
+                      <Input
+                        className="text-xs h-8 font-mono"
+                        type="number"
+                        placeholder="如 44297"
+                        value={form.remote_port}
+                        onChange={e => setForm(prev => ({ ...prev, remote_port: e.target.value }))}
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 节点名称与协议类型并排展示 */}
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">节点名称</Label>
                 <Input
@@ -876,25 +1181,29 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   required
                 />
               </div>
-            </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">协议类型</Label>
-              <Select value={form.protocol} onValueChange={handleProtocolChange}>
-                <SelectTrigger className="text-xs h-9">
-                  <SelectValue placeholder="选择协议" />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROTOCOL_OPTIONS.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      <div className="flex items-center gap-2">
-                        <span>{opt.label}</span>
-                        <Badge variant="secondary" className="text-[10px] py-0 px-1">{opt.badge}</Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="space-y-1.5">
+                <Label className="text-xs">{nodeMode === "relay" ? "落地协议类型" : "协议类型"}</Label>
+                <Select 
+                  value={form.protocol} 
+                  onValueChange={handleProtocolChange}
+                  disabled={nodeMode === "relay" && relayTargetMode === "link_existing" && !!selectedTargetNodeId}
+                >
+                  <SelectTrigger className="text-xs h-9">
+                    <SelectValue placeholder="选择协议" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROTOCOL_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        <div className="flex items-center gap-2">
+                          <span>{opt.label}</span>
+                          <Badge variant="secondary" className="text-[10px] py-0 px-1">{opt.badge}</Badge>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {!isRequiredCoreInstalled && (
@@ -902,9 +1211,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 <AlertCircle className="size-4 shrink-0 mt-0.5 text-red-600" />
                 <div>
                   <span className="font-semibold">核心未安装提醒：</span>
-                  服务器【{form.server_name}】当前未安装 {isSingboxProto ? "Sing-box" : "Xray-Core"} 核心。
-                  {isSingboxProto ? "Hysteria 2 (HY2) 协议需要 Sing-box 核心支持。" : "此协议需要 Xray-Core 核心支持。"}
-                  请先在该服务器上安装对应核心后再创建节点。
+                  {nodeMode === "relay" ? (
+                    <>中转服务器【{form.server_name}】当前未安装 Realm 核心。中转端口转发需要 Realm 核心支持，请先在顶栏核心状态卡片中一键安装 Realm 核心后再创建中转落地节点。</>
+                  ) : (
+                    <>服务器【{form.server_name}】当前未安装 {isSingboxProto ? "Sing-box" : "Xray-Core"} 核心。{isSingboxProto ? "Hysteria 2 (HY2) 协议需要 Sing-box 核心支持。" : "此协议需要 Xray-Core 核心支持。"}请先在该服务器上安装对应核心后再创建节点。</>
+                  )}
                 </div>
               </div>
             )}
@@ -912,7 +1223,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs">端口</Label>
+                  <Label className="text-xs">{nodeMode === "relay" ? "中转机监听端口 (对外开放)" : "端口"}</Label>
                   <button
                     type="button"
                     onClick={() => handleKeygen(form.protocol, form.method)}

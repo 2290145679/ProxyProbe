@@ -4,6 +4,7 @@ import { Toaster } from "sonner"
 
 import { Admin } from "@/components/Admin"
 import { Login } from "@/components/Login"
+import { UserDashboard, type UserProfile } from "@/components/UserDashboard"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, provisionRefusal, useNodes } from "@/lib/api"
@@ -69,6 +70,25 @@ export default function App() {
     loadMe()
   }, [loadMe])
 
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
+
+  const loadUserProfile = useCallback(() => {
+    fetch("/api/proxy/user/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.ok && data.user) {
+          setUserProfile(data.user)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (me?.authed) {
+      loadUserProfile()
+    }
+  }, [me?.authed, loadUserProfile])
+
   // Every frame declares its audience. The hub closes the stream when the session
   // behind it is revoked -- signed out from another device, a password change, a
   // restore -- and the reconnect returns as anonymous: the public list, with
@@ -92,18 +112,36 @@ export default function App() {
   if (!me.authed) {
     return (
       <>
-        <Login github={me.github} onDone={() => { loadMe(); refresh(); go("/admin/nodes") }} />
+        <Login github={me.github} onDone={() => { loadMe(); loadUserProfile(); refresh(); go("/admin/nodes") }} />
+        <Toaster position="top-center" theme={dark ? "dark" : "light"} />
+      </>
+    )
+  }
+
+  async function signOut() {
+    await api("/auth/logout", { method: "POST" }).catch(() => {})
+    document.cookie = "monitor_session=; Path=/; Max-Age=0"
+    location.href = "/admin"
+  }
+
+  // 普通用户登录后展示机场式用户面板
+  if (userProfile && !userProfile.is_admin) {
+    return (
+      <>
+        <UserDashboard
+          user={userProfile}
+          siteName={me.site_name}
+          refreshUser={loadUserProfile}
+          onSignOut={signOut}
+          toggleTheme={toggleTheme}
+          dark={dark}
+        />
         <Toaster position="top-center" theme={dark ? "dark" : "light"} />
       </>
     )
   }
 
   const sorted = [...(nodes ?? [])].sort((a, b) => a.sort - b.sort || a.id - b.id)
-
-  async function signOut() {
-    await api("/auth/logout", { method: "POST" }).catch(() => {})
-    location.href = "/"
-  }
 
   return (
     <div className="min-h-svh">

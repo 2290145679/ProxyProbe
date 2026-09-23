@@ -6,6 +6,7 @@ import secrets
 import socket
 import sqlite3
 import subprocess
+import threading
 import time
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,10 +17,10 @@ XRAY_BIN = "/usr/local/bin/xray"
 XRAY_CONFIG = "/etc/xray/config.json"
 SINGBOX_BIN = "/usr/local/bin/sing-box"
 SINGBOX_CONFIG = "/etc/sing-box/config.json"
-SINGBOX_BIN = "/usr/local/bin/sing-box"
-SINGBOX_CONFIG = "/etc/sing-box/config.json"
 SINGBOX_CERT = "/etc/sing-box/cert.pem"
 SINGBOX_KEY = "/etc/sing-box/key.pem"
+REALM_BIN = "/usr/local/bin/realm"
+REALM_CONFIG = "/etc/realm/config.json"
 PORT = 28090
 LOCAL_HOSTS = {"189.24.108.25", "127.0.0.1", "localhost", "tz.yohoo.xyz", ""}
 
@@ -291,6 +292,8 @@ def allow_ports(ports):
         try:
             subprocess.run(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(p), "-j", "ACCEPT"], capture_output=True)
             subprocess.run(["iptables", "-I", "INPUT", "-p", "udp", "--dport", str(p), "-j", "ACCEPT"], capture_output=True)
+            subprocess.run(["iptables", "-I", "OUTPUT", "-p", "tcp", "--sport", str(p), "-j", "ACCEPT"], capture_output=True)
+            subprocess.run(["iptables", "-I", "OUTPUT", "-p", "udp", "--sport", str(p), "-j", "ACCEPT"], capture_output=True)
         except Exception:
             pass
         try:
@@ -661,7 +664,13 @@ def init_db():
             ("method", "TEXT DEFAULT '2022-blake3-aes-128-gcm'"),
             ("password", "TEXT DEFAULT ''"),
             ("username", "TEXT DEFAULT ''"),
-            ("extra_json", "TEXT DEFAULT ''")
+            ("extra_json", "TEXT DEFAULT ''"),
+            ("is_relay", "INTEGER DEFAULT 0"),
+            ("relay_server_id", "INTEGER DEFAULT 0"),
+            ("relay_port", "INTEGER DEFAULT 0"),
+            ("remote_host", "TEXT DEFAULT ''"),
+            ("remote_port", "INTEGER DEFAULT 0"),
+            ("target_node_id", "INTEGER DEFAULT 0")
         ]:
             try:
                 conn.execute(f"ALTER TABLE proxy_node ADD COLUMN {col_name} {col_type}")
@@ -674,7 +683,10 @@ def init_db():
             ("xray_running", "INTEGER DEFAULT 0"),
             ("singbox_installed", "INTEGER DEFAULT 0"),
             ("singbox_running", "INTEGER DEFAULT 0"),
-            ("singbox_version", "TEXT DEFAULT ''")
+            ("singbox_version", "TEXT DEFAULT ''"),
+            ("realm_installed", "INTEGER DEFAULT 0"),
+            ("realm_running", "INTEGER DEFAULT 0"),
+            ("realm_version", "TEXT DEFAULT ''")
         ]:
             try:
                 conn.execute(f"ALTER TABLE node_proxy_status ADD COLUMN {col_name} {col_type}")
@@ -682,10 +694,57 @@ def init_db():
                 pass
         # Check if sub_token exists in setting
         cur = conn.execute("SELECT value FROM setting WHERE key = 'proxy_sub_token'")
-        if not cur.fetchone():
-            token = secrets.token_hex(16)
-            conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('proxy_sub_token', ?)", (token,))
+        tok_row = cur.fetchone()
+        sub_tok = tok_row[0] if tok_row else secrets.token_hex(16)
+        if not tok_row:
+            conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('proxy_sub_token', ?)", (sub_tok,))
+
+        # Multi-user & traffic accounting tables
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS proxy_user (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            sub_token TEXT UNIQUE NOT NULL,
+            traffic_limit_bytes INTEGER DEFAULT 214748364800,
+            upload_bytes INTEGER DEFAULT 0,
+            download_bytes INTEGER DEFAULT 0,
+            expires_at INTEGER DEFAULT 0,
+            enabled INTEGER DEFAULT 1,
+            is_admin INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS proxy_session_user (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+        )
+        """)
+
+        # Migration: ensure admin user exists in proxy_user
+        cur_adm = conn.execute("SELECT id FROM proxy_user WHERE username = 'admin'")
+        if not cur_adm.fetchone():
+            adm_hash = hash_password("admin123")
+            conn.execute("""
+                INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at)
+                VALUES ('admin', ?, ?, 0, 0, 0, 0, 1, 1, ?)
+            """, (adm_hash, sub_tok, int(time.time())))
     conn.close()
+
+def hash_password(password, salt=None):
+    if not salt:
+        salt = secrets.token_hex(16)
+    h = sha256((salt + password).encode("utf-8")).hexdigest()
+    return f"{salt}:{h}"
+
+def verify_password(password, stored_hash):
+    if not stored_hash or ":" not in stored_hash:
+        return False
+    salt, h = stored_hash.split(":", 1)
+    expected = sha256((salt + password).encode("utf-8")).hexdigest()
+    return secrets.compare_digest(h, expected)
 
 def get_sub_token():
     conn = get_db()
@@ -694,7 +753,7 @@ def get_sub_token():
     conn.close()
     return row[0] if row else "default-token"
 
-def check_auth(headers):
+def get_current_user(headers):
     try:
         cookie_str = headers.get("Cookie", "")
         session_token = None
@@ -704,18 +763,106 @@ def check_auth(headers):
                 session_token = item.split("=", 1)[1].strip()
                 break
         if not session_token:
-            return False
+            return None
         
         token_hash = sha256(session_token.encode()).hexdigest()
         now = int(time.time())
         conn = get_db()
         cur = conn.execute("SELECT 1 FROM session WHERE token_hash = ? AND expires_at > ?", (token_hash, now))
         row = cur.fetchone()
+        if not row:
+            conn.close()
+            return None
+
+        # Check proxy_session_user
+        u_cur = conn.execute("""
+            SELECT u.* FROM proxy_user u
+            JOIN proxy_session_user s ON u.id = s.user_id
+            WHERE s.token_hash = ?
+        """, (token_hash,))
+        user_row = u_cur.fetchone()
+        if user_row:
+            u = dict(user_row)
+            conn.close()
+            return u
+        
+        # If in session table but not in proxy_session_user: emergency admin login
+        admin_cur = conn.execute("SELECT * FROM proxy_user WHERE is_admin = 1 ORDER BY id ASC LIMIT 1")
+        admin_row = admin_cur.fetchone()
         conn.close()
-        return bool(row)
+        if admin_row:
+            return dict(admin_row)
+        return {
+            "id": 0, "username": "admin", "is_admin": 1, "enabled": 1,
+            "traffic_limit_bytes": 0, "upload_bytes": 0, "download_bytes": 0,
+            "expires_at": 0, "sub_token": get_sub_token()
+        }
     except Exception as e:
-        print("check_auth error:", e)
-        return False
+        print("get_current_user error:", e)
+        return None
+
+def check_auth(headers):
+    user = get_current_user(headers)
+    return user is not None and user.get("is_admin") == 1
+
+def collect_iptables_traffic():
+    try:
+        res_in = subprocess.run(["iptables", "-nvx", "-L", "INPUT"], capture_output=True, text=True)
+        res_out = subprocess.run(["iptables", "-nvx", "-L", "OUTPUT"], capture_output=True, text=True)
+        in_bytes = 0
+        out_bytes = 0
+        for line in res_in.stdout.splitlines():
+            if "dpt:" in line and "ACCEPT" in line:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].isdigit():
+                    in_bytes += int(parts[1])
+        for line in res_out.stdout.splitlines():
+            if "spt:" in line and "ACCEPT" in line:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].isdigit():
+                    out_bytes += int(parts[1])
+        return in_bytes, out_bytes
+    except Exception:
+        return 0, 0
+
+_last_in_bytes = 0
+_last_out_bytes = 0
+
+def traffic_collector_loop():
+    global _last_in_bytes, _last_out_bytes
+    time.sleep(5)
+    _last_in_bytes, _last_out_bytes = collect_iptables_traffic()
+    while True:
+        try:
+            time.sleep(15)
+            curr_in, curr_out = collect_iptables_traffic()
+            if _last_in_bytes == 0 and _last_out_bytes == 0:
+                _last_in_bytes, _last_out_bytes = curr_in, curr_out
+                continue
+            delta_in = max(0, curr_in - _last_in_bytes)
+            delta_out = max(0, curr_out - _last_out_bytes)
+            _last_in_bytes, _last_out_bytes = curr_in, curr_out
+
+            if delta_in > 0 or delta_out > 0:
+                conn = get_db()
+                with conn:
+                    cur = conn.execute("SELECT id FROM proxy_user WHERE enabled = 1 AND is_admin = 0")
+                    users = cur.fetchall()
+                    if not users:
+                        cur = conn.execute("SELECT id FROM proxy_user WHERE enabled = 1")
+                        users = cur.fetchall()
+                    if users:
+                        per_user_in = delta_in // len(users)
+                        per_user_out = delta_out // len(users)
+                        for u in users:
+                            conn.execute("""
+                                UPDATE proxy_user
+                                SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                                WHERE id = ?
+                            """, (per_user_in, per_user_out, u["id"]))
+                conn.close()
+        except Exception as e:
+            time.sleep(10)
 
 def gen_ss2022_key(method="2022-blake3-aes-128-gcm"):
     import base64
@@ -792,10 +939,10 @@ def test_node_connectivity(node):
         if is_local_node(node):
             res = subprocess.run(["ss", "-ulpn"], capture_output=True, text=True)
             port_str = f":{port}"
-            if port_str in res.stdout and ("sing-box" in res.stdout or "hysteria" in res.stdout):
-                return True, f"连通正常，Sing-box Hysteria 2 UDP 监听就绪 (延迟 ~0ms)", 0
+            if port_str in res.stdout and ("sing-box" in res.stdout or "hysteria" in res.stdout or "realm" in res.stdout):
+                return True, f"连通正常，UDP 端口 {port} 监听就绪 (延迟 ~0ms)", 0
             else:
-                return False, f"Sing-box 未能在 UDP 端口 {port} 正常监听，请检查服务状态或端口冲突", 0
+                return False, f"未能在 UDP 端口 {port} 正常监听，请检查核心服务状态或端口占用", 0
         else:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -890,7 +1037,10 @@ def format_node_link(node):
     uuid = node.get("uuid") or ""
     host = node.get("server_host") or "189.24.108.25"
     port = node.get("port") or 20443
-    name = quote(f"[{node.get('server_name', '本机')}] {node.get('name', 'node')}")
+    if node.get("is_relay"):
+        name = quote(f"[{node.get('server_name', '中转')}] ➔ {node.get('name', '落地')}")
+    else:
+        name = quote(f"[{node.get('server_name', '本机')}] {node.get('name', 'node')}")
     
     if proto == "vless_reality":
         pbk = node.get("public_key") or ""
@@ -911,10 +1061,10 @@ def format_node_link(node):
         return f"vless://{uuid}@{host}:{port}?security=none&encryption=none&type=ws&path={ws_path}#{name}"
 
     elif proto == "vmess_ws":
-        import base64
+        ps_label = f"[{node.get('server_name', '中转')}] ➔ {node.get('name', '落地')}" if node.get("is_relay") else f"[{node.get('server_name', '本机')}] {node.get('name', 'node')}"
         vmess_data = {
             "v": "2",
-            "ps": f"[{node.get('server_name', '本机')}] {node.get('name', 'node')}",
+            "ps": ps_label,
             "add": host,
             "port": str(port),
             "id": uuid,
@@ -1155,7 +1305,7 @@ def apply_singbox_config():
     all_nodes = [dict(r) for r in cur.fetchall()]
     conn.close()
 
-    local_nodes = [n for n in all_nodes if is_local_node(n) and n["protocol"] in ("hysteria2", "tuic")]
+    local_nodes = [n for n in all_nodes if is_local_node(n) and not n.get("is_relay") and n["protocol"] in ("hysteria2", "tuic")]
     inbounds = build_singbox_inbounds_for_nodes(local_nodes)
 
     config = {
@@ -1311,10 +1461,157 @@ def uninstall_local_singbox():
             pass
     return True, "Sing-box 核心已卸载并停止服务"
 
+def install_local_realm():
+    os.makedirs("/etc/realm", exist_ok=True)
+    local_tar = "/opt/monitor/scripts/realm-x86_64-unknown-linux-musl.tar.gz"
+    tmp_dir = "/tmp/realm_inst"
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    if os.path.exists(local_tar):
+        subprocess.run(["tar", "-xzf", local_tar, "-C", tmp_dir], capture_output=True)
+    else:
+        cmd = "curl -fsSL https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz -o /tmp/realm.tar.gz && tar -xzf /tmp/realm.tar.gz -C /tmp/realm_inst"
+        subprocess.run(cmd, shell=True, capture_output=True)
+
+    realm_bin = None
+    for root, dirs, files in os.walk(tmp_dir):
+        if "realm" in files:
+            realm_bin = os.path.join(root, "realm")
+            break
+
+    if realm_bin:
+        subprocess.run(["install", "-m", "0755", realm_bin, REALM_BIN], capture_output=True)
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    else:
+        return False, "未找到 realm 二进制文件"
+
+    if not os.path.exists(REALM_CONFIG):
+        default_cfg = {
+            "log": { "level": "warn" },
+            "network": { "no_tcp": False, "use_udp": True },
+            "endpoints": [
+                {
+                    "listen": "127.0.0.1:39998",
+                    "remote": "127.0.0.1:39998"
+                }
+            ]
+        }
+        with open(REALM_CONFIG, "w", encoding="utf-8") as f:
+            json.dump(default_cfg, f, indent=2)
+
+    svc = (
+        "[Unit]\n"
+        "Description=Realm Port Forwarding Service\n"
+        "After=network.target\n\n"
+        "[Service]\n"
+        "Type=simple\n"
+        "User=root\n"
+        "ExecStart=/usr/local/bin/realm -c /etc/realm/config.json\n"
+        "Restart=always\n"
+        "RestartSec=3\n"
+        "LimitNOFILE=1000000\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    with open("/etc/systemd/system/realm.service", "w") as f:
+        f.write(svc)
+    subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
+    subprocess.run(["systemctl", "enable", "realm"], capture_output=True)
+    apply_realm_config()
+    subprocess.run(["systemctl", "restart", "realm"], capture_output=True)
+    return True, "Realm 端口转发核心已成功安装并启动"
+
+def uninstall_local_realm():
+    subprocess.run(["systemctl", "stop", "realm"], capture_output=True)
+    subprocess.run(["systemctl", "disable", "realm"], capture_output=True)
+    if os.path.exists(REALM_BIN):
+        try:
+            os.remove(REALM_BIN)
+        except Exception:
+            pass
+    if os.path.exists("/etc/systemd/system/realm.service"):
+        try:
+            os.remove("/etc/systemd/system/realm.service")
+            subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
+        except Exception:
+            pass
+    return True, "Realm 核心已卸载并停止服务"
+
+def allow_ports(ports):
+    for p in ports:
+        try:
+            subprocess.run(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(p), "-j", "ACCEPT"], capture_output=True)
+            subprocess.run(["iptables", "-I", "INPUT", "-p", "udp", "--dport", str(p), "-j", "ACCEPT"], capture_output=True)
+            subprocess.run(["iptables", "-I", "OUTPUT", "-p", "tcp", "--sport", str(p), "-j", "ACCEPT"], capture_output=True)
+            subprocess.run(["iptables", "-I", "OUTPUT", "-p", "udp", "--sport", str(p), "-j", "ACCEPT"], capture_output=True)
+        except Exception:
+            pass
+        try:
+            subprocess.run(["ufw", "allow", f"{p}/tcp"], capture_output=True)
+            subprocess.run(["ufw", "allow", f"{p}/udp"], capture_output=True)
+        except Exception:
+            pass
+
+def apply_realm_config():
+    if not os.path.exists(REALM_BIN):
+        return True, "未安装 realm 核心"
+
+    os.makedirs(os.path.dirname(REALM_CONFIG), exist_ok=True)
+    conn = get_db()
+    cur = conn.execute("SELECT * FROM proxy_node WHERE enabled = 1")
+    all_nodes = [dict(r) for r in cur.fetchall()]
+    conn.close()
+
+    local_relay_nodes = [n for n in all_nodes if is_local_node(n) and n.get("is_relay")]
+
+    endpoints = []
+    relay_ports = []
+    for n in local_relay_nodes:
+        l_port = int(n.get("port") or 0)
+        r_host = (n.get("remote_host") or "").strip()
+        r_port = int(n.get("remote_port") or 0)
+        if l_port > 0 and r_host and r_port > 0:
+            endpoints.append({
+                "listen": f"0.0.0.0:{l_port}",
+                "remote": f"{r_host}:{r_port}"
+            })
+            relay_ports.append(l_port)
+
+    if not endpoints:
+        endpoints.append({
+            "listen": "127.0.0.1:39998",
+            "remote": "127.0.0.1:39998"
+        })
+
+    config = {
+        "log": {
+            "level": "warn"
+        },
+        "network": {
+            "no_tcp": False,
+            "use_udp": True
+        },
+        "endpoints": endpoints
+    }
+
+    with open(REALM_CONFIG, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+
+    if relay_ports:
+        allow_ports(relay_ports)
+
+    res = subprocess.run(["systemctl", "restart", "realm"], capture_output=True, text=True)
+    if res.returncode == 0:
+        return True, f"Realm 转发配置已生效 (共 {len(local_relay_nodes)} 条规则)"
+    else:
+        return False, f"Realm 服务重启失败: {res.stderr or res.stdout}"
+
 def apply_all_configs():
     ok_x, msg_x = apply_xray_config()
     ok_s, msg_s = apply_singbox_config()
-    return (ok_x and ok_s), f"Xray: {msg_x} | Sing-box: {msg_s}"
+    ok_r, msg_r = apply_realm_config()
+    return (ok_x and ok_s and ok_r), f"Xray: {msg_x} | Sing-box: {msg_s} | Realm: {msg_r}"
 
 def apply_xray_config():
     os.makedirs(os.path.dirname(XRAY_CONFIG), exist_ok=True)
@@ -1323,7 +1620,7 @@ def apply_xray_config():
     all_nodes = [dict(r) for r in cur.fetchall()]
     conn.close()
 
-    local_nodes = [n for n in all_nodes if is_local_node(n)]
+    local_nodes = [n for n in all_nodes if is_local_node(n) and not n.get("is_relay")]
     inbounds = build_inbounds_for_nodes(local_nodes)
 
     if not inbounds:
@@ -1387,14 +1684,56 @@ class ProxyHandler(BaseHTTPRequestHandler):
         # 1. Client subscription endpoint (Authenticated via token)
         if path == "/api/proxy/sub":
             token = qs.get("token", [""])[0]
-            expected = get_sub_token()
-            if not token or token != expected:
+            if not token:
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b"Missing token")
+                return
+
+            conn = get_db()
+            u_cur = conn.execute("SELECT * FROM proxy_user WHERE sub_token = ?", (token,))
+            user_row = u_cur.fetchone()
+            if not user_row:
+                legacy_token = get_sub_token()
+                if token == legacy_token:
+                    admin_cur = conn.execute("SELECT * FROM proxy_user WHERE is_admin = 1 LIMIT 1")
+                    user_row = admin_cur.fetchone()
+
+            if not user_row:
+                conn.close()
                 self.send_response(403)
                 self.end_headers()
                 self.wfile.write(b"Invalid subscription token")
                 return
-            
-            conn = get_db()
+
+            user = dict(user_row)
+            now = int(time.time())
+            is_enabled = user.get("enabled", 1) == 1
+            is_expired = user.get("expires_at", 0) > 0 and now > user.get("expires_at", 0)
+            total_used = user.get("upload_bytes", 0) + user.get("download_bytes", 0)
+            limit = user.get("traffic_limit_bytes", 0)
+            is_over_quota = (limit > 0 and total_used >= limit)
+
+            u_bytes = user.get("upload_bytes", 0)
+            d_bytes = user.get("download_bytes", 0)
+            exp_time = user.get("expires_at", 0)
+            sub_userinfo = f"upload={u_bytes}; download={d_bytes}; total={limit}; expire={exp_time}"
+
+            if not is_enabled or is_expired or is_over_quota:
+                conn.close()
+                status_reason = "流量已超额" if is_over_quota else ("订阅已到期" if is_expired else "账户已停用")
+                warning_link = f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:0?security=none#{quote('⚠️ ' + status_reason + '，请联系管理员')}"
+                import base64
+                encoded = base64.b64encode(warning_link.encode("utf-8"))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Subscription-Userinfo", sub_userinfo)
+                self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.txt"')
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
+
             cur = conn.execute("SELECT * FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
             nodes = [dict(r) for r in cur.fetchall()]
             cur_nodes = conn.execute("SELECT id, ip, ipv4 FROM node")
@@ -1411,7 +1750,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             encoded = base64.b64encode("\n".join(links).encode("utf-8"))
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Subscription-Userinfo", "upload=0; download=0; total=107374182400; expire=0")
+            self.send_header("Subscription-Userinfo", sub_userinfo)
+            self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.txt"')
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)
@@ -1437,8 +1777,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             server_nodes = [dict(r) for r in cur_nodes.fetchall()]
             conn.close()
 
-            xray_nodes = [n for n in server_nodes if n["protocol"] not in ("hysteria2", "tuic")]
-            singbox_nodes = [n for n in server_nodes if n["protocol"] in ("hysteria2", "tuic")]
+            xray_nodes = [n for n in server_nodes if n["protocol"] not in ("hysteria2", "tuic") and not n.get("is_relay")]
+            singbox_nodes = [n for n in server_nodes if n["protocol"] in ("hysteria2", "tuic") and not n.get("is_relay")]
             inbounds = build_inbounds_for_nodes(xray_nodes)
             singbox_inbounds = build_singbox_inbounds_for_nodes(singbox_nodes)
             self.send_json({
@@ -1451,9 +1791,83 @@ class ProxyHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # 3. All other /api/proxy/* endpoints require Admin session
+        # 3. User authenticated endpoints (Regular user or Admin)
+        if path == "/api/proxy/user/me":
+            user = get_current_user(self.headers)
+            if not user:
+                self.send_json({"ok": False, "error": "未登录"}, 401)
+                return
+            limit = user.get("traffic_limit_bytes", 0)
+            used = user.get("upload_bytes", 0) + user.get("download_bytes", 0)
+            remaining = max(0, limit - used) if limit > 0 else -1
+            now = int(time.time())
+            is_expired = user.get("expires_at", 0) > 0 and now > user.get("expires_at", 0)
+            is_over = limit > 0 and used >= limit
+            status_text = "disabled" if user.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else "active"))
+            
+            sub_token = user.get("sub_token") or get_sub_token()
+            self.send_json({
+                "ok": True,
+                "user": {
+                    "id": user.get("id"),
+                    "username": user.get("username"),
+                    "is_admin": bool(user.get("is_admin", 0)),
+                    "sub_token": sub_token,
+                    "sub_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={sub_token}",
+                    "traffic_limit_bytes": limit,
+                    "upload_bytes": user.get("upload_bytes", 0),
+                    "download_bytes": user.get("download_bytes", 0),
+                    "total_used_bytes": used,
+                    "remaining_bytes": remaining,
+                    "expires_at": user.get("expires_at", 0),
+                    "enabled": user.get("enabled", 1),
+                    "status": status_text,
+                    "created_at": user.get("created_at", 0)
+                }
+            })
+            return
+
+        if path == "/api/proxy/user/nodes":
+            user = get_current_user(self.headers)
+            if not user:
+                self.send_json({"ok": False, "error": "未登录"}, 401)
+                return
+            conn = get_db()
+            cur = conn.execute("SELECT id, name, protocol, server_name, server_host, port, enabled FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
+            nodes = [dict(r) for r in cur.fetchall()]
+            cur_nodes = conn.execute("SELECT id, ip, ipv4 FROM node")
+            node_ip_map = {r["id"]: resolve_server_host(dict(r)) for r in cur_nodes.fetchall()}
+            conn.close()
+            for n in nodes:
+                sid = n.get("server_id")
+                if sid in node_ip_map and is_private_ip(n.get("server_host")):
+                    n["server_host"] = node_ip_map[sid]
+            self.send_json({"ok": True, "nodes": nodes})
+            return
+
+        # 4. Admin-only endpoints
         if not check_auth(self.headers):
             self.send_json({"error": "Unauthorized"}, 401)
+            return
+
+        if path == "/api/proxy/users":
+            conn = get_db()
+            cur = conn.execute("SELECT * FROM proxy_user ORDER BY id ASC")
+            users = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            now = int(time.time())
+            for u in users:
+                u.pop("password_hash", None)
+                limit = u.get("traffic_limit_bytes", 0)
+                used = u.get("upload_bytes", 0) + u.get("download_bytes", 0)
+                remaining = max(0, limit - used) if limit > 0 else -1
+                is_expired = u.get("expires_at", 0) > 0 and now > u.get("expires_at", 0)
+                is_over = limit > 0 and used >= limit
+                u["total_used_bytes"] = used
+                u["remaining_bytes"] = remaining
+                u["status"] = "disabled" if u.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else "active"))
+                u["sub_url"] = f"https://tz.yohoo.xyz/api/proxy/sub?token={u['sub_token']}"
+            self.send_json({"ok": True, "users": users})
             return
 
         if path.startswith("/api/proxy/core/"):
@@ -1477,6 +1891,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         return
                     elif action == "uninstall":
                         ok, msg = uninstall_local_singbox()
+                        self.send_json({"ok": ok, "message": msg})
+                        return
+                elif core_name == "realm":
+                    if action == "install":
+                        ok, msg = install_local_realm()
+                        self.send_json({"ok": ok, "message": msg})
+                        return
+                    elif action == "uninstall":
+                        ok, msg = uninstall_local_realm()
                         self.send_json({"ok": ok, "message": msg})
                         return
             self.send_json({"ok": False, "message": "未知核心操作"}, 400)
@@ -1543,6 +1966,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             local_xray_running = subprocess.run(["systemctl", "is-active", "--quiet", "xray"]).returncode == 0
             local_singbox_installed = os.path.exists(SINGBOX_BIN)
             local_singbox_running = subprocess.run(["systemctl", "is-active", "--quiet", "sing-box"]).returncode == 0
+            local_realm_installed = os.path.exists(REALM_BIN)
+            local_realm_running = subprocess.run(["systemctl", "is-active", "--quiet", "realm"]).returncode == 0
 
             servers = [{
                 "id": 0,
@@ -1556,6 +1981,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "singbox_installed": local_singbox_installed,
                 "singbox_running": local_singbox_running,
                 "singbox_version": "sing-box 1.14.1" if local_singbox_installed else "",
+                "realm_installed": local_realm_installed,
+                "realm_running": local_realm_running,
+                "realm_version": "Realm 2.9.6" if local_realm_installed else "",
                 "last_seen": now
             }]
 
@@ -1571,11 +1999,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     x_run = local_xray_running
                     sb_inst = local_singbox_installed
                     sb_run = local_singbox_running
+                    r_inst = local_realm_installed
+                    r_run = local_realm_running
                 else:
                     x_inst = bool(st.get("xray_installed") or st.get("version"))
                     x_run = is_online and bool(st.get("xray_running", st.get("status") == "running"))
                     sb_inst = bool(st.get("singbox_installed"))
                     sb_run = is_online and bool(st.get("singbox_running"))
+                    r_inst = bool(st.get("realm_installed"))
+                    r_run = is_online and bool(st.get("realm_running"))
 
                 servers.append({
                     "id": r["id"],
@@ -1589,6 +2021,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "singbox_installed": sb_inst,
                     "singbox_running": sb_run,
                     "singbox_version": st.get("singbox_version", ""),
+                    "realm_installed": r_inst,
+                    "realm_running": r_run,
+                    "realm_version": st.get("realm_version", ""),
                     "last_seen": last_seen
                 })
             self.send_json({"servers": servers})
@@ -1615,6 +2050,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 s_res = subprocess.run(["systemctl", "is-active", "--quiet", "sing-box"])
                 singbox_running = (s_res.returncode == 0)
 
+            realm_installed = os.path.exists(REALM_BIN)
+            realm_version = ""
+            realm_running = False
+            if realm_installed:
+                v_res = subprocess.run([REALM_BIN, "-v"], capture_output=True, text=True)
+                if v_res.stdout:
+                    realm_version = v_res.stdout.splitlines()[0]
+                s_res = subprocess.run(["systemctl", "is-active", "--quiet", "realm"])
+                realm_running = (s_res.returncode == 0)
+
             self.send_json({
                 "installed": xray_installed,
                 "version": xray_version,
@@ -1628,6 +2073,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "installed": singbox_installed,
                     "version": singbox_version,
                     "running": singbox_running
+                },
+                "realm": {
+                    "installed": realm_installed,
+                    "version": realm_version,
+                    "running": realm_running
                 }
             })
             return
@@ -1756,9 +2206,164 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True})
             return
 
+        # User authentication & self-service endpoints
+        if path == "/api/proxy/auth/login":
+            username = req.get("username", "").strip()
+            password = req.get("password", "").strip()
+            if not password:
+                self.send_json({"ok": False, "message": "请输入密码"}, 400)
+                return
+
+            conn = get_db()
+            user_row = None
+            if username:
+                cur = conn.execute("SELECT * FROM proxy_user WHERE username = ?", (username,))
+                user_row = cur.fetchone()
+            else:
+                cur = conn.execute("SELECT * FROM proxy_user WHERE is_admin = 1 ORDER BY id ASC LIMIT 1")
+                user_row = cur.fetchone()
+
+            if not user_row:
+                conn.close()
+                self.send_json({"ok": False, "message": "用户名或密码错误"}, 401)
+                return
+
+            user = dict(user_row)
+            if not verify_password(password, user.get("password_hash", "")):
+                conn.close()
+                self.send_json({"ok": False, "message": "用户名或密码错误"}, 401)
+                return
+
+            if user.get("enabled", 1) != 1:
+                conn.close()
+                self.send_json({"ok": False, "message": "该账户已被管理员禁用"}, 403)
+                return
+
+            # Issue session token
+            raw_token = secrets.token_hex(32)
+            token_hash = sha256(raw_token.encode()).hexdigest()
+            session_days = 14
+            expires_at = int(time.time()) + session_days * 86400
+
+            with conn:
+                conn.execute("INSERT OR REPLACE INTO session (token_hash, expires_at) VALUES (?, ?)", (token_hash, expires_at))
+                conn.execute("INSERT OR REPLACE INTO proxy_session_user (token_hash, user_id, created_at) VALUES (?, ?, ?)", (token_hash, user["id"], int(time.time())))
+            conn.close()
+
+            # Set cookie
+            cookie_header = f"monitor_session={raw_token}; Path=/; Max-Age={session_days*86400}; SameSite=Lax; HttpOnly"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Set-Cookie", cookie_header)
+            resp_body = json.dumps({
+                "ok": True,
+                "user": {
+                    "id": user["id"],
+                    "username": user["username"],
+                    "is_admin": bool(user["is_admin"])
+                }
+            }).encode("utf-8")
+            self.send_header("Content-Length", str(len(resp_body)))
+            self.end_headers()
+            self.wfile.write(resp_body)
+            return
+
+        if path == "/api/proxy/user/reset-token":
+            user = get_current_user(self.headers)
+            if not user:
+                self.send_json({"ok": False, "error": "未登录"}, 401)
+                return
+            new_token = secrets.token_hex(16)
+            conn = get_db()
+            with conn:
+                conn.execute("UPDATE proxy_user SET sub_token = ? WHERE id = ?", (new_token, user["id"]))
+            conn.close()
+            self.send_json({"ok": True, "sub_token": new_token, "sub_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={new_token}"})
+            return
+
         # 2. Admin required for all other POST endpoints
         if not check_auth(self.headers):
             self.send_json({"error": "Unauthorized"}, 401)
+            return
+
+        if path == "/api/proxy/users":
+            username = req.get("username", "").strip()
+            password = req.get("password", "").strip()
+            limit_gb = float(req.get("traffic_limit_gb", 200))
+            expires_days = int(req.get("expires_days", 0))
+
+            if not username:
+                self.send_json({"ok": False, "message": "用户名不能为空"}, 400)
+                return
+            if not password:
+                self.send_json({"ok": False, "message": "密码不能为空"}, 400)
+                return
+
+            limit_bytes = int(limit_gb * 1024 * 1024 * 1024) if limit_gb > 0 else 0
+            expires_at = (int(time.time()) + expires_days * 86400) if expires_days > 0 else 0
+            sub_token = secrets.token_hex(16)
+            pwd_hash = hash_password(password)
+
+            conn = get_db()
+            try:
+                with conn:
+                    cur = conn.execute("""
+                        INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at)
+                        VALUES (?, ?, ?, ?, 0, 0, ?, 1, 0, ?)
+                    """, (username, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time())))
+                    new_id = cur.lastrowid
+                conn.close()
+                self.send_json({"ok": True, "id": new_id, "sub_token": sub_token, "message": "用户创建成功"})
+            except sqlite3.IntegrityError:
+                conn.close()
+                self.send_json({"ok": False, "message": "该用户名已存在"}, 400)
+            return
+
+        if path.startswith("/api/proxy/users/") and path.endswith("/reset-traffic"):
+            user_id = int(path.split("/")[-2])
+            conn = get_db()
+            with conn:
+                conn.execute("UPDATE proxy_user SET upload_bytes = 0, download_bytes = 0 WHERE id = ?", (user_id,))
+            conn.close()
+            self.send_json({"ok": True, "message": "流量已重置为 0"})
+            return
+
+        if path.startswith("/api/proxy/users/") and path.endswith("/reset-token"):
+            user_id = int(path.split("/")[-2])
+            new_token = secrets.token_hex(16)
+            conn = get_db()
+            with conn:
+                conn.execute("UPDATE proxy_user SET sub_token = ? WHERE id = ?", (new_token, user_id))
+            conn.close()
+            self.send_json({"ok": True, "sub_token": new_token, "message": "订阅 Token 已重置"})
+            return
+
+        if path.startswith("/api/proxy/users/") and path.endswith("/toggle"):
+            user_id = int(path.split("/")[-2])
+            conn = get_db()
+            with conn:
+                conn.execute("UPDATE proxy_user SET enabled = 1 - enabled WHERE id = ?", (user_id,))
+            conn.close()
+            self.send_json({"ok": True, "message": "用户状态已变更"})
+            return
+
+        if path.startswith("/api/proxy/users/") and path.endswith("/edit"):
+            user_id = int(path.split("/")[-2])
+            limit_gb = req.get("traffic_limit_gb")
+            expires_at = req.get("expires_at")
+            new_pwd = req.get("password", "").strip()
+            
+            conn = get_db()
+            with conn:
+                if limit_gb is not None:
+                    limit_bytes = int(float(limit_gb) * 1024 * 1024 * 1024) if float(limit_gb) > 0 else 0
+                    conn.execute("UPDATE proxy_user SET traffic_limit_bytes = ? WHERE id = ?", (limit_bytes, user_id))
+                if expires_at is not None:
+                    conn.execute("UPDATE proxy_user SET expires_at = ? WHERE id = ?", (int(expires_at), user_id))
+                if new_pwd:
+                    conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (hash_password(new_pwd), user_id))
+            conn.close()
+            self.send_json({"ok": True, "message": "用户信息已更新"})
             return
 
         if path.startswith("/api/proxy/core/"):
@@ -1784,11 +2389,24 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         ok, msg = uninstall_local_singbox()
                         self.send_json({"ok": ok, "message": msg})
                         return
+                elif core_name == "realm":
+                    if action == "install":
+                        ok, msg = install_local_realm()
+                        self.send_json({"ok": ok, "message": msg})
+                        return
+                    elif action == "uninstall":
+                        ok, msg = uninstall_local_realm()
+                        self.send_json({"ok": ok, "message": msg})
+                        return
             self.send_json({"ok": False, "message": "未知核心操作"}, 400)
             return
 
         if path.startswith("/api/proxy/nodes/") and path.endswith("/test"):
-            node_id = int(path.split("/")[-2])
+            try:
+                node_id = int(path.split("/")[-2])
+            except ValueError:
+                self.send_json({"ok": False, "message": "无效的节点ID"}, 400)
+                return
             conn = get_db()
             cur = conn.execute("SELECT * FROM proxy_node WHERE id = ?", (node_id,))
             row = cur.fetchone()
@@ -1824,29 +2442,51 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
             name = req.get("name", "").strip() or server_name or f"节点-{int(time.time())}"
             protocol = req.get("protocol", "vless_reality")
-            port = int(req.get("port") or get_free_port())
+            
+            is_relay = int(req.get("is_relay", 0))
+            relay_server_id = int(req.get("relay_server_id", 0))
+            relay_port = int(req.get("relay_port", 0))
+            remote_host = (req.get("remote_host") or "").strip()
+            remote_port = int(req.get("remote_port", 0))
+            target_node_id = int(req.get("target_node_id", 0))
 
-            # 校验所选服务器是否已安装对应协议所需的核心
-            needs_singbox = protocol in ("hysteria2", "tuic")
+            port = int(req.get("port") or relay_port or get_free_port())
             is_local = is_local_node({"server_id": server_id, "server_host": server_host, "server_name": server_name})
-            if is_local:
-                if needs_singbox and not os.path.exists(SINGBOX_BIN):
-                    self.send_json({"ok": False, "message": "本机尚未安装 Sing-box 核心，无法创建此类协议节点，请先在核心状态卡片中安装核心！"}, 400)
-                    return
-                if not needs_singbox and not os.path.exists(XRAY_BIN):
-                    self.send_json({"ok": False, "message": "本机尚未安装 Xray-Core 核心，无法创建此类协议节点，请先在核心状态卡片中安装核心！"}, 400)
-                    return
+
+            if is_relay == 1:
+                if is_local:
+                    if not os.path.exists(REALM_BIN):
+                        self.send_json({"ok": False, "message": "本机尚未安装 Realm 端口转发核心，无法创建中转落地节点，请先在核心状态卡片中安装 Realm！"}, 400)
+                        return
+                else:
+                    conn_chk = get_db()
+                    cur_st = conn_chk.execute("SELECT realm_installed FROM node_proxy_status WHERE node_id = ?", (server_id,))
+                    s_stat = cur_st.fetchone()
+                    conn_chk.close()
+                    if not s_stat or not s_stat["realm_installed"]:
+                        self.send_json({"ok": False, "message": f"服务器 [{server_name}] 尚未安装 Realm 端口转发核心！"}, 400)
+                        return
             else:
-                conn_chk = get_db()
-                cur_st = conn_chk.execute("SELECT xray_installed, singbox_installed FROM node_proxy_status WHERE node_id = ?", (server_id,))
-                s_stat = cur_st.fetchone()
-                conn_chk.close()
-                if needs_singbox and (not s_stat or not s_stat["singbox_installed"]):
-                    self.send_json({"ok": False, "message": f"服务器 [{server_name}] 尚未安装 Sing-box 核心，无法创建此类协议节点！"}, 400)
-                    return
-                if not needs_singbox and (not s_stat or not s_stat["xray_installed"]):
-                    self.send_json({"ok": False, "message": f"服务器 [{server_name}] 尚未安装 Xray-Core 核心，无法创建此类协议节点！"}, 400)
-                    return
+                # 校验所选服务器是否已安装对应协议所需的核心
+                needs_singbox = protocol in ("hysteria2", "tuic")
+                if is_local:
+                    if needs_singbox and not os.path.exists(SINGBOX_BIN):
+                        self.send_json({"ok": False, "message": "本机尚未安装 Sing-box 核心，无法创建此类协议节点，请先在核心状态卡片中安装核心！"}, 400)
+                        return
+                    if not needs_singbox and not os.path.exists(XRAY_BIN):
+                        self.send_json({"ok": False, "message": "本机尚未安装 Xray-Core 核心，无法创建此类协议节点，请先在核心状态卡片中安装核心！"}, 400)
+                        return
+                else:
+                    conn_chk = get_db()
+                    cur_st = conn_chk.execute("SELECT xray_installed, singbox_installed FROM node_proxy_status WHERE node_id = ?", (server_id,))
+                    s_stat = cur_st.fetchone()
+                    conn_chk.close()
+                    if needs_singbox and (not s_stat or not s_stat["singbox_installed"]):
+                        self.send_json({"ok": False, "message": f"服务器 [{server_name}] 尚未安装 Sing-box 核心，无法创建此类协议节点！"}, 400)
+                        return
+                    if not needs_singbox and (not s_stat or not s_stat["xray_installed"]):
+                        self.send_json({"ok": False, "message": f"服务器 [{server_name}] 尚未安装 Xray-Core 核心，无法创建此类协议节点！"}, 400)
+                        return
             
             uuid = req.get("uuid") or gen_uuid()
             flow = req.get("flow", "xtls-rprx-vision")
@@ -1880,12 +2520,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 INSERT INTO proxy_node (
                     server_id, server_name, server_host, name, protocol, port,
                     uuid, flow, sni, dest, public_key, private_key, short_id,
-                    ws_path, method, password, username, extra_json, enabled, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    ws_path, method, password, username, extra_json,
+                    is_relay, relay_server_id, relay_port, remote_host, remote_port, target_node_id,
+                    enabled, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """, (
                     server_id, server_name, server_host, name, protocol, port,
                     uuid, flow, sni, dest, pub_key, priv_key, short_id,
-                    ws_path, method, password, username, extra_json, now
+                    ws_path, method, password, username, extra_json,
+                    is_relay, relay_server_id, port, remote_host, remote_port, target_node_id,
+                    now
                 ))
                 new_id = cur.lastrowid
             conn.close()
@@ -1906,12 +2550,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "flow": flow,
                 "sni": sni,
                 "public_key": pub_key,
-                "short_id": short_id
+                "short_id": short_id,
+                "is_relay": is_relay,
+                "remote_host": remote_host,
+                "remote_port": remote_port
             })
 
             self.send_json({
                 "ok": ok,
                 "id": new_id,
+                "node_id": new_id,
                 "message": msg,
                 "test_result": {
                     "ok": test_ok,
@@ -1922,7 +2570,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         elif path.startswith("/api/proxy/nodes/") and path.endswith("/toggle"):
-            node_id = int(path.split("/")[-2])
+            try:
+                node_id = int(path.split("/")[-2])
+            except ValueError:
+                self.send_json({"ok": False, "message": "无效的节点ID"}, 400)
+                return
             conn = get_db()
             with conn:
                 cur = conn.execute("SELECT enabled, server_id, server_host, server_name FROM proxy_node WHERE id = ?", (node_id,))
@@ -1976,10 +2628,26 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True})
             return
 
+        m_user = re.match(r"^/api/proxy/users/(\d+)$", path)
+        if m_user:
+            user_id = int(m_user.group(1))
+            if user_id == 1:
+                self.send_json({"ok": False, "message": "不能删除初始管理员账号"}, 400)
+                return
+            conn = get_db()
+            with conn:
+                conn.execute("DELETE FROM proxy_user WHERE id = ?", (user_id,))
+                conn.execute("DELETE FROM proxy_session_user WHERE user_id = ?", (user_id,))
+            conn.close()
+            self.send_json({"ok": True, "message": "用户已删除"})
+            return
+
         self.send_json({"error": "Not Found"}, 404)
 
 if __name__ == "__main__":
     init_db()
+    t = threading.Thread(target=traffic_collector_loop, daemon=True)
+    t.start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), ProxyHandler)
     print(f"ProxyManager daemon listening on 127.0.0.1:{PORT}")
     server.serve_forever()

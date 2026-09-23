@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Shield, User } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -7,8 +8,6 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
 
-/** lucide removed brand marks in v1, and the GitHub logo is what makes this
- *  button recognisable at a glance. */
 function GithubMark() {
   return (
     <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden className="size-4">
@@ -17,8 +16,6 @@ function GithubMark() {
   )
 }
 
-// The hub redirects a failed GitHub sign-in back here with the reason attached,
-// so it is readable in context rather than as a bare 401 page.
 function callbackError(): string {
   const reason = new URLSearchParams(location.search).get("login_error")
   if (reason) history.replaceState({}, "", location.pathname)
@@ -26,16 +23,41 @@ function callbackError(): string {
 }
 
 export function Login({ github, onDone }: { github: boolean; onDone: () => void }) {
+  const [tab, setTab] = useState<"user" | "admin">("user")
+  const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
+  const [adminPassword, setAdminPassword] = useState("")
   const [error, setError] = useState(callbackError)
   const [busy, setBusy] = useState(false)
 
-  async function submit(e: React.FormEvent) {
+  async function handleUserSubmit(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)
     setError("")
     try {
-      await api("/auth/login", { method: "POST", body: JSON.stringify({ password }) })
+      const res = await fetch("/api/proxy/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.ok) {
+        throw new Error(data.message || data.error || "登录失败，请检查账号密码")
+      }
+      onDone()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleAdminSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setError("")
+    try {
+      await api("/auth/login", { method: "POST", body: JSON.stringify({ password: adminPassword }) })
       onDone()
     } catch (err) {
       setError((err as Error).message)
@@ -46,45 +68,112 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
 
   return (
     <div className="grid min-h-svh place-items-center p-6">
-      <Card className="w-full max-w-sm gap-5 p-6">
-        <h1 className="text-lg font-semibold">登录后台</h1>
+      <Card className="w-full max-w-sm gap-5 p-6 shadow-lg border">
+        <div className="space-y-1.5 text-center">
+          <h1 className="text-xl font-bold tracking-tight">网络聚合代理服务</h1>
+          <p className="text-xs text-muted-foreground">用户登录以获取订阅配置与流量中心</p>
+        </div>
+
+        {/* 角色切换选项卡 */}
+        <div className="grid grid-cols-2 rounded-lg bg-muted p-1 text-xs">
+          <button
+            type="button"
+            className={`flex items-center justify-center gap-1.5 py-1.5 rounded-md transition-all ${
+              tab === "user" ? "bg-background text-foreground shadow-sm font-semibold" : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => { setTab("user"); setError("") }}
+          >
+            <User className="size-3.5" /> 用户登录
+          </button>
+          <button
+            type="button"
+            className={`flex items-center justify-center gap-1.5 py-1.5 rounded-md transition-all ${
+              tab === "admin" ? "bg-background text-foreground shadow-sm font-semibold" : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => { setTab("admin"); setError("") }}
+          >
+            <Shield className="size-3.5" /> 管理员登录
+          </button>
+        </div>
 
         {error && (
-          <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+          <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>
         )}
 
-        {github && (
-          <>
-            <Button asChild variant="outline" className="w-full">
-              <a href="/api/auth/github">
-                <GithubMark /> 使用 GitHub 登录
-              </a>
-            </Button>
-            <div className="relative">
-              <Separator />
-              <span className="absolute inset-0 -top-2 mx-auto w-fit bg-card px-2 text-xs text-muted-foreground">
-                或使用应急密码
-              </span>
+        {tab === "user" ? (
+          <form onSubmit={handleUserSubmit} className="space-y-3 pt-1">
+            <div className="space-y-1.5">
+              <Label htmlFor="username" className="text-xs">用户名</Label>
+              <Input
+                id="username"
+                type="text"
+                placeholder="请输入用户名"
+                className="h-9 text-xs"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+                autoFocus
+                required
+              />
             </div>
-          </>
-        )}
 
-        <form onSubmit={submit} className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="password" className="text-xs">应急密码</Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              autoFocus={!github}
-            />
+            <div className="space-y-1.5">
+              <Label htmlFor="password" className="text-xs">密码</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="请输入登录密码"
+                className="h-9 text-xs"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </div>
+
+            <Button type="submit" className="w-full h-9 text-xs font-medium" disabled={busy || !username || !password}>
+              {busy ? "登录中…" : "登录用户中心"}
+            </Button>
+          </form>
+        ) : (
+          <div className="space-y-3 pt-1">
+            {github && (
+              <>
+                <Button asChild variant="outline" className="w-full h-9 text-xs">
+                  <a href="/api/auth/github">
+                    <GithubMark /> 使用 GitHub 登录
+                  </a>
+                </Button>
+                <div className="relative">
+                  <Separator />
+                  <span className="absolute inset-0 -top-2 mx-auto w-fit bg-card px-2 text-[10px] text-muted-foreground">
+                    或使用应急管理密码
+                  </span>
+                </div>
+              </>
+            )}
+
+            <form onSubmit={handleAdminSubmit} className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="admin-password" className="text-xs">应急管理员密码</Label>
+                <Input
+                  id="admin-password"
+                  type="password"
+                  placeholder="请输入后台管理员密码"
+                  className="h-9 text-xs"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  autoComplete="current-password"
+                  autoFocus={!github}
+                  required
+                />
+              </div>
+              <Button type="submit" className="w-full h-9 text-xs font-medium" disabled={busy || !adminPassword}>
+                {busy ? "登录中…" : "进入管理后台"}
+              </Button>
+            </form>
           </div>
-          <Button type="submit" className="w-full" disabled={busy || !password}>
-            登录
-          </Button>
-        </form>
+        )}
       </Card>
     </div>
   )
