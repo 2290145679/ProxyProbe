@@ -38,3 +38,9 @@ Thumbs.db
 # Large pre-downloaded archive files
 *.zip
 *.tar.gz
+
+# Local Handover & Internal Notes (Do not push to GitHub)
+HANDOVER.md
+AI交接文档.md
+*交接*.md
+
