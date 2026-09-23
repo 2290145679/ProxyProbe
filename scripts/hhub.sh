@@ -3,8 +3,6 @@
 # ProxyProbe 控制台管理工具 (hhub)
 # 项目主页: https://github.com/2290145679/ProxyProbe
 # ==============================================================================
-set -e
-
 # ---- 样式与颜色 ----
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[0;33m'; B='\033[0;34m'; C='\033[0;36m'
 N='\033[0m'; BOLD='\033[1m'; D='\033[2m'
@@ -34,7 +32,7 @@ get_current_config() {
     CUR_DOMAIN=""
     CUR_WEB_PORT="443"
     if [ -f /etc/caddy/Caddyfile ]; then
-        FIRST_LINE=$(grep -E '^[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{' /etc/caddy/Caddyfile | head -n 1 | awk '{print $1}' | tr -d '{')
+        FIRST_LINE=$(grep -E '^[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{' /etc/caddy/Caddyfile 2>/dev/null | head -n 1 | awk '{print $1}' | tr -d '{' || true)
         if [ -n "$FIRST_LINE" ]; then
             if [[ "$FIRST_LINE" == *:* ]]; then
                 CUR_DOMAIN="${FIRST_LINE%%:*}"
@@ -49,16 +47,17 @@ get_current_config() {
     # 2. 从 monitor-hub.service 解析内部 HUB 端口
     CUR_HUB_PORT="28080"
     if [ -f /etc/systemd/system/monitor-hub.service ]; then
-        _HP=$(grep -oE -- '--listen 127.0.0.1:[0-9]+' /etc/systemd/system/monitor-hub.service | awk -F: '{print $2}' || true)
-        [ -n "$_HP" ] && CUR_HUB_PORT="$_HP"
+        _HP=$(grep -oE -- '--listen 127.0.0.1:[0-9]+' /etc/systemd/system/monitor-hub.service 2>/dev/null | awk -F: '{print $2}' || true)
+        if [ -n "$_HP" ]; then CUR_HUB_PORT="$_HP"; fi
     fi
 
     # 3. 从 proxy-manager.service 解析内部 PM 端口
     CUR_PM_PORT="28090"
     if [ -f /etc/systemd/system/proxy-manager.service ]; then
-        _PP=$(grep -oE -- '--port [0-9]+' /etc/systemd/system/proxy-manager.service | awk '{print $2}' || true)
-        [ -n "$_PP" ] && CUR_PM_PORT="$_PP"
+        _PP=$(grep -oE -- '--port [0-9]+' /etc/systemd/system/proxy-manager.service 2>/dev/null | awk '{print $2}' || true)
+        if [ -n "$_PP" ]; then CUR_PM_PORT="$_PP"; fi
     fi
+    return 0
 }
 
 # ---- 打印 Banner ----
@@ -113,16 +112,27 @@ view_status() {
     fi
 
     # 用户数与节点数统计
-    if [ -f "$DATA/monitor.db" ] && command -v sqlite3 >/dev/null 2>&1; then
+    if [ -f "$DATA/monitor.db" ]; then
+        local stats
+        stats=$(python3 -c "
+import sqlite3
+try:
+    conn = sqlite3.connect('$DATA/monitor.db')
+    u = conn.execute('SELECT count(*) FROM proxy_user').fetchone()[0]
+    n = conn.execute('SELECT count(*) FROM proxy_node').fetchone()[0]
+    s = conn.execute('SELECT count(*) FROM node').fetchone()[0]
+    print(f'{u}|{n}|{s}')
+except Exception:
+    print('0|0|0')
+" 2>/dev/null || echo "0|0|0")
+        local u_count=$(echo "$stats" | cut -d'|' -f1)
+        local n_count=$(echo "$stats" | cut -d'|' -f2)
+        local s_count=$(echo "$stats" | cut -d'|' -f3)
         echo ""
         echo -e "${BOLD}═══════════════════ 业务数据概览 ═══════════════════${N}"
-        local u_count n_count s_count
-        u_count=$(sqlite3 "$DATA/monitor.db" "SELECT count(*) FROM proxy_user;" 2>/dev/null || echo "0")
-        n_count=$(sqlite3 "$DATA/monitor.db" "SELECT count(*) FROM proxy_node;" 2>/dev/null || echo "0")
-        s_count=$(sqlite3 "$DATA/monitor.db" "SELECT count(*) FROM node;" 2>/dev/null || echo "0")
-        echo -e "  代理用户总数:     ${BOLD}${u_count}${N} 人"
-        echo -e "  代理节点总数:     ${BOLD}${n_count}${N} 个"
-        echo -e "  监控服务器数:     ${BOLD}${s_count}${N} 台"
+        echo -e "  代理用户总数:     ${BOLD}${u_count:-0}${N} 人"
+        echo -e "  代理节点总数:     ${BOLD}${n_count:-0}${N} 个"
+        echo -e "  监控服务器数:     ${BOLD}${s_count:-0}${N} 台"
     fi
     echo ""
 }
@@ -422,7 +432,14 @@ manage_backup() {
             ts=$(date +"%Y%m%d_%H%M%S")
             local backup_file="$DATA/monitor_backup_${ts}.db"
             if [ -f "$DATA/monitor.db" ]; then
-                sqlite3 "$DATA/monitor.db" ".backup '$backup_file'" 2>/dev/null || cp "$DATA/monitor.db" "$backup_file"
+                python3 -c "
+import sqlite3
+src = sqlite3.connect('$DATA/monitor.db')
+dst = sqlite3.connect('$backup_file')
+src.backup(dst)
+dst.close()
+src.close()
+" 2>/dev/null || cp "$DATA/monitor.db" "$backup_file"
                 chmod 600 "$backup_file"
                 info "备份成功！文件保存在: ${BOLD}${backup_file}${N}"
             else
