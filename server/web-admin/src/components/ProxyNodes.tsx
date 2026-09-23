@@ -547,8 +547,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
   return (
     <div className="space-y-5">
-      {/* Row 1: Triple Core Status: Xray & Sing-box & Realm side by side */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {/* Row 1: Dual Core Status: Xray & Sing-box side by side */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* Left Card: Xray-Core 核心状态 */}
         <Card className="p-5 flex flex-col justify-between rounded-xl border bg-card shadow-sm">
           <div>
@@ -674,71 +674,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               >
                 <Trash2 className="size-3.5" />
                 {coreActionLoading === "singbox-uninstall" ? "正在卸载..." : "卸载核心"}
-              </Button>
-            )}
-          </div>
-        </Card>
-
-        {/* Third Card: Realm 端口转发核心状态 (样式与 Xray/Sing-box 1:1 对齐) */}
-        <Card className="p-5 flex flex-col justify-between rounded-xl border bg-card shadow-sm">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <ArrowRightLeft className="size-4 text-foreground/80" />
-                <h3 className="font-semibold text-sm">Realm 转发核心状态</h3>
-              </div>
-              {!realmStatus.installed ? (
-                <Badge variant="outline" className="border-neutral-300 text-muted-foreground rounded-full px-2.5 py-0.5 text-xs font-normal">
-                  未安装
-                </Badge>
-              ) : (
-                <Badge 
-                  className={realmStatus.running ? "bg-emerald-600 hover:bg-emerald-600 text-white rounded-full px-2.5 py-0.5 text-xs font-normal" : "bg-destructive text-destructive-foreground rounded-full px-2.5 py-0.5 text-xs font-normal"}
-                >
-                  {realmStatus.running ? "运行中" : "未运行"}
-                </Badge>
-              )}
-            </div>
-
-            <p className="text-xs text-muted-foreground leading-relaxed font-mono whitespace-pre-wrap break-all mb-4">
-              {!realmStatus.installed
-                ? "当前服务器尚未安装 Realm 核心。安装后支持极速 TCP/UDP 端口转发与中转落地。"
-                : (realmStatus.version || "Realm 2.9 (rust musl)")}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5 pt-2">
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => { loadStatus(); loadData() }} 
-              disabled={statusLoading || loading || !!coreActionLoading}
-              className="text-xs h-8 gap-1.5"
-            >
-              <RefreshCw className={`size-3.5 ${(statusLoading || loading) ? "animate-spin" : ""}`} />
-              刷新状态
-            </Button>
-
-            {!realmStatus.installed ? (
-              <Button 
-                size="sm" 
-                onClick={() => handleCoreAction("realm", "install")}
-                disabled={!!coreActionLoading}
-                className="text-xs h-8 gap-1.5 bg-black hover:bg-neutral-800 text-white dark:bg-white dark:text-black dark:hover:bg-neutral-200"
-              >
-                <Download className="size-3.5" />
-                {coreActionLoading === "realm-install" ? "正在安装..." : "安装核心"}
-              </Button>
-            ) : (
-              <Button 
-                variant="outline"
-                size="sm" 
-                onClick={() => handleCoreAction("realm", "uninstall")}
-                disabled={!!coreActionLoading}
-                className="text-xs h-8 gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 border-red-200 dark:border-red-900/50"
-              >
-                <Trash2 className="size-3.5" />
-                {coreActionLoading === "realm-uninstall" ? "正在卸载..." : "卸载核心"}
               </Button>
             )}
           </div>
