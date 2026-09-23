@@ -32,6 +32,27 @@ for _i, _arg in enumerate(sys.argv):
             pass
 LOCAL_HOSTS = {"189.24.108.25", "127.0.0.1", "localhost", "tz.yohoo.xyz", ""}
 
+def get_local_ip(family=socket.AF_INET):
+    try:
+        target = ("8.8.8.8", 80) if family == socket.AF_INET else ("2001:4860:4860::8888", 80)
+        s = socket.socket(family, socket.SOCK_DGRAM)
+        s.settimeout(1.0)
+        s.connect(target)
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return ""
+
+def format_host_for_uri(host):
+    if not host:
+        return "127.0.0.1"
+    host_str = str(host).strip()
+    if ":" in host_str and not host_str.startswith("["):
+        return f"[{host_str}]"
+    return host_str
+
+
 PROXY_AGENT_SH = """#!/usr/bin/env bash
 set -e
 
@@ -1278,6 +1299,9 @@ def test_node_connectivity(node):
     proto = node.get("protocol", "vless_reality")
     node_id = node.get("id", 0)
 
+    is_ipv6 = ":" in host
+    sock_family = socket.AF_INET6 if is_ipv6 else socket.AF_INET
+
     # 0. Hysteria 2 / TUIC (UDP 协议检测)
     if proto in ("hysteria2", "tuic"):
         t0 = time.time()
@@ -1290,7 +1314,7 @@ def test_node_connectivity(node):
                 return False, f"未能在 UDP 端口 {port} 正常监听，请检查核心服务状态或端口占用", 0
         else:
             try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s = socket.socket(sock_family, socket.SOCK_DGRAM)
                 s.settimeout(2.0)
                 s.connect((host, port))
                 s.send(b"\x00")
@@ -1303,7 +1327,7 @@ def test_node_connectivity(node):
     # 1. TCP 端口连通性检测
     t0 = time.time()
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s = socket.socket(sock_family, socket.SOCK_STREAM)
         s.settimeout(2.5)
         res = s.connect_ex((host, port))
         s.close()
@@ -1387,6 +1411,7 @@ def format_node_link(node, user=None):
         pwd_str = u_pwd
 
     host = node.get("server_host") or "189.24.108.25"
+    uri_host = format_host_for_uri(host)
     port = node.get("port") or 20443
     if node.get("is_relay"):
         name_raw = f"[{node.get('server_name', '中转')}] ➔ {node.get('name', '落地')}"
@@ -1402,7 +1427,7 @@ def format_node_link(node, user=None):
         flow_param = f"&flow={flow}" if flow else ""
         spx = node.get("spider_x") or ""
         spx_param = f"&spx={quote(spx)}" if (spx and spx != "/") else ""
-        return f"vless://{uuid_str}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=tcp{flow_param}&sni={sni}&sid={sid}#{name}"
+        return f"vless://{uuid_str}@{uri_host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=tcp{flow_param}&sni={sni}&sid={sid}#{name}"
     
     elif proto == "vless_reality_xhttp":
         pbk = node.get("public_key") or ""
@@ -1411,11 +1436,11 @@ def format_node_link(node, user=None):
         xpath = quote(node.get("ws_path") or "/xhttp")
         spx = node.get("spider_x") or ""
         spx_param = f"&spx={quote(spx)}" if (spx and spx != "/") else ""
-        return f"vless://{uuid_str}@{host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=xhttp&sni={sni}&sid={sid}&path={xpath}&mode=auto#{name}"
+        return f"vless://{uuid_str}@{uri_host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=xhttp&sni={sni}&sid={sid}&path={xpath}&mode=auto#{name}"
 
     elif proto == "vless_ws":
         ws_path = quote(node.get("ws_path") or "/ws-proxy")
-        return f"vless://{uuid_str}@{host}:{port}?security=none&encryption=none&type=ws&path={ws_path}#{name}"
+        return f"vless://{uuid_str}@{uri_host}:{port}?security=none&encryption=none&type=ws&path={ws_path}#{name}"
 
     elif proto == "vmess_ws":
         ps_label = name_raw
@@ -1437,31 +1462,31 @@ def format_node_link(node, user=None):
         return f"vmess://{b64_json}"
 
     elif proto == "trojan":
-        return f"trojan://{pwd_str}@{host}:{port}?security=none&headerType=none&type=tcp#{name}"
+        return f"trojan://{pwd_str}@{uri_host}:{port}?security=none&headerType=none&type=tcp#{name}"
 
     elif proto == "ss2022":
         import base64
         method = node.get("method") or "2022-blake3-aes-128-gcm"
         userinfo = base64.b64encode(f"{method}:{pwd_str}".encode('utf-8')).decode('utf-8')
-        return f"ss://{userinfo}@{host}:{port}#{name}"
+        return f"ss://{userinfo}@{uri_host}:{port}#{name}"
 
     elif proto == "socks5":
         uname = (node.get("username") or "").strip()
         if user:
             uname = user.get("username", "")
         if uname:
-            return f"socks5://{quote(uname)}:{quote(pwd_str)}@{host}:{port}#{name}"
+            return f"socks5://{quote(uname)}:{quote(pwd_str)}@{uri_host}:{port}#{name}"
         else:
-            return f"socks5://{host}:{port}#{name}"
+            return f"socks5://{uri_host}:{port}#{name}"
 
     elif proto == "hysteria2":
         sni = node.get("sni") or "bing.com"
-        return f"hysteria2://{pwd_str}@{host}:{port}/?sni={sni}&alpn=h3&insecure=1#{name}"
+        return f"hysteria2://{pwd_str}@{uri_host}:{port}/?sni={sni}&alpn=h3&insecure=1#{name}"
 
     elif proto == "tuic":
         uid_val = uuid_str or gen_random_password(16)
         sni = node.get("sni") or "bing.com"
-        return f"tuic://{uid_val}:{pwd_str}@{host}:{port}?congestion_control=bbr&alpn=h3&sni={sni}&udp_relay_mode=native&allow_insecure=1#{name}"
+        return f"tuic://{uid_val}:{pwd_str}@{uri_host}:{port}?congestion_control=bbr&alpn=h3&sni={sni}&udp_relay_mode=native&allow_insecure=1#{name}"
 
     return ""
 
@@ -1803,7 +1828,7 @@ def build_inbounds_for_nodes(nodes, active_users=None):
 
             inbounds.append({
                 "tag": tag,
-                "listen": "0.0.0.0",
+                "listen": "::",
                 "port": port,
                 "protocol": "vless",
                 "settings": {
@@ -1841,7 +1866,7 @@ def build_inbounds_for_nodes(nodes, active_users=None):
 
             inbounds.append({
                 "tag": tag,
-                "listen": "0.0.0.0",
+                "listen": "::",
                 "port": port,
                 "protocol": "vless",
                 "settings": {
@@ -1883,7 +1908,7 @@ def build_inbounds_for_nodes(nodes, active_users=None):
 
             inbounds.append({
                 "tag": tag,
-                "listen": "0.0.0.0",
+                "listen": "::",
                 "port": port,
                 "protocol": "vless",
                 "settings": {
@@ -1913,7 +1938,7 @@ def build_inbounds_for_nodes(nodes, active_users=None):
 
             inbounds.append({
                 "tag": tag,
-                "listen": "0.0.0.0",
+                "listen": "::",
                 "port": port,
                 "protocol": "vmess",
                 "settings": {
@@ -1940,7 +1965,7 @@ def build_inbounds_for_nodes(nodes, active_users=None):
 
             inbounds.append({
                 "tag": tag,
-                "listen": "0.0.0.0",
+                "listen": "::",
                 "port": port,
                 "protocol": "trojan",
                 "settings": {
@@ -1952,7 +1977,7 @@ def build_inbounds_for_nodes(nodes, active_users=None):
             method = n.get("method") or "2022-blake3-aes-128-gcm"
             inbounds.append({
                 "tag": tag,
-                "listen": "0.0.0.0",
+                "listen": "::",
                 "port": port,
                 "protocol": "shadowsocks",
                 "settings": {
@@ -1971,7 +1996,7 @@ def build_inbounds_for_nodes(nodes, active_users=None):
                 settings["accounts"] = [{ "user": uname, "pass": pwd }]
             inbounds.append({
                 "tag": tag,
-                "listen": "0.0.0.0",
+                "listen": "::",
                 "port": port,
                 "protocol": "socks",
                 "settings": settings
@@ -2763,7 +2788,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/proxy/servers":
             conn = get_db()
-            cur = conn.execute("SELECT id, name, ip, ipv4, token FROM node ORDER BY sort ASC, id ASC")
+            cur = conn.execute("SELECT id, name, ip, ipv4, ipv6, token FROM node ORDER BY sort ASC, id ASC")
             remote_nodes = [dict(r) for r in cur.fetchall()]
             
             cur_status = conn.execute("SELECT * FROM node_proxy_status")
@@ -2778,10 +2803,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
             local_realm_installed = os.path.exists(REALM_BIN)
             local_realm_running = subprocess.run(["systemctl", "is-active", "--quiet", "realm"]).returncode == 0
 
+            local_ipv4 = get_local_ip(socket.AF_INET) or "189.24.108.25"
+            local_ipv6 = get_local_ip(socket.AF_INET6)
+
             servers = [{
                 "id": 0,
                 "name": "本机 (当前服务器)",
-                "host": "189.24.108.25",
+                "host": local_ipv4,
+                "ipv4": local_ipv4,
+                "ipv6": local_ipv6,
                 "is_local": True,
                 "token": "",
                 "xray_installed": local_xray_installed,
@@ -2797,6 +2827,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             }]
 
             for r in remote_nodes:
+                r_ipv4 = (r.get("ipv4") or r.get("ip") or "").strip()
+                r_ipv6 = (r.get("ipv6") or "").strip()
                 host = resolve_server_host(r)
                 is_local = (host in LOCAL_HOSTS)
                 st = status_map.get(r["id"], {})
@@ -2822,6 +2854,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "id": r["id"],
                     "name": r["name"] or f"节点-{r['id']}",
                     "host": host,
+                    "ipv4": r_ipv4,
+                    "ipv6": r_ipv6,
                     "is_local": is_local,
                     "token": r.get("token", ""),
                     "xray_installed": x_inst,

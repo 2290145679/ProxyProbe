@@ -51,6 +51,8 @@ export interface ProxyServer {
   id: number
   name: string
   host: string
+  ipv4?: string
+  ipv6?: string
   is_local: boolean
   token: string
   xray_installed: boolean
@@ -87,6 +89,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [servers, setServers] = useState<ProxyServer[]>([])
   const [subToken, setSubToken] = useState<string>("")
   const [recommendedPort, setRecommendedPort] = useState<number>(20443)
+  const [ipType, setIpType] = useState<"ipv4" | "ipv6" | "custom">("ipv4")
   const [loading, setLoading] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
   const [coreActionLoading, setCoreActionLoading] = useState<string | null>(null)
@@ -288,6 +291,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       id: n.id,
       name: n.name,
       host: n.ipv4 || n.ip || "自动解析",
+      ipv4: n.ipv4 || n.ip || "",
+      ipv6: n.ipv6 || "",
       is_local: false,
       token: "",
       xray_installed: false,
@@ -306,10 +311,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     : (isSingboxProto ? Boolean(currentSelectedServer?.singbox_installed) : Boolean(currentSelectedServer?.xray_installed))
 
   const openCreateDialog = () => {
+    setIpType("ipv4")
     const defaultServer = serverOptions.length > 0 ? serverOptions[0] : null
     const sId = defaultServer ? String(defaultServer.id) : "0"
     const sName = defaultServer ? defaultServer.name : "本机"
-    const sHost = defaultServer ? defaultServer.host : "189.24.108.25"
+    const sHost = defaultServer ? (defaultServer.ipv4 || defaultServer.host) : "189.24.108.25"
 
     setNodeMode("direct")
     setRelayTargetMode("link_existing")
@@ -352,11 +358,19 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     const s = serverOptions.find(n => String(n.id) === sId)
     if (s) {
       const cleanProto = PROTOCOL_OPTIONS.find(o => o.value === form.protocol)?.label?.split(" ")[0] || "Node"
+      let chosenHost = s.ipv4 || s.host
+      if (ipType === "ipv6") {
+        if (s.ipv6) {
+          chosenHost = s.ipv6
+        } else {
+          setIpType("ipv4")
+        }
+      }
       setForm(prev => ({ 
         ...prev, 
         server_id: sId, 
         server_name: s.name, 
-        server_host: s.host,
+        server_host: chosenHost,
         name: nodeMode === "relay" 
           ? `[中转] ${s.name} ➔ ${prev.remote_host || "落地"}`
           : `${s.name}-${cleanProto}`
@@ -761,14 +775,27 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               {proxyNodes.map((n) => (
                 <TableRow key={n.id} className="hover:bg-muted/30">
                   <TableCell className="text-xs">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className={`size-2 rounded-full shrink-0 ${n.is_relay ? "bg-blue-500" : "bg-emerald-500"}`} />
                       <span className="font-medium text-foreground">{n.server_name}</span>
+                      <Badge 
+                        variant={n.server_host.includes(":") ? "secondary" : "outline"} 
+                        className={`text-[10px] py-0 px-1 font-mono shrink-0 ${
+                          n.server_host.includes(":")
+                            ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-300 dark:border-purple-800"
+                            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800"
+                        }`}
+                      >
+                        {n.server_host.includes(":") ? "IPv6" : "IPv4"}
+                      </Badge>
                       {n.is_relay === 1 && (
                         <Badge variant="outline" className="text-[10px] py-0 px-1 border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30">
                           中转
                         </Badge>
                       )}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground font-mono truncate max-w-[150px] mt-0.5" title={n.server_host}>
+                      {n.server_host}
                     </div>
                     {n.is_relay === 1 && (
                       <div className="text-[11px] text-muted-foreground mt-0.5 font-mono truncate max-w-[150px]" title={`转发至落地 ${n.remote_host}:${n.remote_port}`}>
@@ -1011,6 +1038,108 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            {/* 连接 IP 类型与地址协议 (IPv4 vs IPv6 vs 自定义) */}
+            <div className="space-y-2 p-3 rounded-lg border bg-muted/20">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">连接 IP 协议 / 连接地址</Label>
+                <div className="flex gap-1 bg-muted p-0.5 rounded-md text-[11px]">
+                  <button
+                    type="button"
+                    className={`px-2.5 py-0.5 rounded transition-all ${
+                      ipType === "ipv4"
+                        ? "bg-card text-foreground shadow-xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => {
+                      setIpType("ipv4")
+                      const targetIp = currentSelectedServer?.ipv4 || currentSelectedServer?.host || ""
+                      if (targetIp) {
+                        setForm(prev => ({ ...prev, server_host: targetIp }))
+                      }
+                    }}
+                  >
+                    🌐 IPv4 连接
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!currentSelectedServer?.ipv6}
+                    className={`px-2.5 py-0.5 rounded transition-all ${
+                      ipType === "ipv6"
+                        ? "bg-card text-foreground shadow-xs font-semibold"
+                        : currentSelectedServer?.ipv6
+                        ? "text-muted-foreground hover:text-foreground"
+                        : "opacity-40 cursor-not-allowed"
+                    }`}
+                    onClick={() => {
+                      if (currentSelectedServer?.ipv6) {
+                        setIpType("ipv6")
+                        setForm(prev => ({ ...prev, server_host: currentSelectedServer.ipv6! }))
+                      }
+                    }}
+                    title={currentSelectedServer?.ipv6 ? `使用 IPv6 连接 (${currentSelectedServer.ipv6})` : "所选服务器未检测到公网 IPv6 地址"}
+                  >
+                    ⚡ IPv6 连接 {currentSelectedServer?.ipv6 ? "" : "(无)"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-2.5 py-0.5 rounded transition-all ${
+                      ipType === "custom"
+                        ? "bg-card text-foreground shadow-xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => setIpType("custom")}
+                  >
+                    ✏️ 自定义
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-0.5">
+                <Input
+                  className="text-xs h-8 font-mono flex-1"
+                  value={form.server_host}
+                  onChange={e => {
+                    setForm(prev => ({ ...prev, server_host: e.target.value }))
+                    setIpType("custom")
+                  }}
+                  placeholder="客户端连接地址 (IPv4 / IPv6 / 域名)"
+                  required
+                />
+                <Badge
+                  variant={form.server_host.includes(":") ? "secondary" : "outline"}
+                  className={`text-[11px] shrink-0 font-mono py-1 px-2 ${
+                    form.server_host.includes(":")
+                      ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-300 dark:border-purple-800"
+                      : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800"
+                  }`}
+                >
+                  {form.server_host.includes(":") ? "IPv6" : "IPv4"}
+                </Badge>
+              </div>
+
+              <div className="text-[11px] text-muted-foreground flex items-center justify-between">
+                <span>
+                  {ipType === "ipv6" && currentSelectedServer?.ipv6 && (
+                    <span className="text-purple-600 dark:text-purple-400 font-medium">✓ 已绑定该服务器的 IPv6 专属连接地址</span>
+                  )}
+                  {ipType === "ipv4" && (
+                    <span>已选用 IPv4 连接地址 ({currentSelectedServer?.ipv4 || currentSelectedServer?.host})</span>
+                  )}
+                  {ipType === "custom" && (
+                    <span>自定义连接地址（支持绑定 DDNS 域名或 CDN 节点）</span>
+                  )}
+                  {currentSelectedServer && !currentSelectedServer.ipv6 && ipType === "ipv6" && (
+                    <span className="text-amber-500">提示：所选服务器未检测到公网 IPv6</span>
+                  )}
+                </span>
+                {currentSelectedServer?.ipv6 && (
+                  <span className="text-[10px] text-muted-foreground/80 font-mono truncate max-w-[200px]" title={currentSelectedServer.ipv6}>
+                    v6: {currentSelectedServer.ipv6}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* 中转落地专属：落地机目标设置 */}

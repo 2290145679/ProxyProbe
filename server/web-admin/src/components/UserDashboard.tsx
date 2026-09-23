@@ -515,8 +515,18 @@ export function UserDashboard({
                     className="flex items-center justify-between rounded-lg border bg-card p-3 text-xs gap-3 hover:border-primary/30 transition-all"
                   >
                     <div className="space-y-1 min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-semibold truncate">{n.name}</span>
+                        <Badge 
+                          variant={n.server_host.includes(":") ? "secondary" : "outline"}
+                          className={`text-[10px] py-0 px-1 font-mono shrink-0 ${
+                            n.server_host.includes(":")
+                              ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-300 dark:border-purple-800"
+                              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800"
+                          }`}
+                        >
+                          {n.server_host.includes(":") ? "IPv6" : "IPv4"}
+                        </Badge>
                         <Badge variant="secondary" className="text-[10px] py-0 px-1 font-mono uppercase shrink-0">
                           {n.protocol.replace("_", " ")}
                         </Badge>
