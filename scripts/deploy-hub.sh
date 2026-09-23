@@ -56,6 +56,17 @@ echo -e "${N}"
 echo -e "  ${BOLD}主控端一键部署${N}  •  github.com/${GITHUB_REPO}  •  OS: ${OS_ID}  •  Arch: ${ARCH}"
 echo ""
 
+validate_port() {
+  local p="$1"
+  local name="$2"
+  case "$p" in
+    ''|*[!0-9]*) die "${name} 必须为纯数字！" ;;
+    *) if [ "$p" -lt 1 ] || [ "$p" -gt 65535 ]; then
+         die "${name} 超出有效端口范围 (1-65535)！"
+       fi ;;
+  esac
+}
+
 # ---- 收集配置 ----
 header "📋 配置信息"
 
@@ -74,10 +85,54 @@ if [ -z "$ADMIN_PASS" ]; then
   warn "已随机生成密码: ${BOLD}${ADMIN_PASS}${N}  ← 请务必记录！"
 fi
 
+# Web 外部访问端口 (HTTPS)
+if [ -z "${WEB_PORT:-}" ]; then
+  echo ""
+  echo -e "  ${BOLD}Web 外部访问端口 (HTTPS)${N}:"
+  echo -e "  ${D}• 默认 443 为标准 HTTPS 端口，浏览器直接访问域名即可${N}"
+  echo -e "  ${D}• 若修改为非 443（如 8443），访问后台需加上端口号 (https://$DOMAIN:8443)${N}"
+  echo -e "  ${D}• 若使用 Cloudflare CDN 加速代理，仅支持特定的 HTTPS 端口: 2053, 2083, 2087, 2096, 8443${N}"
+  echo -e "  ${D}• 注意: Caddy 仍需要监听 80 端口用于 Let's Encrypt 申请 SSL 证书验证${N}"
+  read -r -p "  请输入 Web 外部访问端口 [回车默认 443]: " INPUT_WEB_PORT </dev/tty || true
+  WEB_PORT="${INPUT_WEB_PORT:-443}"
+fi
+validate_port "$WEB_PORT" "Web 外部端口"
+[ "$WEB_PORT" = "80" ] && die "Web 外部端口不能设为 80，该端口由 Caddy 用于 ACME 证书申请！"
+
+# 探针主控 (monitor-hub) 本地端口
+if [ -z "${HUB_PORT:-}" ]; then
+  echo ""
+  echo -e "  ${BOLD}探针主控 (monitor-hub) 本地监听端口${N}:"
+  echo -e "  ${D}• 仅供本机 127.0.0.1 内部通信使用，不对外公网暴露${N}"
+  echo -e "  ${D}• 若本机其他程序占用了 28080 端口，可在此自定义${N}"
+  read -r -p "  请输入探针主控内部端口 [回车默认 28080]: " INPUT_HUB_PORT </dev/tty || true
+  HUB_PORT="${INPUT_HUB_PORT:-28080}"
+fi
+validate_port "$HUB_PORT" "探针内部端口"
+
+# 代理管理中枢 (proxy-manager) 本地端口
+if [ -z "${PM_PORT:-}" ]; then
+  echo ""
+  echo -e "  ${BOLD}代理管理中枢 (proxy-manager) 本地监听端口${N}:"
+  echo -e "  ${D}• 仅供本机 127.0.0.1 内部通信使用，不对外公网暴露${N}"
+  echo -e "  ${D}• 若本机其他程序占用了 28090 端口，可在此自定义${N}"
+  read -r -p "  请输入代理中枢内部端口 [回车默认 28090]: " INPUT_PM_PORT </dev/tty || true
+  PM_PORT="${INPUT_PM_PORT:-28090}"
+fi
+validate_port "$PM_PORT" "代理中枢内部端口"
+
+# 冲突校验
+[ "$HUB_PORT" = "$PM_PORT" ] && die "探针内部端口 ($HUB_PORT) 不能与代理中枢内部端口 ($PM_PORT) 相同！"
+[ "$WEB_PORT" = "$HUB_PORT" ] && die "Web 外部端口 ($WEB_PORT) 不能与探针内部端口 ($HUB_PORT) 冲突！"
+[ "$WEB_PORT" = "$PM_PORT" ] && die "Web 外部端口 ($WEB_PORT) 不能与代理中枢内部端口 ($PM_PORT) 冲突！"
+
 echo ""
-echo -e "  域名:       ${BOLD}${DOMAIN}${N}"
-echo -e "  管理密码:   ${BOLD}${ADMIN_PASS}${N}"
-echo -e "  下载来源:   ${BOLD}github.com/${GITHUB_REPO}${N}"
+echo -e "  域名:               ${BOLD}${DOMAIN}${N}"
+echo -e "  管理密码:           ${BOLD}${ADMIN_PASS}${N}"
+echo -e "  Web 外部访问端口:   ${BOLD}${WEB_PORT}${N}"
+echo -e "  探针主控内部端口:   ${BOLD}${HUB_PORT}${N} (127.0.0.1)"
+echo -e "  代理管理内部端口:   ${BOLD}${PM_PORT}${N} (127.0.0.1)"
+echo -e "  下载来源:           ${BOLD}github.com/${GITHUB_REPO}${N}"
 echo ""
 
 if [ -n "${NON_INTERACTIVE:-}" ] || [ -n "${YES:-}" ] || [ ! -t 0 ]; then
@@ -181,6 +236,9 @@ systemctl disable monitor-hub.service 2>/dev/null || true
 rm -f /etc/systemd/system/multi-user.target.wants/monitor-hub.service
 rm -f /etc/systemd/system/monitor-hub.service
 
+SITE_URL="https://$DOMAIN"
+[ "$WEB_PORT" != "443" ] && SITE_URL="https://${DOMAIN}:${WEB_PORT}"
+
 cat > /etc/systemd/system/monitor-hub.service << EOF
 [Unit]
 Description=ProxyProbe Monitor Hub
@@ -192,7 +250,7 @@ Type=simple
 User=monitor
 Group=monitor
 WorkingDirectory=$ROOT
-ExecStart=$ROOT/monitor-hub --listen 127.0.0.1:28080 --db $DATA/monitor.db --site https://$DOMAIN
+ExecStart=$ROOT/monitor-hub --listen 127.0.0.1:$HUB_PORT --db $DATA/monitor.db --site $SITE_URL
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
@@ -209,7 +267,7 @@ systemctl enable --force monitor-hub.service 2>/dev/null || {
 }
 systemctl restart monitor-hub.service
 sleep 2
-info "monitor-hub 已启动（端口 28080）"
+info "monitor-hub 已启动（端口 $HUB_PORT）"
 
 # ---- 步骤 4: 下载 proxy_manager.py 和前端资源 ----
 header "步骤 4/8 · 下载 ProxyProbe 代理管理程序和前端"
@@ -222,6 +280,11 @@ curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py" || \
 # install.sh（子节点安装脚本，供 Caddy 对外分发）
 curl -fsSL "${GITHUB_RAW}/scripts/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || true
 chmod +x "$SCRIPTS_DIR/install.sh" 2>/dev/null || true
+
+# hhub（运维控制台 CLI 工具）
+info "正在安装 hhub 终端控制台工具..."
+curl -fsSL "${GITHUB_RAW}/scripts/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || true
+chmod +x "/usr/local/bin/hhub" 2>/dev/null || true
 
 # 前端 dist（通过 git sparse-checkout 或 GitHub tarball 拉取）
 info "正在下载前端资源..."
@@ -236,6 +299,7 @@ if git clone --depth 1 --filter=blob:none --sparse \
   git checkout 2>/dev/null || true
   [ -d "$_TMP_REPO/web-admin/dist" ] && cp -r "$_TMP_REPO/web-admin/dist/." "$WEB_DIST/"
   [ -f "$_TMP_REPO/scripts/install.sh" ] && cp "$_TMP_REPO/scripts/install.sh" "$SCRIPTS_DIR/install.sh"
+  [ -f "$_TMP_REPO/scripts/hhub.sh" ] && cp "$_TMP_REPO/scripts/hhub.sh" "/usr/local/bin/hhub" && chmod +x "/usr/local/bin/hhub"
   cd /
   rm -rf "$_TMP_REPO"
 fi
@@ -246,9 +310,12 @@ if [ ! -f "$WEB_DIST/index.html" ]; then
   if [ -d "/tmp/ProxyProbe-main/web-admin/dist" ]; then
     cp -r /tmp/ProxyProbe-main/web-admin/dist/. "$WEB_DIST/"
     [ -f "/tmp/ProxyProbe-main/scripts/install.sh" ] && cp /tmp/ProxyProbe-main/scripts/install.sh "$SCRIPTS_DIR/install.sh"
+    [ -f "/tmp/ProxyProbe-main/scripts/hhub.sh" ] && cp /tmp/ProxyProbe-main/scripts/hhub.sh "/usr/local/bin/hhub" && chmod +x "/usr/local/bin/hhub"
   fi
   rm -rf /tmp/ProxyProbe-main
 fi
+
+[ -f "/usr/local/bin/hhub" ] && cp "/usr/local/bin/hhub" "$SCRIPTS_DIR/hhub.sh" 2>/dev/null || true
 
 [ -f "$WEB_DIST/index.html" ] && info "前端资源已就绪" || \
   warn "前端资源可能未完整下载，请检查 $WEB_DIST"
@@ -260,7 +327,7 @@ systemctl disable proxy-manager.service 2>/dev/null || true
 rm -f /etc/systemd/system/multi-user.target.wants/proxy-manager.service
 rm -f /etc/systemd/system/proxy-manager.service
 
-cat > /etc/systemd/system/proxy-manager.service << 'PM_EOF'
+cat > /etc/systemd/system/proxy-manager.service << PM_EOF
 [Unit]
 Description=ProxyProbe Proxy Manager
 After=network.target monitor-hub.service
@@ -268,7 +335,7 @@ After=network.target monitor-hub.service
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python3 /opt/monitor/proxy_manager.py
+ExecStart=/usr/bin/python3 /opt/monitor/proxy_manager.py --port $PM_PORT
 Restart=always
 RestartSec=3
 
@@ -284,22 +351,25 @@ systemctl enable --force proxy-manager.service 2>/dev/null || {
 }
 systemctl restart proxy-manager.service
 sleep 2
-info "proxy-manager 已启动（端口 28090）"
+info "proxy-manager 已启动（端口 $PM_PORT）"
 
 # ---- 步骤 6: 配置 Caddy ----
 header "步骤 6/8 · 配置 Caddy 反向代理"
 
+CADDY_SITE="$DOMAIN"
+[ "$WEB_PORT" != "443" ] && CADDY_SITE="${DOMAIN}:${WEB_PORT}"
+
 mkdir -p /etc/caddy
 cat > /etc/caddy/Caddyfile << CADDY_EOF
-$DOMAIN {
+$CADDY_SITE {
     # 代理管理 API（订阅、用户、节点等）
     handle /api/proxy/* {
-        reverse_proxy 127.0.0.1:28090
+        reverse_proxy 127.0.0.1:$PM_PORT
     }
 
     # 子节点安装脚本（由 proxy-manager 动态生成）
     handle /proxy-agent.sh {
-        reverse_proxy 127.0.0.1:28090
+        reverse_proxy 127.0.0.1:$PM_PORT
     }
 
     # 子节点探针安装脚本与离线二进制分发
@@ -330,7 +400,7 @@ $DOMAIN {
 
     # 探针主控（状态页 + WebSocket 心跳 + API）
     handle {
-        reverse_proxy 127.0.0.1:28080
+        reverse_proxy 127.0.0.1:$HUB_PORT
     }
 }
 CADDY_EOF
@@ -398,7 +468,10 @@ fi
 # ---- 步骤 8: 防火墙 ----
 header "步骤 8/8 · 放行防火墙端口"
 
-for _PORT in 80 443; do
+PORTS_TO_OPEN="80 443"
+[ "$WEB_PORT" != "443" ] && [ "$WEB_PORT" != "80" ] && PORTS_TO_OPEN="80 443 $WEB_PORT"
+
+for _PORT in $PORTS_TO_OPEN; do
   iptables -I INPUT -p tcp --dport "$_PORT" -j ACCEPT 2>/dev/null || true
   iptables -I INPUT -p udp --dport "$_PORT" -j ACCEPT 2>/dev/null || true
   command -v ufw >/dev/null 2>&1 && ufw allow "$_PORT" >/dev/null 2>&1 || true
@@ -406,25 +479,40 @@ for _PORT in 80 443; do
     firewall-cmd --add-port="${_PORT}/tcp" --permanent 2>/dev/null || true
 done
 command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --reload 2>/dev/null || true
-info "防火墙端口已放行 (80, 443)"
+info "防火墙端口已放行 ($PORTS_TO_OPEN)"
 
 # ---- 完成 ----
+SITE_SUFFIX=""
+[ "$WEB_PORT" != "443" ] && SITE_SUFFIX=":$WEB_PORT"
+
 echo ""
 echo -e "${BOLD}${G}══════════════════════════════════════════════${N}"
 echo -e "${BOLD}${G}  🎉  ProxyProbe 部署完成！${N}"
 echo -e "${BOLD}${G}══════════════════════════════════════════════${N}"
 echo ""
-echo -e "  探针首页:   ${C}https://${DOMAIN}/${N}"
-echo -e "  管理后台:   ${C}https://${DOMAIN}/admin${N}"
+echo -e "  探针公开大屏:       ${C}https://${DOMAIN}${SITE_SUFFIX}/${N}"
+echo -e "  管理控制面板:       ${C}https://${DOMAIN}${SITE_SUFFIX}/admin${N}"
 echo ""
-echo -e "  账号: ${BOLD}admin${N}"
-echo -e "  密码: ${BOLD}${ADMIN_PASS}${N}"
+echo -e "  管理账号:           ${BOLD}admin${N}"
+echo -e "  管理密码:           ${BOLD}${ADMIN_PASS}${N}"
 echo ""
-echo -e "  ${BOLD}服务状态检查：${N}"
-echo -e "  ${Y}systemctl status monitor-hub proxy-manager caddy${N}"
+echo -e "  Web 外部访问端口:   ${BOLD}${WEB_PORT}${N}"
+echo -e "  探针主控内部端口:   ${BOLD}${HUB_PORT}${N} (127.0.0.1 本地回环)"
+echo -e "  代理管理内部端口:   ${BOLD}${PM_PORT}${N} (127.0.0.1 本地回环)"
+echo ""
+echo -e "${BOLD}${C}══════════════════════════════════════════════${N}"
+echo -e "  ${BOLD}${C}✨ 快捷运维工具已安装！${N}"
+echo -e "  在任意终端直接输入 ${BOLD}${G}hhub${N} 即可进入控制台："
+echo -e "  • 一键无损升级系统 (代码/前端/核心二进制)"
+echo -e "  • 修改 Web 外部访问端口 / 内部监听端口 / 绑定域名"
+echo -e "  • 重置管理员登录密码"
+echo -e "  • 实时查看服务运行日志 / 服务批量重启、停止、启动"
+echo -e "  • SQLite 数据库备份与还原"
+echo -e "  • 安全卸载与数据管理"
+echo -e "${BOLD}${C}══════════════════════════════════════════════${N}"
 echo ""
 echo -e "  ${BOLD}下一步：${N}"
-echo -e "  1. 访问 ${C}https://${DOMAIN}/admin${N} 登录管理后台"
+echo -e "  1. 访问 ${C}https://${DOMAIN}${SITE_SUFFIX}/admin${N} 登录管理后台"
 echo -e "  2. 在「服务器」页面添加子节点，复制一键安装指令"
 echo -e "  3. 在「用户」页面创建代理用户"
 echo ""

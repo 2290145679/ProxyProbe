@@ -22,7 +22,14 @@ SINGBOX_CERT = "/etc/sing-box/cert.pem"
 SINGBOX_KEY = "/etc/sing-box/key.pem"
 REALM_BIN = "/usr/local/bin/realm"
 REALM_CONFIG = "/etc/realm/config.json"
-PORT = 28090
+import sys
+PORT = int(os.environ.get("PROXY_MANAGER_PORT", 28090))
+for _i, _arg in enumerate(sys.argv):
+    if _arg == "--port" and _i + 1 < len(sys.argv):
+        try:
+            PORT = int(sys.argv[_i + 1])
+        except ValueError:
+            pass
 LOCAL_HOSTS = {"189.24.108.25", "127.0.0.1", "localhost", "tz.yohoo.xyz", ""}
 
 PROXY_AGENT_SH = """#!/usr/bin/env bash
