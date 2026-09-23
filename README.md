@@ -70,103 +70,46 @@
 
 ---
 
-## 🛠️ 部署指南
+## 🚀 一键部署
 
-### 第一步：准备主控端环境 (主控 VPS)
+### 主控端一键安装（全新服务器）
 
-推荐操作系统：**Ubuntu 22.04+ / Debian 11+**
+> 推荐操作系统：**Ubuntu 22.04+ / Debian 11+**，已将域名 DNS 解析到本机 IP。
 
-1. **安装基础依赖**：
-   ```bash
-   apt-get update -y && apt-get install -y python3 python3-pip curl unzip git iptables
-   ```
+\\ash
+curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe/main/scripts/deploy-hub.sh | bash
+\
+脚本会自动完成：
+- ✅ 安装系统依赖（Python3、curl、git、openssl 等）
+- ✅ 安装并配置 **Caddy**（自动申请 SSL 证书）
+- ✅ 安装 **monitor-hub** 探针主控（Rust 编写，超低资源占用）
+- ✅ 部署 **proxy_manager**（代理协议管理守护进程）
+- ✅ 从 GitHub 拉取最新前端构建产物
+- ✅ 配置所有 systemd 服务并设置开机自启
+- ✅ 初始化管理员账户
+- ✅ 自动放行防火墙端口
 
-2. **克隆本项目代码**：
-   ```bash
-   git clone https://github.com/2290145679/ProxyProbe.git /opt/monitor
-   cd /opt/monitor
-   ```
-
-3. **配置目录权限与数据库初始化**：
-   ```bash
-   mkdir -p /opt/monitor/data /opt/monitor/scripts /etc/xray /etc/sing-box
-   # 若首次运行，导入基础表结构
-   sqlite3 /opt/monitor/data/monitor.db < database/schema.sql
-   ```
+安装完成后访问 https://your-domain.com/admin 即可登录后台。
 
 ---
 
-### 第二步：配置并启动主控端服务
+### 手动指定参数（非交互模式）
 
-1. **部署 Systemd 服务单元**：
-   ```bash
-   cp systemd/monitor-hub.service /etc/systemd/system/
-   cp systemd/proxy-manager.service /etc/systemd/system/
-   systemctl daemon-reload
-   systemctl enable --now monitor-hub.service
-   systemctl enable --now proxy-manager.service
-   ```
-
-2. **配置 Caddy 反向代理网关 (自带自动申请 SSL)**：
-   编辑 `/etc/caddy/Caddyfile`（将 `your-domain.com` 替换为您解析好的域名）：
-   ```caddy
-   your-domain.com {
-       encode gzip
-
-       # 1. 代理管理后台 API
-       handle /api/proxy/* {
-           reverse_proxy 127.0.0.1:28090
-       }
-
-       # 2. 探针端同步脚本与部署入口
-       handle /proxy-agent.sh {
-           reverse_proxy 127.0.0.1:28090
-       }
-
-       # 3. 探针安装脚本分发
-       handle /install.sh {
-           root * /opt/monitor/scripts
-           try_files /install.sh
-           file_server
-       }
-
-       # 4. 管理后台前端静态资源
-       handle_path /admin* {
-           root * /opt/monitor/web-admin/dist
-           try_files {path} /index.html
-           file_server
-       }
-
-       # 5. Monitor 探针主控 API 与 WebSocket
-       handle {
-           reverse_proxy 127.0.0.1:28080
-       }
-   }
-   ```
-   重启 Caddy：
-   ```bash
-   systemctl restart caddy
-   ```
-
-3. **进入管理后台**：
-   - 访问 `https://your-domain.com/admin`
-   - 首次登录后即可进入面板。
-
+\\ash
+export DOMAIN=your-domain.com
+export ADMIN_PASS=your-password
+curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe/main/scripts/deploy-hub.sh | bash
+\
 ---
 
-### 第三步：添加被控探针节点 (一键接入)
+### 添加被控探针节点（一键接入）
 
-1. 在管理后台的“服务器管理”中添加一个新节点，复制生成的节点 **TOKEN**。
-2. 登录需要被监控的被控端服务器，运行以下**一条指令**即可完成全部安装：
-   ```bash
-   curl -fsSL https://your-domain.com/install.sh | bash -s -- --server https://your-domain.com --token <您的节点TOKEN>
-   ```
-3. 脚本会自动完成以下操作：
-   - 安装系统级 `monitor-agent` 性能探针；
-   - 自动部署 `Xray-core` 与 `Sing-box` 双核心环境；
-   - 自动生成自签 ECC 证书；
-   - 启动 `proxy-agent.service` 后台同步进程，每 5 秒与主控端保持同步。
-
+1. 在管理后台「服务器」页面添加节点，复制生成的**安装指令**（已自动包含 TOKEN）。
+2. 在被控服务器上直接粘贴运行即可，脚本会自动：
+   - 安装系统级 \monitor-agent\ 性能探针
+   - 按需部署 \Xray-core\ / \Sing-box\ / \Realm\ 代理核心
+   - 自动生成自签 ECC 证书
+   - 启动 \proxy-agent.service\ 后台同步进程（5 秒热同步）
 ---
 
 ## 💻 本地前端开发与构建
