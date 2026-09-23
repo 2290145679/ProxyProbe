@@ -26,6 +26,11 @@ tz.yohoo.xyz {
         file_server
     }
 
+    handle /realm-*.tar.gz {
+        root * /opt/monitor/scripts
+        file_server
+    }
+
     # 后台静态资源
     handle_path /admin* {
         root * /opt/monitor/web-admin/dist

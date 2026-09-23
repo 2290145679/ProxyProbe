@@ -212,25 +212,173 @@ function ConfirmDialog({ title, description, confirmLabel, busy = false, onClose
   )
 }
 
-function CreateNode({ onClose, onSaved }: {
+export type CoreOptions = {
+  xray: boolean
+  singbox: boolean
+  realm: boolean
+}
+
+export const DEFAULT_CORE_OPTIONS: CoreOptions = {
+  xray: true,
+  singbox: true,
+  realm: false,
+}
+
+export function coreFlags(cores: CoreOptions): string[] {
+  if (!cores.xray && !cores.singbox && !cores.realm) {
+    return ["--no-proxy"]
+  }
+  const flags: string[] = []
+  if (cores.xray) flags.push("--xray")
+  else flags.push("--no-xray")
+
+  if (cores.singbox) flags.push("--singbox")
+  else flags.push("--no-singbox")
+
+  if (cores.realm) flags.push("--realm")
+  else flags.push("--no-realm")
+
+  return flags
+}
+
+function scriptCommand(site: string, args: (site: string) => string[]) {
+  site = provisioningSite(site)
+  return site && `curl -fsSL ${site}/install.sh | sh -s -- ${args(site).join(" ")}`
+}
+
+function ifaceArg(iface: string | undefined) {
+  return iface === undefined ? [] : [`--iface ${iface || "''"}`]
+}
+
+function installCommand(
+  site: string,
+  token: string,
+  seconds: number,
+  iface: string | undefined,
+  cores: CoreOptions = DEFAULT_CORE_OPTIONS,
+) {
+  return scriptCommand(site, (s) => [
+    `--server ${s}`,
+    `--token ${token}`,
+    `--interval ${seconds}`,
+    ...ifaceArg(iface),
+    ...coreFlags(cores),
+  ])
+}
+
+function registerCommand(
+  site: string,
+  key: string,
+  iface: string | undefined,
+  cores: CoreOptions = DEFAULT_CORE_OPTIONS,
+) {
+  return scriptCommand(site, (s) => [
+    `--server ${s}`,
+    `--register ${key}`,
+    ...ifaceArg(iface),
+    ...coreFlags(cores),
+  ])
+}
+
+function uninstallCommand(site: string) {
+  return scriptCommand(site, () => ["--uninstall"])
+}
+
+function CoreOptionsSelector({
+  cores,
+  onChange,
+}: {
+  cores: CoreOptions
+  onChange: (cores: CoreOptions) => void
+}) {
+  const isNone = !cores.xray && !cores.singbox && !cores.realm
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          代理核心安装选项
+        </h4>
+        {isNone && (
+          <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10">
+            仅探针监控（不安装任何代理核心）
+          </Badge>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <OptionRow
+          title="Xray-Core 核心"
+          hint="支持 VLESS (Reality/XHTTP)、VMess、Trojan、Shadowsocks 等主流协议"
+          toggle
+        >
+          <Switch
+            checked={cores.xray}
+            onCheckedChange={(v) => onChange({ ...cores, xray: v })}
+          />
+        </OptionRow>
+
+        <OptionRow
+          title="Sing-box 核心"
+          hint="支持 Hysteria 2、TUIC 等高性能 UDP 协议"
+          toggle
+        >
+          <Switch
+            checked={cores.singbox}
+            onCheckedChange={(v) => onChange({ ...cores, singbox: v })}
+          />
+        </OptionRow>
+
+        <OptionRow
+          title="Realm 端口转发核心"
+          hint="支持 TCP/UDP 双向转发，用于中转落地节点搭建"
+          toggle
+        >
+          <Switch
+            checked={cores.realm}
+            onCheckedChange={(v) => onChange({ ...cores, realm: v })}
+          />
+        </OptionRow>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground leading-relaxed">
+        💡 提示：若该服务器仅用来加入探针监控、不用作代理节点，可将上述核心全部关闭，生成的安装指令将仅部署监控探针。
+      </p>
+    </div>
+  )
+}
+
+function CreateNode({
+  site,
+  onClose,
+  onSaved,
+}: {
+  site: string
   onClose: () => void
   onSaved: () => void
 }) {
   const [name, setName] = useState("")
+  const [cores, setCores] = useState<CoreOptions>(DEFAULT_CORE_OPTIONS)
   const [saving, setSaving] = useState(false)
+  const [createdInfo, setCreatedInfo] = useState<{ id: number; token: string; name: string } | null>(null)
 
   async function save(e: React.FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return toast.error("请填写节点名称")
+    if (!name.trim()) return toast.error("请填写服务器名称")
     setSaving(true)
     try {
-      await api("/nodes", {
+      const res = await api<{ id: number }>("/nodes", {
         method: "POST",
         body: JSON.stringify({ name: name.trim() }),
       })
-      toast.success("节点已添加")
-      onClose()
+      toast.success("服务器已创建！")
       onSaved()
+      try {
+        const tokenRes = await api<{ token: string }>(`/nodes/${res.id}/token`, { method: "POST" })
+        setCreatedInfo({ id: res.id, token: tokenRes.token, name: name.trim() })
+      } catch {
+        onClose()
+      }
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -238,21 +386,61 @@ function CreateNode({ onClose, onSaved }: {
     }
   }
 
+  const command = createdInfo
+    ? installCommand(site, createdInfo.token, 1, undefined, cores)
+    : ""
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent onOpenAutoFocus={(e) => e.preventDefault()} className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>添加节点</DialogTitle>
+          <DialogTitle>{createdInfo ? `部署服务器「${createdInfo.name}」` : "添加服务器"}</DialogTitle>
+          <DialogDescription>
+            {createdInfo
+              ? "服务器已成功添加。请在目标服务器终端复制并执行以下命令完成部署："
+              : "配置服务器名称并选择需要预装的代理核心组件："}
+          </DialogDescription>
         </DialogHeader>
-        <form className="space-y-4" onSubmit={save}>
-          <Field label="名称">
-            <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="香港 · 甲商家" />
-          </Field>
-          <DialogFooter className="border-t pt-4">
-            <Button type="button" variant="ghost" onClick={onClose}>取消</Button>
-            <Button type="submit" disabled={saving}>添加</Button>
-          </DialogFooter>
-        </form>
+
+        {!createdInfo ? (
+          <form className="space-y-4" onSubmit={save}>
+            <Field label="服务器名称">
+              <Input
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例如：香港 · 甲商家 或 HK-Node-01"
+              />
+            </Field>
+
+            <CoreOptionsSelector cores={cores} onChange={setCores} />
+
+            <DialogFooter className="border-t pt-4">
+              <Button type="button" variant="ghost" onClick={onClose}>取消</Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? "创建中..." : "创建并生成安装命令"}
+              </Button>
+            </DialogFooter>
+          </form>
+        ) : (
+          <div className="space-y-4">
+            <CoreOptionsSelector cores={cores} onChange={setCores} />
+
+            <div className="space-y-2 border-t pt-3">
+              <h4 className="text-xs font-medium text-muted-foreground">一键安装命令</h4>
+              <Command className="max-h-40 min-h-24">
+                {command}
+              </Command>
+            </div>
+
+            <DialogFooter className="border-t pt-4">
+              <Button variant="ghost" onClick={onClose}>完成</Button>
+              <Button onClick={() => copy(command)}>
+                <Copy className="size-4" /> 复制安装命令
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )
@@ -503,40 +691,7 @@ function BillingForm({ node, onClose, onSaved }: {
   )
 }
 
-// Each command runs the hub's own install.sh and is offered only on an https
-// domain entry. `args` receives that entry, which the agent is also given as
-// --server.
-function scriptCommand(site: string, args: (site: string) => string[]) {
-  site = provisioningSite(site)
-  return site && `curl -fsSL ${site}/install.sh | sh -s -- ${args(site).join(" ")}`
-}
 
-// Built here rather than fetched: the node list already carries the token, so
-// viewing an install command is a read rather than an action. Reissuing one to
-// display it would take the running agent offline.
-function installCommand(site: string, token: string, seconds: number, iface: string | undefined) {
-  return scriptCommand(site, (s) => [`--server ${s}`, `--token ${token}`, `--interval ${seconds}`, ...ifaceArg(iface)])
-}
-
-// '' is how install.sh is told to clear a value it would otherwise keep; a
-// name needs no quoting, as ifaceSpec admits no shell metacharacter.
-function ifaceArg(iface: string | undefined) {
-  return iface === undefined ? [] : [`--iface ${iface || "''"}`]
-}
-
-// One command for a batch of machines. The key belongs to the hub, is valid only
-// within the window it opened, and each machine exchanges it for a token of its
-// own, so unlike an install command this text is no one's credential and can be
-// used directly in a loop.
-function registerCommand(site: string, key: string, iface: string | undefined) {
-  return scriptCommand(site, (s) => [`--server ${s}`, `--register ${key}`, ...ifaceArg(iface)])
-}
-
-// Carries no token, so it is the same for every node and remains valid after the
-// node is deleted.
-function uninstallCommand(site: string) {
-  return scriptCommand(site, () => ["--uninstall"])
-}
 
 // The window lives on the hub; this reads it back and counts down, which is also
 // what makes an expired one disappear from the panel without interaction.
@@ -583,15 +738,16 @@ function RegisterDialog({ site, reg, onClose }: {
   reg: ReturnType<typeof useRegisterWindow>
   onClose: () => void
 }) {
+  const [cores, setCores] = useState<CoreOptions>(DEFAULT_CORE_OPTIONS)
   const iface = useIfaceOption(undefined)
-  const command = reg.left > 0 && iface.valid ? registerCommand(site, reg.key, iface.flag) : ""
+  const command = reg.left > 0 && iface.valid ? registerCommand(site, reg.key, iface.flag, cores) : ""
   const clock = `${Math.floor(reg.left / 60)}:${String(reg.left % 60).padStart(2, "0")}`
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent onOpenAutoFocus={(e) => e.preventDefault()} className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>批量添加</DialogTitle>
+          <DialogTitle>批量添加服务器</DialogTitle>
         </DialogHeader>
         <div className="space-y-5">
           {/* One string: JSX turns a line break inside CJK text into a visible space. */}
@@ -599,8 +755,9 @@ function RegisterDialog({ site, reg, onClose }: {
             {"开一个一小时的注册窗口。期间这条命令在任意机器上跑一次，那台机器就会自己出现在列表里，" +
               "名字取自它的 hostname。命令里没有任何一台机器的凭证，可以直接进循环。"}
           </p>
+          <CoreOptionsSelector cores={cores} onChange={setCores} />
           <section className="space-y-3">
-            <h3 className="text-sm font-medium">安装选项</h3>
+            <h3 className="text-sm font-medium">网络选项</h3>
             <IfaceOption option={iface} batch />
           </section>
           {reg.left > 0 ? (
@@ -698,10 +855,11 @@ function InstallDialog({ node, site, onClose, onRotated }: {
   const [interval, setInterval] = useState("1")
   const [rotating, setRotating] = useState(false)
   const [confirmRotate, setConfirmRotate] = useState(false)
+  const [cores, setCores] = useState<CoreOptions>(DEFAULT_CORE_OPTIONS)
   const iface = useIfaceOption(currentIface(node))
 
   const seconds = Math.min(3600, Math.max(1, Math.round(Number(interval) || 1)))
-  const command = token && iface.valid ? installCommand(site, token, seconds, iface.flag) : ""
+  const command = token && iface.valid ? installCommand(site, token, seconds, iface.flag, cores) : ""
 
   async function rotate() {
     setRotating(true)
@@ -723,14 +881,17 @@ function InstallDialog({ node, site, onClose, onRotated }: {
       <DialogContent onOpenAutoFocus={(e) => e.preventDefault()} className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{node.name}</DialogTitle>
+          <DialogDescription>
+            调整安装选项以生成定制安装命令：
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
+          <CoreOptionsSelector cores={cores} onChange={setCores} />
+
           <section className="space-y-3">
-            <h3 className="text-sm font-medium">安装选项</h3>
+            <h3 className="text-sm font-medium">探针监控选项</h3>
             <OptionRow title="上报间隔" hint="1–3600 秒，默认 1 秒">
               <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
-                {/* Text rather than number: no spinner arrows, and no wheel
-                    changing the value under a passing scroll. */}
                 <Input
                   inputMode="numeric"
                   value={interval}
@@ -743,10 +904,9 @@ function InstallDialog({ node, site, onClose, onRotated }: {
             </OptionRow>
             <IfaceOption option={iface} />
           </section>
+
           <section className="space-y-2 border-t pt-5">
             <h3 className="text-sm font-medium">安装命令</h3>
-            {/* A node added before the hub kept tokens has nothing to show
-                until one is reissued. */}
             <Command className={`max-h-40 min-h-24 ${command ? "" : "text-muted-foreground"}`}>
               {command || (token ? "网卡名有误，改正后显示命令" : "旧版本创建的凭证不可读取，换发后显示")}
             </Command>
@@ -857,7 +1017,7 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
           <Server /> 批量添加{reg.left > 0 && ` · ${Math.ceil(reg.left / 60)} 分`}
         </Button>
         <Button disabled={!!refusal} onClick={() => setCreating(true)}>
-          <Plus /> 添加节点
+          <Plus /> 添加服务器
         </Button>
       </div>
 
@@ -995,6 +1155,7 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
 
       {creating && (
         <CreateNode
+          site={site}
           onClose={() => setCreating(false)}
           onSaved={refresh}
         />

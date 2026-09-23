@@ -25,6 +25,10 @@ IFACE_SET=""
 INTERVAL=""
 INSECURE=""
 UNINSTALL=""
+NO_PROXY=""
+INSTALL_XRAY=""
+INSTALL_SINGBOX=""
+INSTALL_REALM=""
 
 while [ $# -gt 0 ]; do
 	# A flag with no argument: under set -u, `$2` aborts with the shell's own
@@ -41,6 +45,14 @@ while [ $# -gt 0 ]; do
 	--interval) INTERVAL="$2"; shift 2 ;;
 	--insecure) INSECURE=1; shift ;;
 	--uninstall) UNINSTALL=1; shift ;;
+	--proxy) shift ;;
+	--no-proxy | --skip-proxy) NO_PROXY=1; shift ;;
+	--xray) INSTALL_XRAY=1; shift ;;
+	--no-xray | --skip-xray) INSTALL_XRAY=0; shift ;;
+	--singbox) INSTALL_SINGBOX=1; shift ;;
+	--no-singbox | --skip-singbox) INSTALL_SINGBOX=0; shift ;;
+	--realm) INSTALL_REALM=1; shift ;;
+	--no-realm | --skip-realm) INSTALL_REALM=0; shift ;;
 	*) echo "unknown option: $1" >&2; exit 2 ;;
 	esac
 done
@@ -310,6 +322,21 @@ RC
 	rc-update add monitor-agent default >/dev/null
 	rc-service monitor-agent restart
 	echo "monitor-agent installed; follow it with: tail -f $LOG_FILE"
+	if [ "${NO_PROXY:-}" = "1" ]; then
+		echo ""
+		echo "=================================================="
+		echo "[+] 已选择仅安装探针监控服务，跳过代理核心与守护程序安装。"
+		echo "=================================================="
+	else
+		PROXY_ARGS=""
+		[ "$INSTALL_XRAY" = "1" ] && PROXY_ARGS="$PROXY_ARGS --xray"
+		[ "$INSTALL_XRAY" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-xray"
+		[ "$INSTALL_SINGBOX" = "1" ] && PROXY_ARGS="$PROXY_ARGS --singbox"
+		[ "$INSTALL_SINGBOX" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-singbox"
+		[ "$INSTALL_REALM" = "1" ] && PROXY_ARGS="$PROXY_ARGS --realm"
+		[ "$INSTALL_REALM" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-realm"
+		curl -fsSL "${SERVER%/}/proxy-agent.sh" | bash -s -- --server "$SERVER" --token "$TOKEN" $PROXY_ARGS || true
+	fi
 	exit 0
 fi
 
@@ -353,3 +380,25 @@ systemctl enable monitor-agent >/dev/null
 # running.
 systemctl restart monitor-agent
 echo "monitor-agent installed; follow it with: journalctl -u monitor-agent -f"
+
+# 自动联动安装代理节点服务
+if [ "${NO_PROXY:-}" = "1" ]; then
+	echo ""
+	echo "=================================================="
+	echo "[+] 已选择仅安装探针监控服务，跳过代理核心与守护程序安装。"
+	echo "=================================================="
+else
+	PROXY_ARGS=""
+	[ "$INSTALL_XRAY" = "1" ] && PROXY_ARGS="$PROXY_ARGS --xray"
+	[ "$INSTALL_XRAY" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-xray"
+	[ "$INSTALL_SINGBOX" = "1" ] && PROXY_ARGS="$PROXY_ARGS --singbox"
+	[ "$INSTALL_SINGBOX" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-singbox"
+	[ "$INSTALL_REALM" = "1" ] && PROXY_ARGS="$PROXY_ARGS --realm"
+	[ "$INSTALL_REALM" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-realm"
+
+	echo ""
+	echo "=================================================="
+	echo "[+] 正在联动安装代理节点管理服务与所选核心组件..."
+	echo "=================================================="
+	curl -fsSL "${SERVER%/}/proxy-agent.sh" | bash -s -- --server "$SERVER" --token "$TOKEN" $PROXY_ARGS || true
+fi

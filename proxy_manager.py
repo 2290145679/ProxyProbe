@@ -29,19 +29,40 @@ PROXY_AGENT_SH = """#!/usr/bin/env bash
 set -e
 
 # ==============================================================================
-# Monitor 探针节点一键代理服务部署脚本 (Xray-Core + Proxy Agent Daemon)
+# Monitor 探针节点一键代理服务部署脚本 (Xray-Core + Sing-box + Realm + Proxy Agent)
 # ==============================================================================
 
 HUB_SERVER=""
 HUB_TOKEN=""
+INSTALL_XRAY=0
+INSTALL_SINGBOX=0
+INSTALL_REALM=0
+EXPLICIT_CORES=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --server) HUB_SERVER="$2"; shift 2 ;;
     --token) HUB_TOKEN="$2"; shift 2 ;;
+    --xray) INSTALL_XRAY=1; EXPLICIT_CORES=1; shift ;;
+    --skip-xray | --no-xray) INSTALL_XRAY=0; EXPLICIT_CORES=1; shift ;;
+    --singbox) INSTALL_SINGBOX=1; EXPLICIT_CORES=1; shift ;;
+    --skip-singbox | --no-singbox) INSTALL_SINGBOX=0; EXPLICIT_CORES=1; shift ;;
+    --realm) INSTALL_REALM=1; EXPLICIT_CORES=1; shift ;;
+    --skip-realm | --no-realm) INSTALL_REALM=0; EXPLICIT_CORES=1; shift ;;
+    --no-proxy | --skip-proxy)
+      echo "[+] 已指定 --no-proxy，跳过代理核心与守护程序安装。"
+      exit 0
+      ;;
     *) shift ;;
   esac
 done
+
+# 如果完全未显式指定核心选项（向后兼容默认）：Xray=1, Singbox=1, Realm=0
+if [ $EXPLICIT_CORES -eq 0 ]; then
+  INSTALL_XRAY=1
+  INSTALL_SINGBOX=1
+  INSTALL_REALM=0
+fi
 
 # 自动从本机已有的 monitor-agent 探针服务中探测主控端地址与 Token
 if [ -z "$HUB_SERVER" ] || [ -z "$HUB_TOKEN" ]; then
@@ -77,7 +98,17 @@ HUB_SERVER="${HUB_SERVER%/}"
 echo "=================================================="
 echo "  主控端地址: $HUB_SERVER"
 echo "  节点 Token: $(echo "$HUB_TOKEN" | cut -c1-8)******"
+echo "  组件安装选项:"
+[ "$INSTALL_XRAY" = "1" ] && echo "    [✓] Xray-Core" || echo "    [ ] Xray-Core (跳过)"
+[ "$INSTALL_SINGBOX" = "1" ] && echo "    [✓] Sing-box" || echo "    [ ] Sing-box (跳过)"
+[ "$INSTALL_REALM" = "1" ] && echo "    [✓] Realm 端口转发" || echo "    [ ] Realm 端口转发 (跳过)"
 echo "=================================================="
+
+# 如果所有核心都未选择，直接退出（用户仅加探针，不装代理核心）
+if [ "$INSTALL_XRAY" -eq 0 ] && [ "$INSTALL_SINGBOX" -eq 0 ] && [ "$INSTALL_REALM" -eq 0 ]; then
+  echo "[+] 所有代理核心均未选择，该服务器仅作为监控探针使用。"
+  exit 0
+fi
 
 # 1. 安装基础依赖 python3, curl, unzip
 if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
@@ -91,38 +122,40 @@ if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; th
   fi
 fi
 
-# 2. 安装 Xray 核心 (解压包括 geoip.dat 与 geosite.dat)
-mkdir -p /etc/xray /var/log/xray /opt/monitor /usr/local/share/xray /usr/local/etc/xray
 ARCH=$(uname -m)
-XRAY_ARCH="64"
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-  XRAY_ARCH="arm64-v8a"
-fi
 
-TMP_DIR="/tmp/xray_install"
-rm -rf "$TMP_DIR"
-mkdir -p "$TMP_DIR"
-TMP_ZIP="/tmp/xray.zip"
+# 2. 按需安装 Xray 核心 (解压包括 geoip.dat 与 geosite.dat)
+if [ "$INSTALL_XRAY" = "1" ]; then
+  mkdir -p /etc/xray /var/log/xray /opt/monitor /usr/local/share/xray /usr/local/etc/xray
+  XRAY_ARCH="64"
+  if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    XRAY_ARCH="arm64-v8a"
+  fi
 
-echo "[+] 正在下载并配置最新版 Xray-core..."
-curl -fsSL "$HUB_SERVER/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" || \
-curl -fsSL "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" || \
-curl -fsSL "https://ghproxy.net/https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP"
+  TMP_DIR="/tmp/xray_install"
+  rm -rf "$TMP_DIR"
+  mkdir -p "$TMP_DIR"
+  TMP_ZIP="/tmp/xray.zip"
 
-if command -v unzip >/dev/null 2>&1; then
-  unzip -o "$TMP_ZIP" -d "$TMP_DIR/"
-else
-  python3 -c "import zipfile; zipfile.ZipFile('$TMP_ZIP').extractall('$TMP_DIR/')"
-fi
+  echo "[+] 正在下载并配置最新版 Xray-core..."
+  curl -fsSL "$HUB_SERVER/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" || \
+  curl -fsSL "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" || \
+  curl -fsSL "https://ghproxy.net/https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP"
 
-install -m 0755 "$TMP_DIR/xray" /usr/local/bin/xray
-[ -f "$TMP_DIR/geoip.dat" ] && cp -f "$TMP_DIR/geoip.dat" /usr/local/share/xray/
-[ -f "$TMP_DIR/geosite.dat" ] && cp -f "$TMP_DIR/geosite.dat" /usr/local/share/xray/
-rm -rf "$TMP_DIR" "$TMP_ZIP"
-echo "[+] Xray 核心已就绪: $(/usr/local/bin/xray version | head -n 1)"
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -o "$TMP_ZIP" -d "$TMP_DIR/"
+  else
+    python3 -c "import zipfile; zipfile.ZipFile('$TMP_ZIP').extractall('$TMP_DIR/')"
+  fi
 
-# 3. 规范化 Xray 系统服务单元 (无条件更新，确保正确指向 /usr/local/bin/xray 与 /etc/xray/config.json)
-cat > /etc/systemd/system/xray.service << 'EOF'
+  install -m 0755 "$TMP_DIR/xray" /usr/local/bin/xray
+  [ -f "$TMP_DIR/geoip.dat" ] && cp -f "$TMP_DIR/geoip.dat" /usr/local/share/xray/
+  [ -f "$TMP_DIR/geosite.dat" ] && cp -f "$TMP_DIR/geosite.dat" /usr/local/share/xray/
+  rm -rf "$TMP_DIR" "$TMP_ZIP"
+  echo "[+] Xray 核心已就绪: $(/usr/local/bin/xray version | head -n 1)"
+
+  # 规范化 Xray 系统服务单元
+  cat > /etc/systemd/system/xray.service << 'EOF'
 [Unit]
 Description=Xray Service
 After=network.target nss-lookup.target
@@ -140,9 +173,8 @@ LimitNOFILE=1000000
 WantedBy=multi-user.target
 EOF
 
-# 4. 创建默认配置文件并做兼容软链接
-if [ ! -f /etc/xray/config.json ]; then
-  cat > /etc/xray/config.json << 'EOF'
+  if [ ! -f /etc/xray/config.json ]; then
+    cat > /etc/xray/config.json << 'EOF'
 {
   "log": { "loglevel": "warning" },
   "inbounds": [
@@ -154,55 +186,69 @@ if [ ! -f /etc/xray/config.json ]; then
   ]
 }
 EOF
-fi
-ln -sf /etc/xray/config.json /usr/local/etc/xray/config.json
-
-systemctl daemon-reload
-systemctl enable xray
-systemctl restart xray
-
-# 4.5 安装并配置 Sing-box 核心 (处理 Hysteria 2 / QUIC UDP 协议)
-mkdir -p /etc/sing-box /var/log/sing-box
-SARCH="amd64"
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-  SARCH="arm64"
-fi
-TMP_SB_DIR="/tmp/singbox_install"
-rm -rf "$TMP_SB_DIR"
-mkdir -p "$TMP_SB_DIR"
-TMP_SB_TAR="$TMP_SB_DIR/sing-box.tar.gz"
-echo "[+] 正在下载并配置最新版 Sing-box 核心..."
-LATEST_SB_TAG=$(curl -sSL "https://api.github.com/repos/SagerNet/sing-box/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n 1 | cut -d'"' -f4 || echo "v1.14.1")
-SB_VER="${LATEST_SB_TAG#v}"
-[ -z "$SB_VER" ] && SB_VER="1.14.1"
-
-curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || curl -fsSL "https://ghproxy.net/https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || true
-
-if [ -f "$TMP_SB_TAR" ]; then
-  tar -xzf "$TMP_SB_TAR" -C "$TMP_SB_DIR/"
-  SB_BIN=$(find "$TMP_SB_DIR" -name "sing-box" -type f | head -n 1)
-  if [ -n "$SB_BIN" ]; then
-    install -m 0755 "$SB_BIN" /usr/local/bin/sing-box
-    echo "[+] Sing-box 核心已就绪: $(/usr/local/bin/sing-box version | head -n 1)"
   fi
-fi
-rm -rf "$TMP_SB_DIR"
+  ln -sf /etc/xray/config.json /usr/local/etc/xray/config.json
 
-if [ ! -f /etc/sing-box/cert.pem ] || [ ! -f /etc/sing-box/key.pem ]; then
-  openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1)     -keyout /etc/sing-box/key.pem -out /etc/sing-box/cert.pem     -subj "/CN=bing.com" -days 36500     -addext "subjectAltName=DNS:bing.com" 2>/dev/null || true
+  systemctl daemon-reload
+  systemctl enable xray
+  systemctl restart xray
+else
+  echo "[*] 根据选项：跳过 Xray-Core 核心安装"
 fi
 
-if [ ! -f /etc/sing-box/config.json ]; then
-  cat > /etc/sing-box/config.json << 'EOF'
+# 3. 按需安装并配置 Sing-box 核心 (处理 Hysteria 2 / QUIC UDP 协议)
+if [ "$INSTALL_SINGBOX" = "1" ]; then
+  mkdir -p /etc/sing-box /var/log/sing-box
+  SARCH="amd64"
+  if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    SARCH="arm64"
+  fi
+  TMP_SB_DIR="/tmp/singbox_install"
+  rm -rf "$TMP_SB_DIR"
+  mkdir -p "$TMP_SB_DIR"
+  TMP_SB_TAR="$TMP_SB_DIR/sing-box.tar.gz"
+  echo "[+] 正在下载并配置最新版 Sing-box 核心..."
+  LATEST_SB_TAG=$(curl -sSL "https://api.github.com/repos/SagerNet/sing-box/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n 1 | cut -d'"' -f4 || echo "v1.14.1")
+  SB_VER="${LATEST_SB_TAG#v}"
+  [ -z "$SB_VER" ] && SB_VER="1.14.1"
+
+  curl -fsSL "$HUB_SERVER/sing-box-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || \
+  curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || \
+  curl -fsSL "https://ghproxy.net/https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || true
+
+  if [ -f "$TMP_SB_TAR" ]; then
+    tar -xzf "$TMP_SB_TAR" -C "$TMP_SB_DIR/"
+    SB_BIN=$(find "$TMP_SB_DIR" -name "sing-box" -type f | head -n 1)
+    if [ -n "$SB_BIN" ]; then
+      install -m 0755 "$SB_BIN" /usr/local/bin/sing-box
+      echo "[+] Sing-box 核心已就绪: $(/usr/local/bin/sing-box version | head -n 1)"
+    fi
+  fi
+  rm -rf "$TMP_SB_DIR"
+
+  if [ ! -f /etc/sing-box/cert.pem ] || [ ! -f /etc/sing-box/key.pem ]; then
+    openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
+      -keyout /etc/sing-box/key.pem -out /etc/sing-box/cert.pem \
+      -subj "/CN=bing.com" -days 36500 \
+      -addext "subjectAltName=DNS:bing.com" 2>/dev/null || true
+  fi
+
+  if [ ! -f /etc/sing-box/config.json ]; then
+    cat > /etc/sing-box/config.json << 'EOF'
 {
   "log": { "level": "warn" },
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090"
+    }
+  },
   "inbounds": [],
   "outbounds": [{ "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" }]
 }
 EOF
-fi
+  fi
 
-cat > /etc/systemd/system/sing-box.service << 'EOF'
+  cat > /etc/systemd/system/sing-box.service << 'EOF'
 [Unit]
 Description=sing-box Service
 Documentation=https://sing-box.sagernet.org/
@@ -222,9 +268,75 @@ LimitNOFILE=1000000
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable sing-box
-systemctl restart sing-box
+  systemctl daemon-reload
+  systemctl enable sing-box
+  systemctl restart sing-box
+else
+  echo "[*] 根据选项：跳过 Sing-box 核心安装"
+fi
+
+# 4. 按需安装并配置 Realm 端口转发核心 (TCP/UDP 高速端口转发)
+if [ "$INSTALL_REALM" = "1" ]; then
+  mkdir -p /etc/realm /opt/monitor
+  R_ARCH="x86_64"
+  if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    R_ARCH="aarch64"
+  fi
+  TMP_REALM_DIR="/tmp/realm_inst"
+  rm -rf "$TMP_REALM_DIR"
+  mkdir -p "$TMP_REALM_DIR"
+  TMP_REALM_TAR="/tmp/realm.tar.gz"
+
+  echo "[+] 正在下载并配置最新版 Realm 端口转发核心..."
+  curl -fsSL "$HUB_SERVER/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" || \
+  curl -fsSL "https://github.com/zhboner/realm/releases/latest/download/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" || \
+  curl -fsSL "https://ghproxy.net/https://github.com/zhboner/realm/releases/latest/download/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" || true
+
+  if [ -f "$TMP_REALM_TAR" ]; then
+    tar -xzf "$TMP_REALM_TAR" -C "$TMP_REALM_DIR/" || true
+    REALM_BIN_F=$(find "$TMP_REALM_DIR" -name "realm" -type f | head -n 1)
+    if [ -n "$REALM_BIN_F" ]; then
+      install -m 0755 "$REALM_BIN_F" /usr/local/bin/realm
+      echo "[+] Realm 核心已就绪: $(/usr/local/bin/realm --version 2>/dev/null || echo 'Realm')"
+    fi
+  fi
+  rm -rf "$TMP_REALM_DIR" "$TMP_REALM_TAR"
+
+  if [ ! -f /etc/realm/config.json ]; then
+    cat > /etc/realm/config.json << 'EOF'
+{
+  "log": { "level": "warn" },
+  "network": { "no_tcp": false, "use_udp": true },
+  "endpoints": [
+    { "listen": "127.0.0.1:39998", "remote": "127.0.0.1:39998" }
+  ]
+}
+EOF
+  fi
+
+  cat > /etc/systemd/system/realm.service << 'EOF'
+[Unit]
+Description=Realm Port Forwarding Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/realm -c /etc/realm/config.json
+Restart=always
+RestartSec=3
+LimitNOFILE=1000000
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable realm
+  systemctl restart realm
+else
+  echo "[*] 根据选项：跳过 Realm 端口转发核心安装"
+fi
 
 # 5. 下载远端代理守护进程脚本
 echo "[+] 正在拉取代理同步守护程序..."
@@ -235,7 +347,7 @@ chmod +x /opt/monitor/proxy_agent.py
 cat > /etc/systemd/system/proxy-agent.service << EOF
 [Unit]
 Description=Monitor Proxy Agent Daemon
-After=network.target xray.service
+After=network.target
 
 [Service]
 Type=simple
@@ -257,7 +369,9 @@ echo "=================================================="
 echo "  [OK] 代理管理服务部署成功！"
 echo "  已成功连接到主控端: $HUB_SERVER"
 echo "  同步守护进程已启动: proxy-agent.service"
-echo "  Xray 核心服务已启动: xray.service"
+[ "$INSTALL_XRAY" = "1" ] && echo "  - Xray-Core: 已安装并运行"
+[ "$INSTALL_SINGBOX" = "1" ] && echo "  - Sing-box: 已安装并运行"
+[ "$INSTALL_REALM" = "1" ] && echo "  - Realm: 已安装并运行"
 echo "  后续在管理后台为此服务器创建的所有节点，将自动实时生效！"
 echo "=================================================="
 """
@@ -277,6 +391,8 @@ XRAY_BIN = "/usr/local/bin/xray"
 XRAY_CONFIG = "/etc/xray/config.json"
 SINGBOX_BIN = "/usr/local/bin/sing-box"
 SINGBOX_CONFIG = "/etc/sing-box/config.json"
+REALM_BIN = "/usr/local/bin/realm"
+REALM_CONFIG = "/etc/realm/config.json"
 
 def get_params():
     server = os.environ.get("HUB_SERVER", "")
@@ -600,6 +716,10 @@ def sync_step(server, token, last_hash):
 
     xr_installed = os.path.exists(XRAY_BIN)
     xr_running = is_active
+    realm_installed = os.path.exists(REALM_BIN)
+    realm_running = False
+    if realm_installed:
+        realm_running = subprocess.run(["systemctl", "is-active", "--quiet", "realm"]).returncode == 0
 
     user_stats = []
     if xr_running:
@@ -653,6 +773,9 @@ def sync_step(server, token, last_hash):
         "singbox_installed": 1 if sb_installed else 0,
         "singbox_running": 1 if sb_running else 0,
         "singbox_version": sb_version,
+        "realm_installed": 1 if realm_installed else 0,
+        "realm_running": 1 if realm_running else 0,
+        "realm_version": "Realm 2.9.6" if realm_installed else "",
         "log": xray_log,
         "user_stats": user_stats
     }).encode("utf-8")
@@ -2424,17 +2547,22 @@ class ProxyHandler(BaseHTTPRequestHandler):
             singbox_installed = int(req.get("singbox_installed", 0))
             singbox_running = int(req.get("singbox_running", 0))
             singbox_version = req.get("singbox_version", "")
+            realm_installed = int(req.get("realm_installed", 0))
+            realm_running = int(req.get("realm_running", 0))
+            realm_version = req.get("realm_version", "")
             now = int(time.time())
             with conn:
                 conn.execute("""
                 INSERT OR REPLACE INTO node_proxy_status (
                     node_id, status, version, ports, listening_ports, log, last_seen,
-                    xray_installed, xray_running, singbox_installed, singbox_running, singbox_version
+                    xray_installed, xray_running, singbox_installed, singbox_running, singbox_version,
+                    realm_installed, realm_running, realm_version
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     node_id, status, version, ports_json, listening_ports_json, xray_log, now,
-                    xray_installed, xray_running, singbox_installed, singbox_running, singbox_version
+                    xray_installed, xray_running, singbox_installed, singbox_running, singbox_version,
+                    realm_installed, realm_running, realm_version
                 ))
             user_stats = req.get("user_stats", [])
             if user_stats:
