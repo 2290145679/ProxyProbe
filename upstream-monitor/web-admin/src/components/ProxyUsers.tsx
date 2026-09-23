@@ -34,13 +34,15 @@ export type ManagedUser = {
   sub_token: string
   sub_url: string
   traffic_limit_bytes: number
+  device_limit?: number
+  online_devices?: number
   upload_bytes: number
   download_bytes: number
   total_used_bytes: number
   remaining_bytes: number
   expires_at: number
   enabled: number
-  status: "active" | "over_quota" | "expired" | "disabled"
+  status: "active" | "over_quota" | "expired" | "disabled" | "over_device_limit"
   created_at: number
 }
 
@@ -68,6 +70,7 @@ export function ProxyUsers() {
     password: "",
     traffic_limit_gb: "200",
     expires_days: "30",
+    device_limit: "0",
   })
   const [creating, setCreating] = useState(false)
 
@@ -78,6 +81,7 @@ export function ProxyUsers() {
     traffic_limit_gb: "",
     expires_date: "",
     password: "",
+    device_limit: "0",
   })
   const [savingEdit, setSavingEdit] = useState(false)
 
@@ -126,13 +130,14 @@ export function ProxyUsers() {
           password: createForm.password,
           traffic_limit_gb: parseFloat(createForm.traffic_limit_gb) || 200,
           expires_days: parseInt(createForm.expires_days) || 0,
+          device_limit: parseInt(createForm.device_limit) || 0,
         }),
       })
       const data = await res.json()
       if (data.ok) {
         toast.success("用户创建成功！")
         setCreateOpen(false)
-        setCreateForm({ username: "", password: "", traffic_limit_gb: "200", expires_days: "30" })
+        setCreateForm({ username: "", password: "", traffic_limit_gb: "200", expires_days: "30", device_limit: "0" })
         loadUsers()
       } else {
         toast.error(data.message || "创建失败")
@@ -153,6 +158,7 @@ export function ProxyUsers() {
       traffic_limit_gb: limitGb,
       expires_date: dateStr,
       password: "",
+      device_limit: (user.device_limit ?? 0).toString(),
     })
     setEditOpen(true)
   }
@@ -174,6 +180,7 @@ export function ProxyUsers() {
           traffic_limit_gb: parseFloat(editForm.traffic_limit_gb) || 0,
           expires_at: expTs,
           password: editForm.password,
+          device_limit: parseInt(editForm.device_limit) || 0,
         }),
       })
       const data = await res.json()
@@ -290,6 +297,7 @@ export function ProxyUsers() {
                 <th className="py-3 px-4 font-semibold w-14">ID</th>
                 <th className="py-3 px-4 font-semibold">用户名</th>
                 <th className="py-3 px-4 font-semibold">流量使用情况</th>
+                <th className="py-3 px-4 font-semibold">设备限制</th>
                 <th className="py-3 px-4 font-semibold">到期时间</th>
                 <th className="py-3 px-4 font-semibold">账户状态</th>
                 <th className="py-3 px-4 font-semibold">专属订阅链接</th>
@@ -338,6 +346,19 @@ export function ProxyUsers() {
                             style={{ width: `${limit > 0 ? percent : 0}%` }}
                           />
                         </div>
+                      </div>
+                    </td>
+
+                    <td className="py-3.5 px-4 font-mono text-muted-foreground whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-semibold ${(u.device_limit && u.device_limit > 0 && (u.online_devices || 0) > u.device_limit) ? "text-red-500 font-bold" : "text-foreground"}`}>
+                          {u.online_devices ?? 0}
+                        </span>
+                        <span>/</span>
+                        <span>{(u.device_limit && u.device_limit > 0) ? `${u.device_limit} 台` : "不限"}</span>
+                        {(u.device_limit && u.device_limit > 0 && (u.online_devices || 0) > u.device_limit) && (
+                          <Badge variant="destructive" className="text-[9px] py-0 px-1">超限</Badge>
+                        )}
                       </div>
                     </td>
 
@@ -460,7 +481,7 @@ export function ProxyUsers() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               <div className="space-y-1.5">
                 <Label className="text-xs">流量限额 (GB)</Label>
                 <Input
@@ -488,11 +509,24 @@ export function ProxyUsers() {
                   required
                 />
               </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">设备限制 (台)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="text-xs h-9"
+                  placeholder="0为不限"
+                  value={createForm.device_limit}
+                  onChange={e => setCreateForm(prev => ({ ...prev, device_limit: e.target.value }))}
+                />
+              </div>
             </div>
 
             <div className="rounded-md bg-muted/50 p-2.5 text-[11px] text-muted-foreground flex items-center gap-2">
               <AlertCircle className="size-4 shrink-0 text-primary" />
-              <span>超过流量限额或到期后，系统将自动熔断停止下发节点，保障带宽不被滥用。</span>
+              <span>超过流量限额、到期或同时在线客户端超过限制后，系统将自动熔断切断连接。</span>
             </div>
 
             <DialogFooter className="pt-2">
@@ -518,18 +552,33 @@ export function ProxyUsers() {
           </DialogHeader>
 
           <form onSubmit={handleSaveEdit} className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs">流量限额 (GB)</Label>
-              <Input
-                type="number"
-                min="0"
-                step="1"
-                className="text-xs h-9"
-                placeholder="0 为无限制"
-                value={editForm.traffic_limit_gb}
-                onChange={e => setEditForm(prev => ({ ...prev, traffic_limit_gb: e.target.value }))}
-                required
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">流量限额 (GB)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="text-xs h-9"
+                  placeholder="0 为无限制"
+                  value={editForm.traffic_limit_gb}
+                  onChange={e => setEditForm(prev => ({ ...prev, traffic_limit_gb: e.target.value }))}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">设备限制 (台)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="text-xs h-9"
+                  placeholder="0 为无限制"
+                  value={editForm.device_limit}
+                  onChange={e => setEditForm(prev => ({ ...prev, device_limit: e.target.value }))}
+                />
+              </div>
             </div>
 
             <div className="space-y-1.5">

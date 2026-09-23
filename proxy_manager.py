@@ -537,8 +537,9 @@ def sync_step(server, token, last_hash):
             ports = [inb.get("port") for inb in applied_inbounds if inb.get("port")]
             allow_ports(ports)
 
+        os.makedirs("/var/log/xray", exist_ok=True)
         full_config = {
-            "log": { "loglevel": "warning" },
+            "log": { "loglevel": "warning", "access": "/var/log/xray/access.log" },
             "stats": {},
             "api": {
                 "tag": "api",
@@ -602,8 +603,9 @@ def sync_step(server, token, last_hash):
         if os.path.exists(SINGBOX_BIN) and singbox_inbounds:
             sb_ports = [inb.get("listen_port") for inb in singbox_inbounds if inb.get("listen_port")]
             allow_ports(sb_ports)
+            os.makedirs("/var/log/sing-box", exist_ok=True)
             sb_config = {
-                "log": { "level": "warn" },
+                "log": { "level": "warn", "output": "/var/log/sing-box/access.log" },
                 "inbounds": singbox_inbounds,
                 "outbounds": [{ "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" }]
             }
@@ -901,7 +903,8 @@ def init_db():
             expires_at INTEGER DEFAULT 0,
             enabled INTEGER DEFAULT 1,
             is_admin INTEGER DEFAULT 0,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            device_limit INTEGER DEFAULT 0
         )
         """)
         conn.execute("""
@@ -912,13 +915,19 @@ def init_db():
         )
         """)
 
+        # Migration: ensure device_limit exists
+        try:
+            conn.execute("ALTER TABLE proxy_user ADD COLUMN device_limit INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
         # Migration: ensure admin user exists in proxy_user
         cur_adm = conn.execute("SELECT id FROM proxy_user WHERE username = 'admin'")
         if not cur_adm.fetchone():
             adm_hash = hash_password("admin123")
             conn.execute("""
-                INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at)
-                VALUES ('admin', ?, ?, 0, 0, 0, 0, 1, 1, ?)
+                INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit)
+                VALUES ('admin', ?, ?, 0, 0, 0, 0, 1, 1, ?, 0)
             """, (adm_hash, sub_tok, int(time.time())))
     conn.close()
 
@@ -1001,6 +1010,97 @@ def ensure_user_credentials(user):
     u_pwd = f"u{user_id}_{sub_token[:12]}"
     return u_uuid, u_pwd
 
+_user_active_ips = {}  # { user_id: { ip_str: last_seen_epoch } }
+_last_xray_log_offset = 0
+_last_singbox_log_offset = 0
+
+def update_device_tracker():
+    global _user_active_ips, _last_xray_log_offset, _last_singbox_log_offset
+    now = int(time.time())
+
+    # 1. Parse Xray access log
+    xray_log = "/var/log/xray/access.log"
+    if os.path.exists(xray_log):
+        try:
+            size = os.path.getsize(xray_log)
+            if size < _last_xray_log_offset:
+                _last_xray_log_offset = 0
+            with open(xray_log, "r", encoding="utf-8", errors="ignore") as f:
+                f.seek(_last_xray_log_offset)
+                lines = f.readlines()
+                _last_xray_log_offset = f.tell()
+                for line in lines:
+                    if "accepted" in line and "email:" in line:
+                        m_email = re.search(r'email:\s*([^\s]+)', line)
+                        m_ip = re.search(r'(?:from\s+|^)([\d\.:a-fA-F]+):\d+\s+accepted', line)
+                        if m_email and m_ip:
+                            email = m_email.group(1).strip()
+                            ip = m_ip.group(1).strip()
+                            uid = None
+                            if email.startswith("user_"):
+                                try:
+                                    uid = int(email.split("_")[1])
+                                except ValueError:
+                                    pass
+                            elif email in ("default", "default@vless", "default@trojan", "default@vmess"):
+                                uid = 1
+                            if uid is not None and ip not in ("127.0.0.1", "::1"):
+                                if uid not in _user_active_ips:
+                                    _user_active_ips[uid] = {}
+                                _user_active_ips[uid][ip] = now
+        except Exception:
+            pass
+
+    # 2. Parse Sing-box access log if present
+    sb_log = "/var/log/sing-box/access.log"
+    if os.path.exists(sb_log):
+        try:
+            size = os.path.getsize(sb_log)
+            if size < _last_singbox_log_offset:
+                _last_singbox_log_offset = 0
+            with open(sb_log, "r", encoding="utf-8", errors="ignore") as f:
+                f.seek(_last_singbox_log_offset)
+                lines = f.readlines()
+                _last_singbox_log_offset = f.tell()
+                for line in lines:
+                    m_ip = re.search(r'\[([\d\.:a-fA-F]+):\d+\s*->', line)
+                    m_user = re.search(r'user:\s*([^\s\)]+)', line)
+                    if m_ip and m_user:
+                        ip = m_ip.group(1).strip()
+                        u_name = m_user.group(1).strip()
+                        uid = None
+                        if u_name.startswith("user_"):
+                            try:
+                                uid = int(u_name.split("_")[1])
+                            except ValueError:
+                                pass
+                        elif u_name == "default":
+                            uid = 1
+                        if uid is not None and ip not in ("127.0.0.1", "::1"):
+                            if uid not in _user_active_ips:
+                                _user_active_ips[uid] = {}
+                            _user_active_ips[uid][ip] = now
+        except Exception:
+            pass
+
+    # 3. Prune IPs inactive for more than 180s (3 minutes)
+    for uid in list(_user_active_ips.keys()):
+        _user_active_ips[uid] = {ip: t for ip, t in _user_active_ips[uid].items() if now - t < 180}
+        if not _user_active_ips[uid]:
+            _user_active_ips.pop(uid, None)
+
+def get_user_online_device_count(user_id):
+    now = int(time.time())
+    ips = _user_active_ips.get(user_id, {})
+    return len([ip for ip, t in ips.items() if now - t < 180])
+
+def is_user_over_device_limit(user):
+    limit = user.get("device_limit", 0)
+    if limit is not None and limit > 0:
+        count = get_user_online_device_count(user["id"])
+        return count > limit
+    return False
+
 def get_active_users():
     conn = get_db()
     cur = conn.execute("SELECT * FROM proxy_user")
@@ -1014,7 +1114,8 @@ def get_active_users():
         is_over = (limit > 0 and used >= limit)
         is_exp = (u.get("expires_at", 0) > 0 and now > u.get("expires_at", 0))
         is_dis = (u.get("enabled", 1) == 0)
-        if not is_over and not is_exp and not is_dis:
+        is_dev_over = is_user_over_device_limit(u)
+        if not is_over and not is_exp and not is_dis and not is_dev_over:
             active.append(u)
     return active
 
@@ -1031,6 +1132,9 @@ def traffic_collector_loop():
     while True:
         try:
             time.sleep(3)
+            # 0. Update device tracker from logs
+            update_device_tracker()
+
             # 1. Query Xray StatsService via local API
             if os.path.exists(XRAY_BIN):
                 res = subprocess.run(
@@ -1919,10 +2023,12 @@ def apply_singbox_config():
     local_nodes = [n for n in all_nodes if is_local_node(n) and not n.get("is_relay") and n["protocol"] in ("hysteria2", "tuic")]
     inbounds = build_singbox_inbounds_for_nodes(local_nodes)
 
+    os.makedirs("/var/log/sing-box", exist_ok=True)
     config = {
         "log": {
             "level": "warn",
-            "timestamp": True
+            "timestamp": True,
+            "output": "/var/log/sing-box/access.log"
         },
         "inbounds": inbounds,
         "outbounds": [
@@ -2251,8 +2357,9 @@ def apply_xray_config():
         "settings": { "address": "127.0.0.1" }
     }
 
+    os.makedirs("/var/log/xray", exist_ok=True)
     config = {
-        "log": { "loglevel": "warning" },
+        "log": { "loglevel": "warning", "access": "/var/log/xray/access.log" },
         "stats": {},
         "api": {
             "tag": "api",
@@ -2359,6 +2466,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             total_used = user.get("upload_bytes", 0) + user.get("download_bytes", 0)
             limit = user.get("traffic_limit_bytes", 0)
             is_over_quota = (limit > 0 and total_used >= limit)
+            is_device_over = is_user_over_device_limit(user)
 
             u_bytes = user.get("upload_bytes", 0)
             d_bytes = user.get("download_bytes", 0)
@@ -2368,9 +2476,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
             ua = self.headers.get("User-Agent", "").lower()
             is_clash = ("clash" in ua or "meta" in ua or "mihomo" in ua or qs.get("clash", [""])[0] == "1")
 
-            if not is_enabled or is_expired or is_over_quota:
+            if not is_enabled or is_expired or is_over_quota or is_device_over:
                 conn.close()
-                status_reason = "流量已超额" if is_over_quota else ("订阅已到期" if is_expired else "账户已停用")
+                d_limit = user.get("device_limit", 0)
+                status_reason = f"设备数超限(限制{d_limit}台)" if is_device_over else ("流量已超额" if is_over_quota else ("订阅已到期" if is_expired else "账户已停用"))
                 if is_clash:
                     yaml_content = generate_clash_yaml([], user=user, warning_msg=f"⚠️ {status_reason}，请联系管理员")
                     encoded = yaml_content.encode("utf-8")
@@ -2475,7 +2584,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
             now = int(time.time())
             is_expired = user.get("expires_at", 0) > 0 and now > user.get("expires_at", 0)
             is_over = limit > 0 and used >= limit
-            status_text = "disabled" if user.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else "active"))
+            is_dev_over = is_user_over_device_limit(user)
+            online_devs = get_user_online_device_count(user["id"])
+            device_limit = user.get("device_limit", 0)
+            
+            status_text = "disabled" if user.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else ("over_device_limit" if is_dev_over else "active")))
             
             sub_token = user.get("sub_token") or get_sub_token()
             self.send_json({
@@ -2488,6 +2601,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "sub_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={sub_token}",
                     "clash_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={sub_token}&clash=1",
                     "traffic_limit_bytes": limit,
+                    "device_limit": device_limit,
+                    "online_devices": online_devs,
                     "upload_bytes": user.get("upload_bytes", 0),
                     "download_bytes": user.get("download_bytes", 0),
                     "total_used_bytes": used,
@@ -2561,9 +2676,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 remaining = max(0, limit - used) if limit > 0 else -1
                 is_expired = u.get("expires_at", 0) > 0 and now > u.get("expires_at", 0)
                 is_over = limit > 0 and used >= limit
+                is_dev_over = is_user_over_device_limit(u)
+                u["device_limit"] = u.get("device_limit", 0)
+                u["online_devices"] = get_user_online_device_count(u["id"])
                 u["total_used_bytes"] = used
                 u["remaining_bytes"] = remaining
-                u["status"] = "disabled" if u.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else "active"))
+                u["status"] = "disabled" if u.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else ("over_device_limit" if is_dev_over else "active")))
                 u["sub_url"] = f"https://tz.yohoo.xyz/api/proxy/sub?token={u['sub_token']}"
                 u["clash_url"] = f"https://tz.yohoo.xyz/api/proxy/sub?token={u['sub_token']}&clash=1"
             self.send_json({"ok": True, "users": users})
@@ -2987,6 +3105,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             password = req.get("password", "").strip()
             limit_gb = float(req.get("traffic_limit_gb", 200))
             expires_days = int(req.get("expires_days", 0))
+            device_limit = int(req.get("device_limit", 0))
 
             if not username:
                 self.send_json({"ok": False, "message": "用户名不能为空"}, 400)
@@ -3004,9 +3123,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             try:
                 with conn:
                     cur = conn.execute("""
-                        INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at)
-                        VALUES (?, ?, ?, ?, 0, 0, ?, 1, 0, ?)
-                    """, (username, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time())))
+                        INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit)
+                        VALUES (?, ?, ?, ?, 0, 0, ?, 1, 0, ?, ?)
+                    """, (username, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time()), device_limit))
                     new_id = cur.lastrowid
                 conn.close()
                 apply_all_configs()
@@ -3052,6 +3171,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             limit_gb = req.get("traffic_limit_gb")
             expires_at = req.get("expires_at")
             new_pwd = req.get("password", "").strip()
+            device_limit = req.get("device_limit")
             
             conn = get_db()
             with conn:
@@ -3060,6 +3180,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     conn.execute("UPDATE proxy_user SET traffic_limit_bytes = ? WHERE id = ?", (limit_bytes, user_id))
                 if expires_at is not None:
                     conn.execute("UPDATE proxy_user SET expires_at = ? WHERE id = ?", (int(expires_at), user_id))
+                if device_limit is not None:
+                    conn.execute("UPDATE proxy_user SET device_limit = ? WHERE id = ?", (int(device_limit), user_id))
                 if new_pwd:
                     conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (hash_password(new_pwd), user_id))
             conn.close()

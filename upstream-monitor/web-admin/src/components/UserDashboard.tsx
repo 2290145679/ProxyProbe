@@ -6,8 +6,12 @@ import {
   ArrowUp,
   Calendar,
   Copy,
+  ExternalLink,
+  Eye,
+  EyeOff,
   Globe,
   HardDrive,
+  Laptop,
   LogOut,
   Moon,
   QrCode,
@@ -40,13 +44,15 @@ export type UserProfile = {
   sub_url: string
   clash_url?: string
   traffic_limit_bytes: number
+  device_limit?: number
+  online_devices?: number
   upload_bytes: number
   download_bytes: number
   total_used_bytes: number
   remaining_bytes: number
   expires_at: number
   enabled: number
-  status: "active" | "over_quota" | "expired" | "disabled"
+  status: "active" | "over_quota" | "expired" | "disabled" | "over_device_limit"
   created_at: number
 }
 
@@ -73,6 +79,18 @@ function formatDate(ts: number) {
   return new Date(ts * 1000).toLocaleString()
 }
 
+function maskHost(host: string) {
+  if (!host) return ""
+  const parts = host.split(".")
+  if (parts.length === 4) {
+    return `${parts[0]}.***.***.${parts[3]}`
+  }
+  if (host.length > 8) {
+    return `${host.slice(0, 3)}****${host.slice(-4)}`
+  }
+  return "***"
+}
+
 export function UserDashboard({
   user,
   siteName,
@@ -89,8 +107,7 @@ export function UserDashboard({
   dark: boolean
 }) {
   const [nodes, setNodes] = useState<NodeItem[]>([])
-  const [testingId, setTestingId] = useState<number | null>(null)
-  const [latencies, setLatencies] = useState<Record<number, { ok: boolean; msg: string; ms: number }>>({})
+  const [showIps, setShowIps] = useState<Record<number, boolean>>({})
   const [qrOpen, setQrOpen] = useState(false)
   const [qrUrl, setQrUrl] = useState("")
   const [resettingToken, setResettingToken] = useState(false)
@@ -161,24 +178,9 @@ export function UserDashboard({
     }
   }
 
-  // 单节点延迟测试
-  async function testNode(nodeId: number) {
-    setTestingId(nodeId)
-    try {
-      const res = await fetch(`/api/proxy/nodes/${nodeId}/test`)
-      const data = await res.json()
-      setLatencies(prev => ({
-        ...prev,
-        [nodeId]: { ok: data.ok, msg: data.message, ms: data.latency_ms }
-      }))
-    } catch {
-      setLatencies(prev => ({
-        ...prev,
-        [nodeId]: { ok: false, msg: "网络错误", ms: -1 }
-      }))
-    } finally {
-      setTestingId(null)
-    }
+  // 切换节点 IP 显示/隐藏
+  function toggleShowIp(nodeId: number) {
+    setShowIps(prev => ({ ...prev, [nodeId]: !prev[nodeId] }))
   }
 
   // 计算流量百分比
@@ -205,6 +207,14 @@ export function UserDashboard({
           <div className="flex-1" />
 
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" asChild className="gap-1.5 text-xs h-8">
+              <a href="/" target="_blank" rel="noopener noreferrer" title="查看服务器探针状态">
+                <Activity className="size-3.5 text-emerald-500" />
+                <span>服务器探针</span>
+                <ExternalLink className="size-3 text-muted-foreground ml-0.5" />
+              </a>
+            </Button>
+
             <span className="text-xs text-muted-foreground mr-1 hidden sm:inline-flex items-center gap-1.5">
               <span>用户:</span>
               <strong className="text-foreground">{user.username}</strong>
@@ -232,9 +242,12 @@ export function UserDashboard({
                 {user.status === "over_quota" && "流量配额已用尽"}
                 {user.status === "expired" && "订阅服务已到期"}
                 {user.status === "disabled" && "账户已被管理员停用"}
+                {user.status === "over_device_limit" && `在线客户端设备数已超限 (限制 ${user.device_limit || 0} 台)`}
               </p>
               <p className="text-muted-foreground dark:text-red-300">
-                当前订阅服务处于熔断状态，客户端无法继续连接代理节点。请联系管理员续期或增加流量配额。
+                {user.status === "over_device_limit"
+                  ? `当前已检测到 ${user.online_devices || 0} 台设备同时活跃，超过了允许的 ${user.device_limit || 0} 台限制。系统已自动熔断切断连接，请断开多余设备的连接，稍后将自动恢复。`
+                  : "当前订阅服务处于熔断状态，客户端无法继续连接代理节点。请联系管理员续期或增加流量配额。"}
               </p>
             </div>
           </div>
@@ -287,7 +300,7 @@ export function UserDashboard({
           </div>
 
           {/* 详细指标网格 */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-2">
             <div className="rounded-lg bg-muted/50 p-3 space-y-1 border border-border/50">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <ArrowUp className="size-3.5 text-blue-500" /> 上传流量
@@ -312,6 +325,15 @@ export function UserDashboard({
             </div>
 
             <div className="rounded-lg bg-muted/50 p-3 space-y-1 border border-border/50">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Laptop className="size-3.5 text-indigo-500" /> 在线设备
+              </div>
+              <p className="text-base font-semibold tracking-tight">
+                {user.online_devices ?? 0} / {(user.device_limit && user.device_limit > 0) ? `${user.device_limit} 台` : "不限"}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-muted/50 p-3 space-y-1 border border-border/50 col-span-2 sm:col-span-1">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Calendar className="size-3.5 text-amber-500" /> 到期时间
               </div>
@@ -457,17 +479,24 @@ export function UserDashboard({
           </div>
         </Card>
 
-        {/* 卡片 3：可用节点列表与延迟测试 */}
+        {/* 卡片 3：可用节点列表 */}
         <Card className="p-4 sm:p-6 space-y-4 sm:space-y-5 border shadow-sm">
-          <div className="flex items-center justify-between border-b pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
             <div className="space-y-1">
               <h2 className="text-lg font-bold flex items-center gap-2">
                 <Globe className="size-4 text-emerald-500" /> 可用代理节点列表 ({nodes.length})
               </h2>
               <p className="text-xs text-muted-foreground">
-                当前包含在您订阅中的节点，可点击“测试延迟”实时检测连通性
+                当前包含在您订阅中的节点，节点真实 IP 默认已脱敏隐藏，可点击小眼睛查看
               </p>
             </div>
+            <Button variant="outline" size="sm" asChild className="gap-1.5 text-xs h-8 shrink-0 self-start sm:self-auto">
+              <a href="/" target="_blank" rel="noopener noreferrer">
+                <Activity className="size-3.5 text-emerald-500" />
+                <span>服务器探针</span>
+                <ExternalLink className="size-3 text-muted-foreground ml-0.5" />
+              </a>
+            </Button>
           </div>
 
           {nodes.length === 0 ? (
@@ -477,8 +506,8 @@ export function UserDashboard({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {nodes.map(n => {
-                const lat = latencies[n.id]
-                const isTesting = testingId === n.id
+                const isIpShown = !!showIps[n.id]
+                const displayHost = isIpShown ? n.server_host : maskHost(n.server_host)
 
                 return (
                   <div
@@ -492,31 +521,20 @@ export function UserDashboard({
                           {n.protocol.replace("_", " ")}
                         </Badge>
                       </div>
-                      <div className="text-[11px] text-muted-foreground truncate">
-                        {n.server_name} · {n.server_host}:{n.port}
+                      <div className="text-[11px] text-muted-foreground truncate font-mono">
+                        {n.server_name} · {displayHost}:{n.port}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      {lat && (
-                        <span
-                          className={`text-[11px] font-mono font-medium ${
-                            lat.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
-                          }`}
-                        >
-                          {lat.ok ? `${lat.ms} ms` : "超时"}
-                        </span>
-                      )}
-
+                    <div className="flex items-center gap-1.5 shrink-0">
                       <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={isTesting}
-                        onClick={() => testNode(n.id)}
-                        className="h-7 px-2 text-[11px] gap-1"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => toggleShowIp(n.id)}
+                        className="size-8 text-muted-foreground hover:text-foreground"
+                        title={isIpShown ? "隐藏真实 IP" : "查看真实 IP"}
                       >
-                        <Activity className={`size-3 ${isTesting ? "animate-spin text-primary" : ""}`} />
-                        {isTesting ? "测试中…" : "测速"}
+                        {isIpShown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                       </Button>
                     </div>
                   </div>
