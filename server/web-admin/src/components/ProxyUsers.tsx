@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import {
   AlertCircle,
-  AlertTriangle,
   Copy,
   Edit2,
   KeyRound,
@@ -294,9 +293,15 @@ export function ProxyUsers() {
           <Button 
             size="sm" 
             onClick={() => {
+              if (licenseStatus?.type === "revoked") {
+                toast.error("当前商业许可证已被授权中心吊销冻结，禁止创建新用户！")
+                return
+              }
               const nonAdminCount = users.filter(u => !u.is_admin).length
-              if (licenseStatus && !licenseStatus.active && nonAdminCount >= 1) {
-                toast.error("免费版仅支持创建 1 个客户端用户，添加更多用户请前往左侧【商业授权】激活商业版！")
+              const maxUsers = licenseStatus?.max_users || licenseStatus?.limits?.max_users || (licenseStatus?.active ? 12 : 1)
+              if (nonAdminCount >= maxUsers) {
+                const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
+                toast.error(`当前【${planName}】配额已满（上限 ${maxUsers} 个用户，当前已建 ${nonAdminCount} 个），添加更多用户请升级商业套餐！`)
                 return
               }
               setCreateOpen(true)
@@ -310,17 +315,24 @@ export function ProxyUsers() {
 
       {/* 用户列表 */}
       <Card className="overflow-hidden border shadow-sm">
-        {licenseStatus && !licenseStatus.active && (
-          <div className="bg-amber-500/10 border-b border-amber-500/20 px-5 py-3 text-xs text-amber-800 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        {licenseStatus && (
+          <div className="bg-muted/30 border-b px-5 py-2.5 text-xs text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="size-4 text-amber-500 shrink-0" />
+              <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${licenseStatus.active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" : "bg-amber-500/10 text-amber-600 border border-amber-500/20"}`}>
+                {licenseStatus.plan_name || (licenseStatus.active ? "商业版" : "免费体验版")}
+              </span>
               <span>
-                <strong>免费体验模式：</strong>未激活商业版仅支持添加 1 个客户端用户（当前已添加 {users.filter(u => !u.is_admin).length}/1 个）。需添加更多用户或分配不同权限请激活商业授权。
+                客户端用户配额：<strong>{users.filter(u => !u.is_admin).length} / {licenseStatus.max_users || licenseStatus.limits?.max_users || (licenseStatus.active ? 12 : 1)} 户</strong>
+                {users.filter(u => !u.is_admin).length >= (licenseStatus.max_users || licenseStatus.limits?.max_users || (licenseStatus.active ? 12 : 1)) && (
+                  <span className="text-amber-500 font-medium ml-1.5">(配额已满，升级套餐以添加更多)</span>
+                )}
               </span>
             </div>
-            <span className="font-semibold text-amber-600 dark:text-amber-400 shrink-0">
-              前往【商业授权】激活
-            </span>
+            {!licenseStatus.active && (
+              <span className="text-amber-600 dark:text-amber-400 font-medium shrink-0">
+                免费版限额 1 用户，激活商业版解锁更高配额
+              </span>
+            )}
           </div>
         )}
         <div className="overflow-x-auto">

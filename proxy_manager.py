@@ -2475,6 +2475,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         # License status API
         if path == "/api/proxy/license/status":
+            # 若距离上次在线同步超过 20 秒，或带有 ?sync=1，立即进行一次快速在线心跳打卡与黑名单同步
+            sync_param = qs.get("sync", ["0"])[0]
+            conn_chk = get_db()
+            cur = conn_chk.cursor()
+            cur.execute("SELECT value FROM setting WHERE key='license_last_sync_ts'")
+            row = cur.fetchone()
+            last_sync_ts = int(row[0]) if row and row[0] and row[0].isdigit() else 0
+            conn_chk.close()
+
+            if sync_param == "1" or (time.time() - last_sync_ts) > 20:
+                license_guard.ping_auth_server(DB_PATH)
+
             conn = get_db()
             lic_status = license_guard.get_current_license_status(conn)
             
@@ -2483,6 +2495,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
             node_count = conn.execute("SELECT COUNT(*) FROM proxy_node").fetchone()[0]
             user_count = conn.execute("SELECT COUNT(*) FROM proxy_user WHERE is_admin = 0").fetchone()[0]
             conn.close()
+
+            max_servers = lic_status.get("max_servers", 1)
+            max_nodes = lic_status.get("max_nodes", 1)
+            max_users = lic_status.get("max_users", 1)
+
+            lic_status["limits"] = {
+                "max_servers": max_servers,
+                "max_nodes": max_nodes,
+                "max_users": max_users
+            }
 
             lic_status["usage"] = {
                 "server_count": server_count,
@@ -3188,17 +3210,32 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/proxy/users":
-            # 商业许可证/免费配额检查 (免费版允许创建 1 个客户端用户)
+            # 商业许可证/套餐配额检查
             conn_chk = get_db()
             lic_status = license_guard.get_current_license_status(conn_chk)
             curr_user_count = conn_chk.execute("SELECT COUNT(*) FROM proxy_user WHERE is_admin = 0").fetchone()[0]
             conn_chk.close()
-            if not lic_status.get("active") and curr_user_count >= 1:
+
+            if lic_status.get("type") == "revoked":
                 self.send_json({
                     "ok": False,
-                    "error": "license_required",
-                    "message": "免费版仅支持创建 1 个客户端用户，添加更多用户请激活商业许可证！",
+                    "error": "license_revoked",
+                    "message": "商业许可证已被授权中心吊销冻结，禁止创建或变更客户端用户！",
                     "machine_id": lic_status.get("machine_id")
+                }, 403)
+                return
+
+            max_users = lic_status.get("max_users", 1)
+            plan_name = lic_status.get("plan_name", "免费版")
+
+            if curr_user_count >= max_users:
+                self.send_json({
+                    "ok": False,
+                    "error": "license_quota_exceeded",
+                    "message": f"当前【{plan_name}】配额已满（上限 {max_users} 个客户端用户，当前已建 {curr_user_count} 个），添加更多用户请升级商业许可证套餐！",
+                    "machine_id": lic_status.get("machine_id"),
+                    "current": curr_user_count,
+                    "max": max_users
                 }, 403)
                 return
 
@@ -3351,17 +3388,32 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/proxy/nodes":
-            # 商业许可证/免费配额检查 (免费版允许创建 1 个代理节点)
+            # 商业许可证/套餐配额检查
             conn_lic = get_db()
             lic_status = license_guard.get_current_license_status(conn_lic)
             curr_node_count = conn_lic.execute("SELECT COUNT(*) FROM proxy_node").fetchone()[0]
             conn_lic.close()
-            if not lic_status.get("active") and curr_node_count >= 1:
+
+            if lic_status.get("type") == "revoked":
                 self.send_json({
                     "ok": False,
-                    "error": "license_required",
-                    "message": "免费版仅支持创建 1 个代理节点，添加更多节点请激活商业许可证！",
+                    "error": "license_revoked",
+                    "message": "商业许可证已被授权中心吊销冻结，禁止创建或变更代理节点！",
                     "machine_id": lic_status.get("machine_id")
+                }, 403)
+                return
+
+            max_nodes = lic_status.get("max_nodes", 1)
+            plan_name = lic_status.get("plan_name", "免费版")
+
+            if curr_node_count >= max_nodes:
+                self.send_json({
+                    "ok": False,
+                    "error": "license_quota_exceeded",
+                    "message": f"当前【{plan_name}】配额已满（上限 {max_nodes} 个代理节点，当前已建 {curr_node_count} 个），添加更多节点请升级商业许可证套餐！",
+                    "machine_id": lic_status.get("machine_id"),
+                    "current": curr_node_count,
+                    "max": max_nodes
                 }, 403)
                 return
 

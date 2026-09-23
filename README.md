@@ -1,7 +1,7 @@
 # 🚀 ProxyProbe - 分布式服务器监控与 Xray / Sing-box 双核心代理管理系统
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v1.0.0-blue.svg" alt="Release">
+  <img src="https://img.shields.io/badge/Release-v2.0.0-blue.svg" alt="Release">
   <img src="https://img.shields.io/badge/Dual_Core-Xray_Core_%2B_Sing--box-success.svg" alt="Dual Core">
   <img src="https://img.shields.io/badge/Protocols-15_Types_Supported-purple.svg" alt="Protocols">
   <img src="https://img.shields.io/badge/Frontend-Vite_%2B_React_%2B_Tailwind-cyan.svg" alt="Frontend">
@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/License-Commercial-red.svg" alt="License">
 </p>
 
-**ProxyProbe** 是一套现代化、高颜值且极度轻量的**分布式服务器状态监控与全自动代理协议拓扑管理平台**。项目在高性能分布式探针的基础上，深度融合了 **Xray-Core 与 Sing-box 双核心调度体系**，彻底解决了多节点下跨协议部署繁琐、配置容易冲突、客户端格式不兼容的痛点。
+**ProxyProbe** 是一套现代化、高颜值且极度轻量的**分布式服务器状态监控与全自动代理协议拓扑管理平台**。项目在高性能分布式探针的基础上，深度融合了 **Xray-Core 与 Sing-box 双核心调度体系**，彻底解决了多节点下跨协议部署繁琐、配置容易冲突、客户端格式不兼容的痛点。详细版本更新内容请参阅 [版本更新日志 (Changelog)](CHANGELOG.md)。
 
 ---
 

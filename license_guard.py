@@ -294,11 +294,26 @@ def get_current_license_status(db_conn) -> dict:
     row = cur.fetchone()
     lic_key = row[0].strip() if row and row[0] else ""
 
+    # 套餐规格标准定义
+    PLAN_MAP = {
+        "free": {"name": "免费体验版", "max_servers": 1, "max_nodes": 1, "max_users": 1},
+        "stardust": {"name": "星尘套餐", "max_servers": 3, "max_nodes": 6, "max_users": 6},
+        "planet": {"name": "行星套餐", "max_servers": 5, "max_nodes": 12, "max_users": 12},
+        "star": {"name": "恒星套餐", "max_servers": 8, "max_nodes": 18, "max_users": 18},
+        "galaxy": {"name": "星系套餐", "max_servers": 12, "max_nodes": 30, "max_users": 30},
+        "universe": {"name": "宇宙套餐", "max_servers": 20, "max_nodes": 50, "max_users": 50},
+    }
+
     if not lic_key:
+        free_spec = PLAN_MAP["free"]
         return {
             "active": False,
             "type": "free",
-            "message": "未激活商业许可证（当前仅限探针监控功能，创建节点需激活）",
+            "plan_name": free_spec["name"],
+            "max_servers": free_spec["max_servers"],
+            "max_nodes": free_spec["max_nodes"],
+            "max_users": free_spec["max_users"],
+            "message": "当前为免费体验模式（配额：1服务器/1节点/1用户）",
             "machine_id": mid,
             "days_left": 0
         }
@@ -310,7 +325,11 @@ def get_current_license_status(db_conn) -> dict:
         return {
             "active": False,
             "type": "revoked",
-            "message": "此许可证已被中心授权服务器吊销或冻结！",
+            "plan_name": "已吊销许可证",
+            "max_servers": 0,
+            "max_nodes": 0,
+            "max_users": 0,
+            "message": "此许可证已被中心授权服务器吊销或冻结！所有商业与节点功能已停用。",
             "machine_id": mid,
             "days_left": 0
         }
@@ -321,6 +340,10 @@ def get_current_license_status(db_conn) -> dict:
         return {
             "active": False,
             "type": "invalid",
+            "plan_name": "无效许可证",
+            "max_servers": 0,
+            "max_nodes": 0,
+            "max_users": 0,
             "message": err,
             "machine_id": mid,
             "days_left": 0
@@ -341,23 +364,38 @@ def get_current_license_status(db_conn) -> dict:
     sync_row = cur.fetchone()
     last_sync = int(sync_row[0]) if sync_row and sync_row[0] and sync_row[0].isdigit() else 0
 
+    plan_type = payload.get("type", "planet")
+    plan_info = PLAN_MAP.get(plan_type, {
+        "name": "商业定制版",
+        "max_servers": payload.get("max_servers", 5),
+        "max_nodes": payload.get("max_nodes", 12),
+        "max_users": payload.get("max_users", 12)
+    })
+
+    # 优先使用签发时注入的硬配额，若无则使用标准套餐配额
+    max_servers = payload.get("max_servers") or plan_info["max_servers"]
+    max_nodes = payload.get("max_nodes") or plan_info["max_nodes"]
+    max_users = payload.get("max_users") or plan_info["max_users"]
+
     return {
         "active": True,
-        "type": payload.get("type", "pro"),
-        "plan_name": "商业专业版" if payload.get("type") == "pro" else ("企业旗舰版" if payload.get("type") == "enterprise" else "商业授权版"),
+        "type": plan_type,
+        "plan_name": plan_info["name"],
         "customer": payload.get("customer", "VIP客户"),
         "license_id": payload.get("id", ""),
-        "max_nodes": payload.get("max_nodes", 0),
+        "max_servers": max_servers,
+        "max_nodes": max_nodes,
+        "max_users": max_users,
         "expire_at": expire_at,
         "expire_date": expire_date,
         "days_left": days_left,
         "machine_id": mid,
         "last_sync": last_sync,
-        "message": "许可证有效，商业功能已全部解锁"
+        "message": f"商业许可证有效（{plan_info['name']}：{max_servers}服/{max_nodes}节/{max_users}户）"
     }
 
 
-def save_license_key(db_conn, license_key: str) -> tuple:
+def save_license_key(db_conn, license_key: str, auth_url: str = DEFAULT_AUTH_SERVER) -> tuple:
     """
     保存并激活许可证
     返回 (success: bool, msg: str, status_dict)
@@ -376,14 +414,36 @@ def save_license_key(db_conn, license_key: str) -> tuple:
                     (now, f"License ID: {payload.get('id')} Customer: {payload.get('customer')}"))
     db_conn.commit()
 
+    # 激活时立即触发一次与发号中心的远程校验打卡
+    try:
+        req_data = json.dumps({
+            "license_key": license_key.strip(),
+            "machine_id": get_machine_id(),
+            "version": "2.0.0",
+            "timestamp": now
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{auth_url}/api/v1/license/ping",
+            data=req_data,
+            headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/2.0"}
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            if body.get("status") == "revoked":
+                db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '1')")
+                db_conn.commit()
+                return False, "该许可证已被中心授权服务器吊销冻结，无法激活！", None
+    except Exception:
+        pass
+
     status = get_current_license_status(db_conn)
     return True, "许可证激活成功！", status
 
 
 # =============================================================================
-# 在线心跳巡检与 7 天宽限期 (Dual-Track Online Sync)
+# 在线心跳巡检与毫秒级黑名单同步
 # =============================================================================
-def ping_auth_server(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER):
+def ping_auth_server(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER) -> bool:
     """单次在线心跳打卡与黑名单同步"""
     try:
         conn = sqlite3.connect(db_path)
@@ -393,23 +453,23 @@ def ping_auth_server(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER):
         lic_key = row[0].strip() if row and row[0] else ""
         if not lic_key:
             conn.close()
-            return
+            return False
 
         mid = get_machine_id()
         req_data = json.dumps({
             "license_key": lic_key,
             "machine_id": mid,
-            "version": "1.0.0",
+            "version": "2.0.0",
             "timestamp": int(time.time())
         }).encode("utf-8")
 
         req = urllib.request.Request(
             f"{auth_url}/api/v1/license/ping",
             data=req_data,
-            headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/1.0"}
+            headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/2.0"}
         )
 
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=4) as resp:
             body = json.loads(resp.read().decode("utf-8"))
             status = body.get("status", "ok")
             now = int(time.time())
@@ -421,22 +481,23 @@ def ping_auth_server(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER):
                 conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
             conn.commit()
         conn.close()
-    except Exception as e:
-        # 心跳失败时静默容灾（不锁死用户，容纳 7 天断网宽限期）
-        pass
+        return True
+    except Exception:
+        # 心跳失败时静默容灾（不锁死用户，容纳断网宽限期）
+        return False
 
 
 def start_heartbeat_thread(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER):
-    """启动后台守护心跳线程 (每 12 小时检查一次)"""
+    """启动后台守护心跳线程 (每 30 秒检查一次发号中心黑名单与打卡)"""
     def _worker():
-        # 启动后延时 30 秒首次打卡
-        time.sleep(30)
+        # 启动后延时 3 秒首次打卡同步
+        time.sleep(3)
         while True:
             try:
                 ping_auth_server(db_path, auth_url)
             except Exception:
                 pass
-            time.sleep(12 * 3600)
+            time.sleep(30)  # 30秒巡检一次，确保吊销在半分钟内立刻生效
 
     t = threading.Thread(target=_worker, daemon=True, name="license_heartbeat")
     t.start()

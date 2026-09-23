@@ -1017,12 +1017,24 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
 
   return (
     <div className="space-y-4">
-      {licenseStatus && !licenseStatus.active && (
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3.5 text-xs text-amber-800 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-sm">
+      {licenseStatus && (
+        <div className="rounded-xl border border-muted bg-muted/30 p-3 text-xs text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-sm">
           <div className="flex items-center gap-2">
-            <span className="font-bold">免费体验模式：</span>
-            <span>未激活商业版仅支持添加 1 台服务器（当前已添加 {nodes.length}/1 台）。添加更多服务器请前往左侧【商业授权】激活。</span>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${licenseStatus.active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" : "bg-amber-500/10 text-amber-600 border border-amber-500/20"}`}>
+              {licenseStatus.plan_name || (licenseStatus.active ? "商业版" : "免费体验版")}
+            </span>
+            <span>
+              服务器纳管配额：<strong>{nodes.length} / {licenseStatus.max_servers || licenseStatus.limits?.max_servers || (licenseStatus.active ? 5 : 1)} 台</strong>
+              {nodes.length >= (licenseStatus.max_servers || licenseStatus.limits?.max_servers || (licenseStatus.active ? 5 : 1)) && (
+                <span className="text-amber-500 font-medium ml-1.5">(配额已满，升级套餐以添加更多)</span>
+              )}
+            </span>
           </div>
+          {!licenseStatus.active && (
+            <span className="text-amber-600 dark:text-amber-400 font-medium shrink-0">
+              免费版限额 1 台，前往【商业授权】激活可解锁更多服务器
+            </span>
+          )}
         </div>
       )}
       {refusal && <p className="text-sm text-muted-foreground">{refusal}</p>}
@@ -1034,8 +1046,14 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
           variant="outline" 
           disabled={!!refusal} 
           onClick={() => {
-            if (licenseStatus && !licenseStatus.active && nodes.length >= 1) {
-              toast.error("免费版仅支持添加 1 台服务器，批量添加请先激活商业授权！")
+            if (licenseStatus?.type === "revoked") {
+              toast.error("当前商业许可证已被授权中心吊销冻结，禁止添加服务器！")
+              return
+            }
+            const maxServers = licenseStatus?.max_servers || licenseStatus?.limits?.max_servers || (licenseStatus?.active ? 5 : 1)
+            if (nodes.length >= maxServers) {
+              const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
+              toast.error(`当前【${planName}】配额已满（上限 ${maxServers} 台服务器，当前已建 ${nodes.length} 台），添加更多服务器请升级商业套餐！`)
               return
             }
             setRegistering(true)
@@ -1046,8 +1064,14 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
         <Button 
           disabled={!!refusal} 
           onClick={() => {
-            if (licenseStatus && !licenseStatus.active && nodes.length >= 1) {
-              toast.error("免费版仅支持添加 1 台服务器，添加更多服务器请前往左侧【商业授权】激活！")
+            if (licenseStatus?.type === "revoked") {
+              toast.error("当前商业许可证已被授权中心吊销冻结，禁止添加服务器！")
+              return
+            }
+            const maxServers = licenseStatus?.max_servers || licenseStatus?.limits?.max_servers || (licenseStatus?.active ? 5 : 1)
+            if (nodes.length >= maxServers) {
+              const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
+              toast.error(`当前【${planName}】配额已满（上限 ${maxServers} 台服务器，当前已建 ${nodes.length} 台），添加更多服务器请前往左侧【商业授权】升级商业套餐！`)
               return
             }
             setCreating(true)
@@ -2348,6 +2372,9 @@ export function Admin({
             </button>
           )
         })}
+        <div className="mt-4 hidden pt-3 md:block border-t border-border/40 text-[11px] text-muted-foreground/60 px-3">
+          ProxyProbe <span className="font-mono text-primary/70 font-medium">v2.0.0</span>
+        </div>
       </nav>
 
       <div className="min-w-0 flex-1">

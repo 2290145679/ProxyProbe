@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { 
   GitFork, Layers, Plus, RefreshCw, Copy, Check, Trash2, 
-  QrCode, Box, Activity, Download, AlertCircle, ArrowRightLeft, AlertTriangle
+  QrCode, Box, Activity, Download, AlertCircle, ArrowRightLeft
 } from "lucide-react"
 import { toast } from "sonner"
 import QRCode from "qrcode"
@@ -321,8 +321,15 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     : (isSingboxProto ? Boolean(currentSelectedServer?.singbox_installed) : Boolean(currentSelectedServer?.xray_installed))
 
   const openCreateDialog = () => {
-    if (licenseStatus && !licenseStatus.active && proxyNodes.length >= 1) {
-      toast.error("免费版仅支持创建 1 个代理节点，添加更多节点请前往左侧【商业授权】激活商业版！")
+    if (licenseStatus?.type === "revoked") {
+      toast.error("当前商业许可证已被授权中心吊销冻结，禁止创建新节点！")
+      return
+    }
+
+    const maxNodes = licenseStatus?.max_nodes || licenseStatus?.limits?.max_nodes || (licenseStatus?.active ? 12 : 1)
+    if (proxyNodes.length >= maxNodes) {
+      const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
+      toast.error(`当前【${planName}】配额已满（上限 ${maxNodes} 个节点，当前已建 ${proxyNodes.length} 个），添加更多节点请升级商业套餐！`)
       return
     }
 
@@ -751,17 +758,24 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
       {/* Bottom Card: 已配置的代理节点 */}
       <Card className="rounded-xl border bg-card shadow-sm overflow-hidden">
-        {licenseStatus && !licenseStatus.active && (
-          <div className="bg-amber-500/10 border-b border-amber-500/20 px-5 py-3 text-xs text-amber-800 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        {licenseStatus && (
+          <div className="bg-muted/30 border-b px-5 py-2.5 text-xs text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="size-4 text-amber-500 shrink-0" />
+              <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${licenseStatus.active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" : "bg-amber-500/10 text-amber-600 border border-amber-500/20"}`}>
+                {licenseStatus.plan_name || (licenseStatus.active ? "商业版" : "免费体验版")}
+              </span>
               <span>
-                <strong>免费体验模式：</strong>未激活商业版仅支持体验 1 个代理节点与 1 个用户（当前已建 {proxyNodes.length}/1 节点）。解锁无限节点与用户请激活商业授权。
+                代理节点配额：<strong>{proxyNodes.length} / {licenseStatus.max_nodes || licenseStatus.limits?.max_nodes || (licenseStatus.active ? 12 : 1)} 个</strong>
+                {proxyNodes.length >= (licenseStatus.max_nodes || licenseStatus.limits?.max_nodes || (licenseStatus.active ? 12 : 1)) && (
+                  <span className="text-amber-500 font-medium ml-1.5">(配额已满，升级套餐以添加更多)</span>
+                )}
               </span>
             </div>
-            <span className="font-semibold text-amber-600 dark:text-amber-400 shrink-0">
-              前往【商业授权】激活
-            </span>
+            {!licenseStatus.active && (
+              <span className="text-amber-600 dark:text-amber-400 font-medium shrink-0">
+                免费版限额 1 节点，激活商业版解锁更高配额
+              </span>
+            )}
           </div>
         )}
         <div className="p-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b bg-card">
