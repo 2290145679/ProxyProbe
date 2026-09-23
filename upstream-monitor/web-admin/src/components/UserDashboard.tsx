@@ -241,7 +241,7 @@ export function UserDashboard({
         )}
 
         {/* 卡片 1：流量与配额状态概览 */}
-        <Card className="p-6 space-y-5 border shadow-sm">
+        <Card className="p-4 sm:p-6 space-y-4 sm:space-y-5 border shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
@@ -323,9 +323,9 @@ export function UserDashboard({
         </Card>
 
         {/* 卡片 2：专属聚合订阅与一键导入 */}
-        <Card className="p-6 space-y-5 border shadow-sm">
-          <div className="border-b pb-4 space-y-1">
-            <h2 className="text-lg font-bold flex items-center gap-2">
+        <Card className="p-4 sm:p-6 space-y-4 sm:space-y-5 border shadow-sm">
+          <div className="border-b pb-3 sm:pb-4 space-y-1">
+            <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
               <Zap className="size-4 text-amber-500" /> 一键聚合订阅
             </h2>
             <p className="text-xs text-muted-foreground">
@@ -333,50 +333,71 @@ export function UserDashboard({
             </p>
           </div>
 
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <Input
-                readOnly
-                value={user.sub_url}
-                className="font-mono text-xs h-9 bg-muted/40"
-              />
-              <Button onClick={copySubUrl} size="sm" className="h-9 gap-1.5 shrink-0 text-xs">
-                <Copy className="size-3.5" /> 复制订阅
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setQrOpen(true)}
-                className="h-9 gap-1.5 shrink-0 text-xs"
-                title="手机扫码导入"
-              >
-                <QrCode className="size-3.5" /> 扫码
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleResetToken}
-                disabled={resettingToken}
-                className="h-9 gap-1.5 shrink-0 text-xs text-muted-foreground hover:text-foreground"
-                title="若订阅泄漏，可一键重置"
-              >
-                <RefreshCw className={`size-3.5 ${resettingToken ? "animate-spin" : ""}`} /> 重置
-              </Button>
+          <div className="space-y-4">
+            {/* 订阅地址输入框与主要操作按钮 */}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1 min-w-0">
+                <Input
+                  readOnly
+                  value={user.sub_url}
+                  className="font-mono text-xs h-10 bg-muted/40 pr-24 select-all"
+                />
+                <Button
+                  onClick={copySubUrl}
+                  size="sm"
+                  className="absolute right-1 top-1 h-8 px-3 text-xs gap-1.5"
+                >
+                  <Copy className="size-3.5" /> 复制链接
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setQrOpen(true)}
+                  className="flex-1 sm:flex-initial h-10 px-3 gap-1.5 text-xs"
+                  title="手机扫码导入"
+                >
+                  <QrCode className="size-3.5 text-primary" />
+                  <span>扫码导入</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleResetToken}
+                  disabled={resettingToken}
+                  className="flex-1 sm:flex-initial h-10 px-3 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  title="若订阅泄漏，可一键重置"
+                >
+                  <RefreshCw className={`size-3.5 ${resettingToken ? "animate-spin" : ""}`} />
+                  <span>重置链接</span>
+                </Button>
+              </div>
             </div>
 
             {/* 客户端快捷导入按钮组 */}
-            <div className="pt-2">
-              <div className="text-xs font-medium text-muted-foreground mb-2.5">快捷一键导入到客户端：</div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div className="pt-2 border-t border-border/50">
+              <div className="text-xs font-medium text-muted-foreground mb-3 flex items-center justify-between">
+                <span>快捷一键导入到客户端：</span>
+                <span className="text-[11px] text-muted-foreground/80 hidden sm:inline">点击直接唤起客户端</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                 <Button
                   variant="outline"
                   size="sm"
                   asChild
-                  className="h-9 text-xs justify-start gap-2 hover:border-primary/50"
+                  className="h-11 px-3 text-xs justify-between hover:border-primary/50 hover:bg-accent/40 transition-colors"
                 >
                   <a href={`clash://install-config?url=${encodeURIComponent(user.clash_url || (user.sub_url + (user.sub_url.includes('?') ? '&clash=1' : '?clash=1')))}&name=${encodeURIComponent(subName)}`}>
-                    <Send className="size-3.5 text-blue-500" />
-                    <span>导入 Clash / Verge</span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Send className="size-4 text-blue-500 shrink-0" />
+                      <div className="flex flex-col text-left leading-tight min-w-0">
+                        <span className="font-medium truncate">Clash / Verge</span>
+                        <span className="text-[10px] text-muted-foreground truncate">一键导入配置</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium shrink-0">导入</span>
                   </a>
                 </Button>
 
@@ -384,11 +405,17 @@ export function UserDashboard({
                   variant="outline"
                   size="sm"
                   asChild
-                  className="h-9 text-xs justify-start gap-2 hover:border-primary/50"
+                  className="h-11 px-3 text-xs justify-between hover:border-primary/50 hover:bg-accent/40 transition-colors"
                 >
                   <a href={`shadowrocket://add/sub://${btoa(user.sub_url)}?title=${encodeURIComponent(subName)}`}>
-                    <Smartphone className="size-3.5 text-indigo-500" />
-                    <span>导入 小火箭 (Shadowrocket)</span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Smartphone className="size-4 text-indigo-500 shrink-0" />
+                      <div className="flex flex-col text-left leading-tight min-w-0">
+                        <span className="font-medium truncate">小火箭 Shadowrocket</span>
+                        <span className="text-[10px] text-muted-foreground truncate">iOS 专属导入</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-medium shrink-0">导入</span>
                   </a>
                 </Button>
 
@@ -396,11 +423,17 @@ export function UserDashboard({
                   variant="outline"
                   size="sm"
                   asChild
-                  className="h-9 text-xs justify-start gap-2 hover:border-primary/50"
+                  className="h-11 px-3 text-xs justify-between hover:border-primary/50 hover:bg-accent/40 transition-colors"
                 >
                   <a href={`sing-box://import-remote-profile?url=${encodeURIComponent(user.sub_url)}#${encodeURIComponent(subName)}`}>
-                    <Globe className="size-3.5 text-amber-500" />
-                    <span>导入 Sing-box</span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Globe className="size-4 text-amber-500 shrink-0" />
+                      <div className="flex flex-col text-left leading-tight min-w-0">
+                        <span className="font-medium truncate">Sing-box</span>
+                        <span className="text-[10px] text-muted-foreground truncate">跨平台通用核心</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium shrink-0">导入</span>
                   </a>
                 </Button>
 
@@ -408,10 +441,16 @@ export function UserDashboard({
                   variant="outline"
                   size="sm"
                   onClick={copySubUrl}
-                  className="h-9 text-xs justify-start gap-2 hover:border-primary/50"
+                  className="h-11 px-3 text-xs justify-between hover:border-primary/50 hover:bg-accent/40 transition-colors"
                 >
-                  <Activity className="size-3.5 text-emerald-500" />
-                  <span>复制到 v2rayN / Nekobox</span>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Activity className="size-4 text-emerald-500 shrink-0" />
+                    <div className="flex flex-col text-left leading-tight min-w-0">
+                      <span className="font-medium truncate">v2rayN / Nekobox</span>
+                      <span className="text-[10px] text-muted-foreground truncate">点击复制订阅链接</span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium shrink-0">复制</span>
                 </Button>
               </div>
             </div>
@@ -419,7 +458,7 @@ export function UserDashboard({
         </Card>
 
         {/* 卡片 3：可用节点列表与延迟测试 */}
-        <Card className="p-6 space-y-5 border shadow-sm">
+        <Card className="p-4 sm:p-6 space-y-4 sm:space-y-5 border shadow-sm">
           <div className="flex items-center justify-between border-b pb-4">
             <div className="space-y-1">
               <h2 className="text-lg font-bold flex items-center gap-2">
