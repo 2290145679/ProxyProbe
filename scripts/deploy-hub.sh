@@ -63,6 +63,8 @@ if [ -z "${DOMAIN:-}" ]; then
   read -r -p "  请输入你的域名（已解析到本机 IP）: " DOMAIN </dev/tty || true
 fi
 [ -z "$DOMAIN" ] && die "域名不能为空"
+DOMAIN=$(echo "$DOMAIN" | tr -d '[:space:]' | sed -E 's#^https?://##' | sed 's#/.*$##')
+[ -z "$DOMAIN" ] && die "解析后的有效域名为空，请检查输入"
 
 if [ -z "${ADMIN_PASS:-}" ]; then
   read -r -p "  请输入管理员密码（留空则随机生成）: " ADMIN_PASS </dev/tty || true
@@ -175,6 +177,10 @@ chown -R monitor:monitor "$DATA" 2>/dev/null || true
 chmod 775 "$DATA" 2>/dev/null || true
 
 # 创建 monitor-hub systemd 服务
+systemctl disable monitor-hub.service 2>/dev/null || true
+rm -f /etc/systemd/system/multi-user.target.wants/monitor-hub.service
+rm -f /etc/systemd/system/monitor-hub.service
+
 cat > /etc/systemd/system/monitor-hub.service << EOF
 [Unit]
 Description=ProxyProbe Monitor Hub
@@ -195,9 +201,13 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 
+chmod 644 /etc/systemd/system/monitor-hub.service
 systemctl daemon-reload
-systemctl enable monitor-hub
-systemctl restart monitor-hub
+systemctl enable --force monitor-hub.service 2>/dev/null || {
+  mkdir -p /etc/systemd/system/multi-user.target.wants
+  ln -sf /etc/systemd/system/monitor-hub.service /etc/systemd/system/multi-user.target.wants/monitor-hub.service
+}
+systemctl restart monitor-hub.service
 sleep 2
 info "monitor-hub 已启动（端口 28080）"
 
@@ -246,6 +256,10 @@ fi
 # ---- 步骤 5: 配置 proxy-manager 服务 ----
 header "步骤 5/8 · 启动代理管理服务 (proxy-manager)"
 
+systemctl disable proxy-manager.service 2>/dev/null || true
+rm -f /etc/systemd/system/multi-user.target.wants/proxy-manager.service
+rm -f /etc/systemd/system/proxy-manager.service
+
 cat > /etc/systemd/system/proxy-manager.service << 'PM_EOF'
 [Unit]
 Description=ProxyProbe Proxy Manager
@@ -262,9 +276,13 @@ RestartSec=3
 WantedBy=multi-user.target
 PM_EOF
 
+chmod 644 /etc/systemd/system/proxy-manager.service
 systemctl daemon-reload
-systemctl enable proxy-manager
-systemctl restart proxy-manager
+systemctl enable --force proxy-manager.service 2>/dev/null || {
+  mkdir -p /etc/systemd/system/multi-user.target.wants
+  ln -sf /etc/systemd/system/proxy-manager.service /etc/systemd/system/multi-user.target.wants/proxy-manager.service
+}
+systemctl restart proxy-manager.service
 sleep 2
 info "proxy-manager 已启动（端口 28090）"
 
@@ -318,8 +336,11 @@ $DOMAIN {
 CADDY_EOF
 
 systemctl daemon-reload
-systemctl enable caddy
-systemctl restart caddy
+systemctl enable --force caddy.service 2>/dev/null || {
+  mkdir -p /etc/systemd/system/multi-user.target.wants
+  ln -sf /etc/systemd/system/caddy.service /etc/systemd/system/multi-user.target.wants/caddy.service
+}
+systemctl restart caddy.service
 sleep 3
 info "Caddy 已配置并启动"
 
@@ -336,12 +357,17 @@ for i in $(seq 1 30); do
 done
 
 if [ -f "$_DB" ]; then
-  python3 - << PYEOF
-import sqlite3, hashlib, secrets
-db = sqlite3.connect("$_DB")
+  ADMIN_PASS="$ADMIN_PASS" DB_PATH="$_DB" python3 - << 'PYEOF'
+import os, sqlite3, hashlib, secrets
+db_path = os.environ.get("DB_PATH", "/opt/monitor/data/monitor.db")
+admin_pass = os.environ.get("ADMIN_PASS", "")
+if not admin_pass:
+    exit(0)
+
+db = sqlite3.connect(db_path)
 try:
     salt = secrets.token_hex(16)
-    h = hashlib.sha256((salt + "${ADMIN_PASS}").encode("utf-8")).hexdigest()
+    h = hashlib.sha256((salt + admin_pass).encode("utf-8")).hexdigest()
     pwd_hash = f"{salt}:{h}"
     db.execute("UPDATE proxy_user SET password_hash=? WHERE username='admin'", (pwd_hash,))
 
@@ -349,7 +375,8 @@ try:
     try:
         from argon2 import PasswordHasher
         ph = PasswordHasher()
-        argon_h = ph.hash("${ADMIN_PASS}")
+        argon_h = ph.hash(admin_pass)
+        db.execute("CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT)")
         db.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('admin_password_hash', ?)", (argon_h,))
     except Exception as err:
         print(f"  [!] Argon2 哈希设置跳过: {err}")
