@@ -292,6 +292,7 @@ change_domain() {
     echo ""
     echo -e "${BOLD}─── 修改绑定域名或公网 IP ───${N}"
     echo -e "  当前地址: ${BOLD}${CUR_DOMAIN}${N} ($([ "$CUR_IS_IP" = "1" ] && echo "纯 IP 模式" || echo "域名模式"))"
+    echo -e "  当前端口: ${BOLD}${CUR_WEB_PORT}${N}"
     echo -e "  ${D}💡 提示: 若输入域名，将启用 Caddy 自动申请 SSL 证书 (HTTPS)；若输入 IP，将使用纯 IP 模式 (HTTP)。${N}"
     echo ""
     read -r -p "  请输入新的域名或服务器公网 IP: " NEW_DOM
@@ -306,45 +307,190 @@ change_domain() {
         NEW_IS_IP=1
     fi
 
-    info "正在更新 Caddyfile 与系统服务配置..."
-    if [ "$NEW_IS_IP" = "1" ]; then
-        # 切换到纯 IP 模式 (HTTP)
-        sed -i '/email admin@/d' /etc/caddy/Caddyfile 2>/dev/null || true
-        # 替换站点行
-        sed -i -E "s/^(http:\/\/)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/http:\/\/${NEW_DOM}:${CUR_WEB_PORT} {/" /etc/caddy/Caddyfile
-        # 移除 monitor-hub 的 --site 参数
-        sed -i -E "s/ --site https?:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?//" /etc/systemd/system/monitor-hub.service
-    else
-        # 切换到域名模式 (HTTPS)
-        if ! grep -q "email admin@" /etc/caddy/Caddyfile; then
-            sed -i "1i {\\n    email admin@${NEW_DOM}\\n}" /etc/caddy/Caddyfile
+    # 智能端口适配
+    TARGET_PORT="$CUR_WEB_PORT"
+    if [ "$CUR_IS_IP" = "1" ] && [ "$NEW_IS_IP" = "0" ]; then
+        # 从纯 IP 模式切换到 域名模式
+        if [ "$CUR_WEB_PORT" = "80" ]; then
+            TARGET_PORT="443"
+            info "检测到从纯 IP 切换至域名，外部端口已自动由 80 调整为标准 HTTPS 端口 443"
         else
-            sed -i -E "s/email admin@[a-zA-Z0-9.-]+/email admin@${NEW_DOM}/" /etc/caddy/Caddyfile
+            echo ""
+            read -r -p "  检测到您正在切换至域名模式，是否使用标准 HTTPS 443 端口？[Y/n]: " PORT_ANS
+            case "$PORT_ANS" in
+                [nN][oO]|[nN]) TARGET_PORT="$CUR_WEB_PORT" ;;
+                *) TARGET_PORT="443" ;;
+            esac
         fi
+    elif [ "$CUR_IS_IP" = "0" ] && [ "$NEW_IS_IP" = "1" ]; then
+        # 从 域名模式切换到 纯 IP 模式
         if [ "$CUR_WEB_PORT" = "443" ]; then
-            sed -i -E "s/^(http:\/\/)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${NEW_DOM} {/" /etc/caddy/Caddyfile
-            if grep -q -- '--site' /etc/systemd/system/monitor-hub.service; then
-                sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${NEW_DOM}/" /etc/systemd/system/monitor-hub.service
-            else
-                sed -i -E "s/(ExecStart=.*monitor-hub [^\n]+)/\1 --site https:\/\/${NEW_DOM}/" /etc/systemd/system/monitor-hub.service
-            fi
-        else
-            sed -i -E "s/^(http:\/\/)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${NEW_DOM}:${CUR_WEB_PORT} {/" /etc/caddy/Caddyfile
-            if grep -q -- '--site' /etc/systemd/system/monitor-hub.service; then
-                sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${NEW_DOM}:${CUR_WEB_PORT}/" /etc/systemd/system/monitor-hub.service
-            else
-                sed -i -E "s/(ExecStart=.*monitor-hub [^\n]+)/\1 --site https:\/\/${NEW_DOM}:${CUR_WEB_PORT}/" /etc/systemd/system/monitor-hub.service
-            fi
+            TARGET_PORT="80"
+            info "检测到从域名切换至纯 IP，外部端口已自动由 443 调整为标准 HTTP 端口 80"
         fi
     fi
+
+    info "正在重新生成 Caddyfile 与系统服务配置..."
+    mkdir -p /etc/caddy
+
+    if [ "$NEW_IS_IP" = "1" ]; then
+        # 纯 IP 模式配置 (HTTP)
+        cat > /etc/caddy/Caddyfile << CADDY_EOF
+http://${NEW_DOM}:${TARGET_PORT} {
+    # 代理管理 API（订阅、用户、节点等）
+    handle /api/proxy/* {
+        reverse_proxy 127.0.0.1:${CUR_PM_PORT}
+    }
+
+    # 子节点安装脚本（由 proxy-manager 动态生成）
+    handle /proxy-agent.sh {
+        reverse_proxy 127.0.0.1:${CUR_PM_PORT}
+    }
+
+    # 子节点探针安装脚本与离线二进制分发
+    handle /install.sh {
+        root * ${SCRIPTS_DIR}
+        try_files /install.sh
+        file_server
+    }
+    handle /Xray-linux-*.zip {
+        root * ${SCRIPTS_DIR}
+        file_server
+    }
+    handle /sing-box-linux-*.tar.gz {
+        root * ${SCRIPTS_DIR}
+        file_server
+    }
+    handle /realm-*.tar.gz {
+        root * ${SCRIPTS_DIR}
+        file_server
+    }
+
+    # 管理后台前端（React SPA）
+    redir /admin /admin/
+    handle_path /admin* {
+        root * ${WEB_DIST}
+        try_files {path} /index.html
+        file_server
+    }
+
+    # 探针主控（纯 IP 模式：注入伪装 Origin 头与 Sec-Fetch-Site 满足安全校验）
+    handle {
+        reverse_proxy 127.0.0.1:${CUR_HUB_PORT} {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up Origin https://probe.local
+            header_up Sec-Fetch-Site same-origin
+        }
+    }
+}
+CADDY_EOF
+
+        # 移除 monitor-hub 的 --site 参数
+        sed -i -E "s/ --site https?:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?//" /etc/systemd/system/monitor-hub.service
+
+    else
+        # 域名模式配置 (HTTPS 自动申请证书)
+        CADDY_SITE="${NEW_DOM}"
+        [ "$TARGET_PORT" != "443" ] && CADDY_SITE="${NEW_DOM}:${TARGET_PORT}"
+
+        cat > /etc/caddy/Caddyfile << CADDY_EOF
+{
+    email admin@${NEW_DOM}
+}
+
+${CADDY_SITE} {
+    # 代理管理 API（订阅、用户、节点等）
+    handle /api/proxy/* {
+        reverse_proxy 127.0.0.1:${CUR_PM_PORT}
+    }
+
+    # 子节点安装脚本（由 proxy-manager 动态生成）
+    handle /proxy-agent.sh {
+        reverse_proxy 127.0.0.1:${CUR_PM_PORT}
+    }
+
+    # 子节点探针安装脚本与离线二进制分发
+    handle /install.sh {
+        root * ${SCRIPTS_DIR}
+        try_files /install.sh
+        file_server
+    }
+    handle /Xray-linux-*.zip {
+        root * ${SCRIPTS_DIR}
+        file_server
+    }
+    handle /sing-box-linux-*.tar.gz {
+        root * ${SCRIPTS_DIR}
+        file_server
+    }
+    handle /realm-*.tar.gz {
+        root * ${SCRIPTS_DIR}
+        file_server
+    }
+
+    # 管理后台前端（React SPA）
+    redir /admin /admin/
+    handle_path /admin* {
+        root * ${WEB_DIST}
+        try_files {path} /index.html
+        file_server
+    }
+
+    # 探针主控（状态页 + WebSocket 心跳 + API）
+    handle {
+        reverse_proxy 127.0.0.1:${CUR_HUB_PORT}
+    }
+}
+CADDY_EOF
+
+        # 更新 monitor-hub.service 的 --site 参数
+        if grep -q -- '--site' /etc/systemd/system/monitor-hub.service; then
+            sed -i -E "s/--site https?:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${CADDY_SITE}/" /etc/systemd/system/monitor-hub.service
+        else
+            sed -i -E "s/(ExecStart=.*monitor-hub [^\n]+)/\1 --site https:\/\/${CADDY_SITE}/" /etc/systemd/system/monitor-hub.service
+        fi
+
+        # 域名申请证书必须放行 80 端口（Caddy HTTP-01 验证挑战）
+        iptables -I INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+        command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp >/dev/null 2>&1 || true
+        command -v firewall-cmd >/dev/null 2>&1 && {
+            firewall-cmd --add-port="80/tcp" --permanent 2>/dev/null || true
+            firewall-cmd --reload 2>/dev/null || true
+        }
+    fi
+
+    # 放行业务端口
+    iptables -I INPUT -p tcp --dport "$TARGET_PORT" -j ACCEPT 2>/dev/null || true
+    iptables -I INPUT -p udp --dport "$TARGET_PORT" -j ACCEPT 2>/dev/null || true
+    command -v ufw >/dev/null 2>&1 && ufw allow "$TARGET_PORT" >/dev/null 2>&1 || true
+    command -v firewall-cmd >/dev/null 2>&1 && {
+        firewall-cmd --add-port="${TARGET_PORT}/tcp" --permanent 2>/dev/null || true
+        firewall-cmd --reload 2>/dev/null || true
+    }
 
     systemctl daemon-reload
     systemctl restart monitor-hub
     systemctl restart caddy
     sleep 3
-    info "地址已更新为: ${BOLD}${NEW_DOM}${N}"
-    [ "$NEW_IS_IP" = "1" ] && info "纯 IP 模式已生效 (HTTP)！" || info "域名 HTTPS 模式已生效，Caddy 已开始自动申请新 SSL 证书！"
+    info "地址已成功更新为: ${BOLD}${NEW_DOM}${N} (端口: ${TARGET_PORT})"
+    if [ "$NEW_IS_IP" = "1" ]; then
+        info "纯 IP 模式已生效 (HTTP)！"
+        echo ""
+        local site_suffix=""
+        [ "$TARGET_PORT" != "80" ] && site_suffix=":$TARGET_PORT"
+        echo -e "  探针公开大屏: ${C}http://${NEW_DOM}${site_suffix}/${N}"
+        echo -e "  管理控制面板: ${C}http://${NEW_DOM}${site_suffix}/admin${N}"
+    else
+        info "域名 HTTPS 模式已生效，Caddy 已开始自动申请新 SSL 证书！"
+        echo ""
+        local site_suffix=""
+        [ "$TARGET_PORT" != "443" ] && site_suffix=":$TARGET_PORT"
+        echo -e "  探针公开大屏: ${C}https://${NEW_DOM}${site_suffix}/${N}"
+        echo -e "  管理控制面板: ${C}https://${NEW_DOM}${site_suffix}/admin${N}"
+    fi
 }
+
 
 # ---- 8. 重置/修改管理员密码 ----
 reset_admin_password() {

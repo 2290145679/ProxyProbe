@@ -12,12 +12,48 @@ import hashlib
 import uuid
 import sqlite3
 import threading
+import hmac
+import secrets
 import urllib.request
 import urllib.error
 
 # 内置公钥 (Ed25519 32-byte raw hex)
 MASTER_PUBLIC_KEY_HEX = "6637fdfd836e83fd31aa7c02698ab615d882bdb7533aaf2f83359480a1a5a4c3"
-DEFAULT_AUTH_SERVER = "http://156.226.173.102:18888"
+
+# 官方预留固定授权中心域名与多重容灾候选列表 (在线优先，域名解析与备用 IP 双轨保障)
+DEFAULT_AUTH_DOMAIN = "auth.yohoo.xyz"
+DEFAULT_AUTH_SERVER = os.environ.get("PROXYPROBE_AUTH_SERVER", f"http://{DEFAULT_AUTH_DOMAIN}")
+AUTH_SERVER_CANDIDATES = [
+    f"http://{DEFAULT_AUTH_DOMAIN}:18888",
+    f"http://{DEFAULT_AUTH_DOMAIN}",
+    f"https://{DEFAULT_AUTH_DOMAIN}",
+    "http://156.226.173.102:18888",
+    "http://127.0.0.1:18888"
+]
+
+# 80-bit 紧凑自包含防伪短卡密系统参数 (Base32 无歧义大写)
+BASE32_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+BASE32_MAP = {c: i for i, c in enumerate(BASE32_CHARS)}
+SHORT_CODE_SECRET = b"ProxyProbe-SelfContained-License-Key-2026-Secret"
+
+PLAN_INT_MAP = {
+    1: "stardust",
+    2: "planet",
+    3: "star",
+    4: "galaxy",
+    5: "universe"
+}
+PLAN_STR_TO_INT = {v: k for k, v in PLAN_INT_MAP.items()}
+
+# 套餐规格标准定义
+PLAN_MAP = {
+    "free": {"name": "免费体验版", "max_servers": 1, "max_nodes": 1, "max_users": 1},
+    "stardust": {"name": "星尘套餐", "max_servers": 3, "max_nodes": 6, "max_users": 6},
+    "planet": {"name": "行星套餐", "max_servers": 5, "max_nodes": 12, "max_users": 12},
+    "star": {"name": "恒星套餐", "max_servers": 8, "max_nodes": 18, "max_users": 18},
+    "galaxy": {"name": "星系套餐", "max_servers": 12, "max_nodes": 30, "max_users": 30},
+    "universe": {"name": "宇宙套餐", "max_servers": 20, "max_nodes": 50, "max_users": 50},
+}
 
 # 尝试加载 cryptography 库，若无则使用纯 Python Ed25519 校验器
 try:
@@ -232,6 +268,85 @@ def parse_and_verify_license(license_key: str, public_key_hex: str = MASTER_PUBL
 
 
 # =============================================================================
+# 80-bit 紧凑自包含短卡密编码与解码引擎 (在线优先，离线兜底核心)
+# =============================================================================
+def encode_short_code(plan_type_int: int, days: int, machine_id_str: str = "ANY") -> str:
+    """生成 80-bit 紧凑自包含防伪短卡密: PP-XXXX-XXXX-XXXX-XXXX"""
+    ver = 0  # 2 bits
+    plan = plan_type_int & 0x7  # 3 bits
+    d = days & 0x7FF  # 11 bits (0..2047, 0 = 永久)
+
+    mid_clean = (machine_id_str or "").strip().upper()
+    if mid_clean in ("", "ANY"):
+        mid_hash = 0xFFFF
+    else:
+        mid_hash = int(hashlib.md5(mid_clean.encode("utf-8")).hexdigest()[:4], 16)
+
+    nonce = secrets.randbelow(65536)  # 16 bits
+
+    # 48 bits 核心负载数据
+    data_int = (ver << 46) | (plan << 43) | (d << 32) | (mid_hash << 16) | nonce
+    data_bytes = data_int.to_bytes(6, byteorder="big")
+
+    mac_bytes = hmac.new(SHORT_CODE_SECRET, data_bytes, hashlib.sha256).digest()[:4]
+    mac_int = int.from_bytes(mac_bytes, byteorder="big")
+
+    total_int = (data_int << 32) | mac_int
+
+    out = []
+    val = total_int
+    for _ in range(16):
+        out.append(BASE32_CHARS[val & 0x1F])
+        val >>= 5
+    out.reverse()
+    s = "".join(out)
+    return f"PP-{s[:4]}-{s[4:8]}-{s[8:12]}-{s[12:16]}"
+
+
+def decode_short_code(code_str: str, current_mid: str = "") -> tuple:
+    """
+    解析并离线校验 80-bit 紧凑防伪短卡密
+    返回 (dict, err_msg)
+    """
+    clean_code = code_str.replace("PP-", "").replace("-", "").upper().strip()
+    if len(clean_code) != 16 or any(c not in BASE32_MAP for c in clean_code):
+        return None, "无效的短卡密格式 (应为 PP-XXXX-XXXX-XXXX-XXXX)"
+
+    val = 0
+    for c in clean_code:
+        val = (val << 5) | BASE32_MAP[c]
+
+    mac_int = val & 0xFFFFFFFF
+    data_int = val >> 32
+    data_bytes = data_int.to_bytes(6, byteorder="big")
+
+    expected_mac = int.from_bytes(hmac.new(SHORT_CODE_SECRET, data_bytes, hashlib.sha256).digest()[:4], byteorder="big")
+    if mac_int != expected_mac:
+        return None, "卡密防伪校验未通过（非法伪造或卡密输入有误）"
+
+    ver = (data_int >> 46) & 0x3
+    plan_int = (data_int >> 43) & 0x7
+    days = (data_int >> 32) & 0x7FF
+    mid_hash = (data_int >> 16) & 0xFFFF
+
+    plan_type = PLAN_INT_MAP.get(plan_int)
+    if not plan_type:
+        return None, f"未知套餐标识 ({plan_int})"
+
+    if mid_hash != 0xFFFF:
+        curr_clean = (current_mid or "").strip().upper()
+        curr_hash = int(hashlib.md5(curr_clean.encode("utf-8")).hexdigest()[:4], 16)
+        if mid_hash != curr_hash:
+            return None, "该卡密已锁定绑定至特定机器，与当前服务器机器码不匹配"
+
+    return {
+        "plan_type": plan_type,
+        "days": days,
+        "bound_any": mid_hash == 0xFFFF
+    }, ""
+
+
+# =============================================================================
 # 数据库存储与时钟水印防篡改
 # =============================================================================
 def init_license_tables(db_conn):
@@ -334,15 +449,52 @@ def get_current_license_status(db_conn) -> dict:
             "days_left": 0
         }
 
-    # 4. 离线公钥验签 (若为 23 位短激活码，验证本地缓存的 raw_token 签名凭据)
-    token_to_verify = lic_key
+    # 4. 离线公钥验签 (支持完整非对称凭据或 80-bit 自包含紧凑短卡密)
+    payload = None
+    err = ""
+    now = int(time.time())
+
     if lic_key.startswith("PP-") and "." not in lic_key:
+        # 优先读取在线打卡缓存的 raw_token 非对称凭证
         cur.execute("SELECT value FROM setting WHERE key='license_raw_token'")
         t_row = cur.fetchone()
-        token_to_verify = t_row[0].strip() if t_row and t_row[0] else ""
+        cached_token = t_row[0].strip() if t_row and t_row[0] else ""
+        if cached_token:
+            payload, err = parse_and_verify_license(cached_token)
 
-    payload, err = parse_and_verify_license(token_to_verify)
-    if err:
+        # 若无 raw_token 或验证异常，则启用 80-bit 紧凑防伪短码离线解算兜底
+        if not payload:
+            decoded, dec_err = decode_short_code(lic_key, mid)
+            if decoded:
+                cur.execute("SELECT value FROM setting WHERE key='license_activated_ts'")
+                act_row = cur.fetchone()
+                act_ts = int(act_row[0]) if act_row and act_row[0] and act_row[0].isdigit() else now
+
+                days = decoded["days"]
+                expire_at = (act_ts + days * 86400) if days > 0 else 0
+
+                if expire_at > 0 and now > expire_at:
+                    err = f"短卡密许可证已过期（到期时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(expire_at))}）"
+                else:
+                    plan_info = PLAN_MAP.get(decoded["plan_type"], PLAN_MAP["planet"])
+                    payload = {
+                        "id": lic_key,
+                        "type": decoded["plan_type"],
+                        "customer": "商业授权 (双轨离线模式)",
+                        "machine_id": mid,
+                        "max_servers": plan_info["max_servers"],
+                        "max_nodes": plan_info["max_nodes"],
+                        "max_users": plan_info["max_users"],
+                        "issued_at": act_ts,
+                        "expire_at": expire_at
+                    }
+                    err = ""
+            else:
+                err = dec_err or err or "短卡密离线验证失败"
+    else:
+        payload, err = parse_and_verify_license(lic_key)
+
+    if err or not payload:
         return {
             "active": False,
             "type": "invalid",
@@ -350,7 +502,7 @@ def get_current_license_status(db_conn) -> dict:
             "max_servers": 0,
             "max_nodes": 0,
             "max_users": 0,
-            "message": err,
+            "message": err or "许可证解析异常",
             "machine_id": mid,
             "days_left": 0
         }
@@ -416,44 +568,68 @@ def save_license_key(db_conn, license_key: str, auth_url: str = DEFAULT_AUTH_SER
     # 1. 23 位专属短激活码模式 (形如 PP-XXXX-XXXX-XXXX-XXXX)
     if license_key.startswith("PP-") and "." not in license_key:
         curr_mid = get_machine_id()
-        try:
-            req_data = json.dumps({
-                "code": license_key,
-                "machine_id": curr_mid,
-                "timestamp": now
-            }).encode("utf-8")
-            req = urllib.request.Request(
-                f"{auth_url}/api/v1/license/activate_code",
-                data=req_data,
-                headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/2.0"}
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
 
-            if not body.get("ok"):
-                return False, body.get("message", "激活码校验未通过，请检查是否输入正确"), None
+        # 1.1 先对短码进行 80-bit 紧凑防伪解密预校验
+        decoded, dec_err = decode_short_code(license_key, curr_mid)
 
-            raw_token = body.get("raw_token")
-            # 离线公钥验签发号中枢签发的防伪凭证
-            payload, err = parse_and_verify_license(raw_token)
-            if err:
-                return False, f"授权中枢签名验证失败: {err}", None
+        # 1.2 在线优先激活：依次遍历授权中心候选列表 (优先域名 auth.yohoo.xyz，备用 IP)
+        candidate_urls = [auth_url] + [c for c in AUTH_SERVER_CANDIDATES if c != auth_url]
+        online_success = False
+        online_reject_msg = None
 
-            # 保存短码用于展示，保存 raw_token 用于离线安全守护
+        for srv in candidate_urls:
+            try:
+                req_data = json.dumps({
+                    "code": license_key,
+                    "machine_id": curr_mid,
+                    "timestamp": now
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{srv}/api/v1/license/activate_code",
+                    data=req_data,
+                    headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/2.0"}
+                )
+                with urllib.request.urlopen(req, timeout=2.5) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+
+                if body.get("ok"):
+                    raw_token = body.get("raw_token", "")
+                    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_key', ?)", (license_key,))
+                    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_raw_token', ?)", (raw_token,))
+                    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
+                    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_activated_ts', ?)", (str(now),))
+                    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
+                    db_conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'activate', 'online_success', ?)",
+                                    (now, f"License Code: {license_key} Plan: {body.get('plan_type')} via {srv}"))
+                    db_conn.commit()
+
+                    status = get_current_license_status(db_conn)
+                    return True, "商业许可证在线激活成功！", status
+                else:
+                    msg = body.get("message", "激活码校验未通过")
+                    # 明确已被中心吊销或被其他设备占用时，直接阻断
+                    if "吊销" in msg or "其他设备" in msg:
+                        return False, msg, None
+                    online_reject_msg = msg
+            except Exception:
+                continue
+
+        # 1.3 离线兜底激活：若授权服务器暂时离线/超时/更换服务器，自动启用双轨离线验签激活
+        if decoded:
             db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_key', ?)", (license_key,))
-            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_raw_token', ?)", (raw_token,))
+            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_raw_token', '')")
             db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
+            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_activated_ts', ?)", (str(now),))
             db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
-            db_conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'activate', 'success', ?)",
-                            (now, f"License Code: {license_key} Plan: {payload.get('type')}"))
+            db_conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'activate', 'offline_fallback', ?)",
+                            (now, f"License Code: {license_key} Plan: {decoded['plan_type']} (Offline Fallback)"))
             db_conn.commit()
 
             status = get_current_license_status(db_conn)
-            return True, "商业许可证激活成功！", status
-        except urllib.error.URLError as e:
-            return False, f"无法连接授权中心 ({auth_url})，请检查网络连接或使用完整离线密钥", None
-        except Exception as e:
-            return False, f"激活失败: {e}", None
+            plan_name = PLAN_MAP.get(decoded["plan_type"], {}).get("name", "商业版")
+            return True, f"商业许可证离线激活成功！(授权中心未联网，已自动启用双轨离线兜底：{plan_name})", status
+
+        return False, online_reject_msg or dec_err or "激活失败：无法连接授权中心且卡密离线校验未通过", None
 
     # 2. 离线非对称签名密钥模式 (PPLIC-...)
     payload, err = parse_and_verify_license(license_key)
@@ -464,12 +640,13 @@ def save_license_key(db_conn, license_key: str, auth_url: str = DEFAULT_AUTH_SER
     db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_key', ?)", (license_key,))
     db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_raw_token', ?)", (license_key,))
     db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
+    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_activated_ts', ?)", (str(now),))
     db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
     db_conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'activate', 'success', ?)",
                     (now, f"License ID: {payload.get('id')} Customer: {payload.get('customer')}"))
     db_conn.commit()
 
-    # 激活时立即触发一次打卡
+    # 激活时立即触发一次打卡尝试
     try:
         req_data = json.dumps({
             "license_key": license_key,
@@ -499,7 +676,7 @@ def save_license_key(db_conn, license_key: str, auth_url: str = DEFAULT_AUTH_SER
 # 在线心跳巡检与毫秒级黑名单同步
 # =============================================================================
 def ping_auth_server(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER) -> bool:
-    """单次在线心跳打卡与黑名单同步"""
+    """单次在线心跳打卡与黑名单同步 (优先走域名，失败自动容灾轮询候选服务器)"""
     try:
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
@@ -511,32 +688,41 @@ def ping_auth_server(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER) -> bool:
             return False
 
         mid = get_machine_id()
+        now = int(time.time())
         req_data = json.dumps({
             "license_key": lic_key,
             "machine_id": mid,
             "version": "2.0.0",
-            "timestamp": int(time.time())
+            "timestamp": now
         }).encode("utf-8")
 
-        req = urllib.request.Request(
-            f"{auth_url}/api/v1/license/ping",
-            data=req_data,
-            headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/2.0"}
-        )
+        candidate_urls = [auth_url] + [c for c in AUTH_SERVER_CANDIDATES if c != auth_url]
+        synced = False
 
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-            status = body.get("status", "ok")
-            now = int(time.time())
-            if status == "revoked":
-                conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '1')")
-                conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'heartbeat', 'revoked', '远程吊销')", (now,))
-            else:
-                conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
-                conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
-            conn.commit()
+        for srv in candidate_urls:
+            try:
+                req = urllib.request.Request(
+                    f"{srv}/api/v1/license/ping",
+                    data=req_data,
+                    headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/2.0"}
+                )
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                    status = body.get("status", "ok")
+                    if status == "revoked":
+                        conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '1')")
+                        conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'heartbeat', 'revoked', '远程吊销')", (now,))
+                    else:
+                        conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
+                        conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
+                    conn.commit()
+                    synced = True
+                    break
+            except Exception:
+                continue
+
         conn.close()
-        return True
+        return synced
     except Exception:
         # 心跳失败时静默容灾（不锁死用户，容纳断网宽限期）
         return False

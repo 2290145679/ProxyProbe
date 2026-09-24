@@ -1149,6 +1149,69 @@ def perform_telegram_backup(custom_chat_id=None):
 
     send_telegram_document(token, chat_id, gz_data, filename, caption)
 
+    # 联动备份发卡中心卡密数据库 (若存在)
+    lic_db_paths = [
+        os.environ.get("LICENSE_CENTER_DB", ""),
+        "/opt/license-center/license_center.db",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "license-center", "license_center.db"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "license_center.db")
+    ]
+    lic_db = None
+    for p in lic_db_paths:
+        if p and os.path.exists(p):
+            lic_db = p
+            break
+
+    if lic_db:
+        try:
+            fd, tmp_lic = tempfile.mkstemp(suffix=".db")
+            os.close(fd)
+            try:
+                dst = sqlite3.connect(tmp_lic)
+                src = sqlite3.connect(lic_db)
+                try:
+                    src.backup(dst)
+                finally:
+                    src.close()
+                    dst.close()
+
+                with open(tmp_lic, "rb") as f_in:
+                    lic_raw = f_in.read()
+
+                lic_gz = gzip.compress(lic_raw, compresslevel=6)
+                lic_raw_size = len(lic_raw)
+                lic_gz_size = len(lic_gz)
+
+                # 统计卡密数量
+                lic_conn = sqlite3.connect(tmp_lic)
+                cur = lic_conn.execute("SELECT COUNT(*) FROM licenses")
+                total_cards = cur.fetchone()[0]
+                cur = lic_conn.execute("SELECT COUNT(*) FROM licenses WHERE status='active'")
+                active_cards = cur.fetchone()[0]
+                lic_conn.close()
+
+                lic_filename = f"license_center_backup_{file_time_str}.db.gz"
+                lic_caption = (
+                    f"🎫 ProxyProbe 发号中心卡密数据库自动备份\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🌐 站点: {site_name}\n"
+                    f"📅 时间: {time_str}\n"
+                    f"💾 大小: {lic_gz_size / 1024:.1f} KB (原始: {lic_raw_size / 1024:.1f} KB)\n"
+                    f"📊 资产: 共 {total_cards} 张卡密（{active_cards} 张有效）\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"💡 还原说明:\n"
+                    f"解压后覆盖至 /opt/license-center/license_center.db 并重启发卡中心服务即可。"
+                )
+                send_telegram_document(token, chat_id, lic_gz, lic_filename, lic_caption)
+            finally:
+                if os.path.exists(tmp_lic):
+                    try:
+                        os.remove(tmp_lic)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[Backup] 发卡中心卡密数据库推送 Telegram 异常: {e}")
+
     set_setting("backup_tg_last_time", str(ts_now))
     set_setting("backup_tg_last_status", f"成功 ({time_str}, {gz_size / 1024:.1f} KB)")
     return True, f"备份成功并已推送至 Telegram ({gz_size / 1024:.1f} KB)", gz_size
