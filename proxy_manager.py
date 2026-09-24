@@ -31,7 +31,17 @@ for _i, _arg in enumerate(sys.argv):
             PORT = int(sys.argv[_i + 1])
         except ValueError:
             pass
-LOCAL_HOSTS = {"189.24.108.25", "127.0.0.1", "localhost", "tz.yohoo.xyz", ""}
+LOCAL_HOSTS = {"189.24.108.25", "127.0.0.1", "localhost", "test.yohoo.xyz", "tz.yohoo.xyz", ""}
+
+def get_request_base_url(headers=None):
+    if headers:
+        host = headers.get("X-Forwarded-Host") or headers.get("Host") or ""
+        host = host.split(",")[0].strip()
+        proto = headers.get("X-Forwarded-Proto") or "https"
+        proto = proto.split(",")[0].strip()
+        if host:
+            return f"{proto}://{host}"
+    return "https://test.yohoo.xyz"
 
 def get_local_ip(family=socket.AF_INET):
     try:
@@ -119,7 +129,7 @@ fi
 if [ -z "$HUB_SERVER" ] || [ -z "$HUB_TOKEN" ]; then
   echo "[-] 错误：无法自动获取主控端地址或节点 Token！" >&2
   echo "    请手动指定参数运行：" >&2
-  echo "    curl -fsSL https://tz.yohoo.xyz/proxy-agent.sh | bash -s -- --server https://tz.yohoo.xyz --token <TOKEN>" >&2
+  echo "    curl -fsSL https://test.yohoo.xyz/proxy-agent.sh | bash -s -- --server https://test.yohoo.xyz --token <TOKEN>" >&2
   exit 1
 fi
 
@@ -2676,6 +2686,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             status_text = "disabled" if user.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else ("over_device_limit" if is_dev_over else "active")))
             
             sub_token = user.get("sub_token") or get_sub_token()
+            base_url = get_request_base_url(self.headers)
             self.send_json({
                 "ok": True,
                 "user": {
@@ -2683,8 +2694,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "username": user.get("username"),
                     "is_admin": bool(user.get("is_admin", 0)),
                     "sub_token": sub_token,
-                    "sub_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={sub_token}",
-                    "clash_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={sub_token}&clash=1",
+                    "sub_url": f"{base_url}/api/proxy/sub?token={sub_token}",
+                    "clash_url": f"{base_url}/api/proxy/sub?token={sub_token}&clash=1",
                     "traffic_limit_bytes": limit,
                     "device_limit": device_limit,
                     "online_devices": online_devs,
@@ -2767,8 +2778,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 u["total_used_bytes"] = used
                 u["remaining_bytes"] = remaining
                 u["status"] = "disabled" if u.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else ("over_device_limit" if is_dev_over else "active")))
-                u["sub_url"] = f"https://tz.yohoo.xyz/api/proxy/sub?token={u['sub_token']}"
-                u["clash_url"] = f"https://tz.yohoo.xyz/api/proxy/sub?token={u['sub_token']}&clash=1"
+                base_url = get_request_base_url(self.headers)
+                u["sub_url"] = f"{base_url}/api/proxy/sub?token={u['sub_token']}"
+                u["clash_url"] = f"{base_url}/api/proxy/sub?token={u['sub_token']}&clash=1"
             self.send_json({"ok": True, "users": users})
             return
 
@@ -3186,7 +3198,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             with conn:
                 conn.execute("UPDATE proxy_user SET sub_token = ? WHERE id = ?", (new_token, user["id"]))
             conn.close()
-            self.send_json({"ok": True, "sub_token": new_token, "sub_url": f"https://tz.yohoo.xyz/api/proxy/sub?token={new_token}"})
+            base_url = get_request_base_url(self.headers)
+            self.send_json({"ok": True, "sub_token": new_token, "sub_url": f"{base_url}/api/proxy/sub?token={new_token}"})
             return
 
         # License activation API (允许已登录管理员，或本机 127.0.0.1 终端激活)

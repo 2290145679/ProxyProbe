@@ -4,6 +4,15 @@
 
 ---
 
+## 🐛 [v2.0.1] - 2026-09-24
+
+### Bug 修复
+- **修复用户订阅链接 403 问题**：`proxy_manager.py` 中 `sub_url` / `clash_url` 域名写死为 `tz.yohoo.xyz`，导致通过 `test.yohoo.xyz` 访问面板的用户订阅请求被路由到另一台服务器，因 token 不匹配返回 `HTTP 403 Invalid subscription`。
+  - 新增 `get_request_base_url(headers)` 函数，动态读取 `X-Forwarded-Host` / `Host` 请求头，保证订阅链接始终指向用户实际访问的服务器。
+  - 前端 `UserDashboard.tsx` 与 `ProxyUsers.tsx` 同步修复，复制订阅链接时统一使用 `window.location.origin` 替换域名，防止前端缓存旧域名。
+
+---
+
 ## 📌 [v2.0.0] - 2026-09-24
 
 ### 💎 商业配额与发号管控中心重构 (Major Milestone)

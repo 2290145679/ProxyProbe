@@ -143,18 +143,38 @@ export function UserDashboard({
       .catch(() => {})
   }, [])
 
+  // 确保使用当前页面的实际访问域名，防止旧数据或写死域名导致 403
+  const getDynamicSubUrl = (rawUrl?: string) => {
+    if (!rawUrl) return ""
+    if (typeof window === "undefined") return rawUrl
+    try {
+      if (rawUrl.startsWith("http")) {
+        const u = new URL(rawUrl)
+        return `${window.location.origin}${u.pathname}${u.search}`
+      }
+      return `${window.location.origin}${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`
+    } catch {
+      return rawUrl
+    }
+  }
+
+  const effectiveSubUrl = getDynamicSubUrl(user.sub_url)
+  const effectiveClashUrl = user.clash_url
+    ? getDynamicSubUrl(user.clash_url)
+    : (effectiveSubUrl ? `${effectiveSubUrl}${effectiveSubUrl.includes("?") ? "&" : "?"}clash=1` : "")
+
   // 生成二维码
   useEffect(() => {
-    if (user.sub_url) {
-      QRCode.toDataURL(user.sub_url, { width: 300, margin: 2 })
+    if (effectiveSubUrl) {
+      QRCode.toDataURL(effectiveSubUrl, { width: 300, margin: 2 })
         .then(url => setQrUrl(url))
         .catch(() => {})
     }
-  }, [user.sub_url])
+  }, [effectiveSubUrl])
 
   // 复制订阅链接
   function copySubUrl() {
-    navigator.clipboard.writeText(user.sub_url)
+    navigator.clipboard.writeText(effectiveSubUrl)
     toast.success("聚合订阅链接已复制到剪贴板！")
   }
 
@@ -361,7 +381,7 @@ export function UserDashboard({
               <div className="relative flex-1 min-w-0">
                 <Input
                   readOnly
-                  value={user.sub_url}
+                  value={effectiveSubUrl}
                   className="font-mono text-xs h-10 bg-muted/40 pr-24 select-all"
                 />
                 <Button
@@ -411,7 +431,7 @@ export function UserDashboard({
                   asChild
                   className="h-11 px-3 text-xs justify-between hover:border-primary/50 hover:bg-accent/40 transition-colors"
                 >
-                  <a href={`clash://install-config?url=${encodeURIComponent(user.clash_url || (user.sub_url + (user.sub_url.includes('?') ? '&clash=1' : '?clash=1')))}&name=${encodeURIComponent(subName)}`}>
+                  <a href={`clash://install-config?url=${encodeURIComponent(effectiveClashUrl)}&name=${encodeURIComponent(subName)}`}>
                     <div className="flex items-center gap-2.5 min-w-0">
                       <Send className="size-4 text-blue-500 shrink-0" />
                       <div className="flex flex-col text-left leading-tight min-w-0">
@@ -429,7 +449,7 @@ export function UserDashboard({
                   asChild
                   className="h-11 px-3 text-xs justify-between hover:border-primary/50 hover:bg-accent/40 transition-colors"
                 >
-                  <a href={`shadowrocket://add/sub://${btoa(user.sub_url)}?title=${encodeURIComponent(subName)}`}>
+                  <a href={`shadowrocket://add/sub://${btoa(effectiveSubUrl)}?title=${encodeURIComponent(subName)}`}>
                     <div className="flex items-center gap-2.5 min-w-0">
                       <Smartphone className="size-4 text-indigo-500 shrink-0" />
                       <div className="flex flex-col text-left leading-tight min-w-0">
@@ -447,7 +467,7 @@ export function UserDashboard({
                   asChild
                   className="h-11 px-3 text-xs justify-between hover:border-primary/50 hover:bg-accent/40 transition-colors"
                 >
-                  <a href={`sing-box://import-remote-profile?url=${encodeURIComponent(user.sub_url)}#${encodeURIComponent(subName)}`}>
+                  <a href={`sing-box://import-remote-profile?url=${encodeURIComponent(effectiveSubUrl)}#${encodeURIComponent(subName)}`}>
                     <div className="flex items-center gap-2.5 min-w-0">
                       <Globe className="size-4 text-amber-500 shrink-0" />
                       <div className="flex flex-col text-left leading-tight min-w-0">

@@ -435,7 +435,16 @@ export function ProxyUsers() {
                           className="size-7 shrink-0"
                           title="复制完整订阅链接"
                           onClick={() => {
-                            navigator.clipboard.writeText(u.sub_url)
+                            let dynUrl = u.sub_url
+                            try {
+                              if (u.sub_url && u.sub_url.startsWith("http")) {
+                                const parsed = new URL(u.sub_url)
+                                dynUrl = `${window.location.origin}${parsed.pathname}${parsed.search}`
+                              } else if (u.sub_url) {
+                                dynUrl = `${window.location.origin}${u.sub_url.startsWith('/') ? '' : '/'}${u.sub_url}`
+                              }
+                            } catch {}
+                            navigator.clipboard.writeText(dynUrl || u.sub_url)
                             toast.success(`已复制用户【${u.username}】的订阅链接！`)
                           }}
                         >
