@@ -375,7 +375,13 @@ upgrade_system() {
     # 4. 更新前端 dist（从 Release 库下载 tar.gz）
     _TMP_DIST="/tmp/web-admin-dist-upgrade-$$.tar.gz"
     if curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null; then
-        tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null && info "前端管理面板资源已更新完毕" || warn "前端资源解压失败"
+        tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null
+        # 兼容展平：若历史压缩包包含 dist/ 子层级，自动移动至根目录
+        if [ -d "$WEB_DIST/dist" ] && [ -f "$WEB_DIST/dist/index.html" ]; then
+            cp -rf "$WEB_DIST/dist/"* "$WEB_DIST/" 2>/dev/null || mv -f "$WEB_DIST/dist/"* "$WEB_DIST/" 2>/dev/null
+            rm -rf "$WEB_DIST/dist"
+        fi
+        [ -f "$WEB_DIST/index.html" ] && info "前端管理面板资源已更新完毕" || warn "前端资源解压失败"
         rm -f "$_TMP_DIST"
     else
         rm -f "$_TMP_DIST"
@@ -390,6 +396,16 @@ upgrade_system() {
         mv -f "$ROOT/monitor-hub.new" "$ROOT/monitor-hub"
         info "monitor-hub 核心已更新"
     } || warn "monitor-hub 下载跳过或已是最新"
+
+    # 确保 Caddyfile 路由配置正确
+    if [ -f /etc/caddy/Caddyfile ]; then
+        if grep -q "handle /admin\*" /etc/caddy/Caddyfile; then
+            sed -i 's|handle /admin\*|handle_path /admin*|g' /etc/caddy/Caddyfile
+        fi
+        if ! grep -q "redir /admin /admin/" /etc/caddy/Caddyfile; then
+            sed -i '/handle_path \/admin\*/i \    redir /admin /admin/' /etc/caddy/Caddyfile
+        fi
+    fi
 
     # 重启服务
     systemctl daemon-reload

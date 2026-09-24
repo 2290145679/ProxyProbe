@@ -311,7 +311,13 @@ mkdir -p "$WEB_DIST"
 _TMP_DIST="/tmp/web-admin-dist-$$.tar.gz"
 if curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
    wget -qO "$_TMP_DIST" "${RELEASE_BASE}/web-admin-dist.tar.gz" 2>/dev/null; then
-  tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null && info "前端资源已就绪" || warn "前端资源解压失败"
+  tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null
+  # 兼容展平：若历史压缩包包含 dist/ 子层级，自动移动至根目录
+  if [ -d "$WEB_DIST/dist" ] && [ -f "$WEB_DIST/dist/index.html" ]; then
+    cp -rf "$WEB_DIST/dist/"* "$WEB_DIST/" 2>/dev/null || mv -f "$WEB_DIST/dist/"* "$WEB_DIST/" 2>/dev/null
+    rm -rf "$WEB_DIST/dist"
+  fi
+  [ -f "$WEB_DIST/index.html" ] && info "前端资源已就绪" || warn "前端资源解压可能不完整"
   rm -f "$_TMP_DIST"
 else
   rm -f "$_TMP_DIST"
@@ -400,7 +406,8 @@ $CADDY_SITE {
     }
 
     # 管理后台前端（React SPA）
-    handle /admin* {
+    redir /admin /admin/
+    handle_path /admin* {
         root * $WEB_DIST
         try_files {path} /index.html
         file_server
