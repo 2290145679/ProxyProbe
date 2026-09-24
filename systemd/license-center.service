@@ -1,0 +1,16 @@
+[Unit]
+Description=ProxyProbe Commercial License Management Center
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/license-center
+ExecStart=/usr/bin/python3 /opt/license-center/server.py
+Restart=always
+RestartSec=5
+Environment=LICENSE_CENTER_PORT=18888
+Environment=LICENSE_CENTER_DB=/opt/license-center/license_center.db
+
+[Install]
+WantedBy=multi-user.target

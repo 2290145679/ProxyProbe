@@ -260,6 +260,7 @@ function installCommand(
 ) {
   return scriptCommand(site, (s) => [
     `--server ${s}`,
+    ...(s.startsWith("http://") ? ["--insecure"] : []),
     `--token ${token}`,
     `--interval ${seconds}`,
     ...ifaceArg(iface),
@@ -275,6 +276,7 @@ function registerCommand(
 ) {
   return scriptCommand(site, (s) => [
     `--server ${s}`,
+    ...(s.startsWith("http://") ? ["--insecure"] : []),
     `--register ${key}`,
     ...ifaceArg(iface),
     ...coreFlags(cores),

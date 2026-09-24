@@ -1055,7 +1055,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     function downloadKeys() {
       const val = document.getElementById('result-key').value.trim();
       if (!val) return;
-      const blob = new Blob([val + '\n'], { type: 'text/plain;charset=utf-8' });
+      const blob = new Blob([val + String.fromCharCode(10)], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1263,6 +1263,7 @@ class LicenseServerHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")

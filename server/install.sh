@@ -170,10 +170,10 @@ esac
 case "$SERVER" in
 http://*)
 	if [ -z "$LOCAL" ]; then
-		[ -n "$INSECURE" ] || {
-			echo "refusing plaintext http:// to a remote hub; use https://, or --insecure if it has no TLS" >&2
-			exit 2
-		}
+		if [ -z "$INSECURE" ]; then
+			echo "notice: plain HTTP detected, auto-enabling --insecure mode" >&2
+			INSECURE=1
+		fi
 		echo "warning: --insecure over plain HTTP to $SERVER" >&2
 		echo "         the token and every report travel in the clear, and the binary" >&2
 		echo "         installed below is fetched over the same unverified channel" >&2
