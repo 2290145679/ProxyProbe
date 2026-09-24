@@ -334,8 +334,14 @@ def get_current_license_status(db_conn) -> dict:
             "days_left": 0
         }
 
-    # 4. 离线公钥验签
-    payload, err = parse_and_verify_license(lic_key)
+    # 4. 离线公钥验签 (若为 23 位短激活码，验证本地缓存的 raw_token 签名凭据)
+    token_to_verify = lic_key
+    if lic_key.startswith("PP-") and "." not in lic_key:
+        cur.execute("SELECT value FROM setting WHERE key='license_raw_token'")
+        t_row = cur.fetchone()
+        token_to_verify = t_row[0].strip() if t_row and t_row[0] else ""
+
+    payload, err = parse_and_verify_license(token_to_verify)
     if err:
         return {
             "active": False,
@@ -381,8 +387,8 @@ def get_current_license_status(db_conn) -> dict:
         "active": True,
         "type": plan_type,
         "plan_name": plan_info["name"],
-        "customer": payload.get("customer", "VIP客户"),
-        "license_id": payload.get("id", ""),
+        "customer": payload.get("customer", "商业授权"),
+        "license_id": lic_key if (lic_key.startswith("PP-") and "." not in lic_key) else payload.get("id", lic_key),
         "max_servers": max_servers,
         "max_nodes": max_nodes,
         "max_users": max_users,
@@ -397,27 +403,76 @@ def get_current_license_status(db_conn) -> dict:
 
 def save_license_key(db_conn, license_key: str, auth_url: str = DEFAULT_AUTH_SERVER) -> tuple:
     """
-    保存并激活许可证
+    保存并激活许可证 (支持 23 位专属短激活码与离线完整非对称凭据)
     返回 (success: bool, msg: str, status_dict)
     """
     init_license_tables(db_conn)
+    license_key = license_key.strip()
+    if not license_key:
+        return False, "许可证密钥不能为空", None
+
+    now = int(time.time())
+
+    # 1. 23 位专属短激活码模式 (形如 PP-XXXX-XXXX-XXXX-XXXX)
+    if license_key.startswith("PP-") and "." not in license_key:
+        curr_mid = get_machine_id()
+        try:
+            req_data = json.dumps({
+                "code": license_key,
+                "machine_id": curr_mid,
+                "timestamp": now
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{auth_url}/api/v1/license/activate_code",
+                data=req_data,
+                headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/2.0"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+
+            if not body.get("ok"):
+                return False, body.get("message", "激活码校验未通过，请检查是否输入正确"), None
+
+            raw_token = body.get("raw_token")
+            # 离线公钥验签发号中枢签发的防伪凭证
+            payload, err = parse_and_verify_license(raw_token)
+            if err:
+                return False, f"授权中枢签名验证失败: {err}", None
+
+            # 保存短码用于展示，保存 raw_token 用于离线安全守护
+            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_key', ?)", (license_key,))
+            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_raw_token', ?)", (raw_token,))
+            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
+            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
+            db_conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'activate', 'success', ?)",
+                            (now, f"License Code: {license_key} Plan: {payload.get('type')}"))
+            db_conn.commit()
+
+            status = get_current_license_status(db_conn)
+            return True, "商业许可证激活成功！", status
+        except urllib.error.URLError as e:
+            return False, f"无法连接授权中心 ({auth_url})，请检查网络连接或使用完整离线密钥", None
+        except Exception as e:
+            return False, f"激活失败: {e}", None
+
+    # 2. 离线非对称签名密钥模式 (PPLIC-...)
     payload, err = parse_and_verify_license(license_key)
     if err:
         return False, err, None
 
     # 保存许可证
-    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_key', ?)", (license_key.strip(),))
+    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_key', ?)", (license_key,))
+    db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_raw_token', ?)", (license_key,))
     db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
-    now = int(time.time())
     db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
     db_conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'activate', 'success', ?)",
                     (now, f"License ID: {payload.get('id')} Customer: {payload.get('customer')}"))
     db_conn.commit()
 
-    # 激活时立即触发一次与发号中心的远程校验打卡
+    # 激活时立即触发一次打卡
     try:
         req_data = json.dumps({
-            "license_key": license_key.strip(),
+            "license_key": license_key,
             "machine_id": get_machine_id(),
             "version": "2.0.0",
             "timestamp": now

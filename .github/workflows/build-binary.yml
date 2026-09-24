@@ -1,0 +1,38 @@
+name: Build Proxy Manager Binary
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'proxy_manager.py'
+      - 'license_guard.py'
+      - '.github/workflows/build-binary.yml'
+  workflow_dispatch:
+
+jobs:
+  build-linux-amd64:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyInstaller and dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller cryptography
+
+      - name: Compile proxy_manager with PyInstaller
+        run: |
+          pyinstaller --clean --onefile --name proxy-manager-linux-amd64 --strip --hidden-import license_guard proxy_manager.py
+
+      - name: Upload compiled binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-manager-linux-amd64
+          path: dist/proxy-manager-linux-amd64
+          if-no-files-found: error

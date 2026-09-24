@@ -45,6 +45,27 @@ const PLAN_BADGES: Record<string, { label: string; color: string }> = {
   universe: { label: "宇宙套餐", color: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 border-fuchsia-500/30" },
 }
 
+function copyText(text: string): Promise<void> {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text)
+  }
+  const textArea = document.createElement("textarea")
+  textArea.value = text
+  textArea.style.position = "fixed"
+  textArea.style.left = "-999999px"
+  textArea.style.top = "-999999px"
+  document.body.appendChild(textArea)
+  textArea.select()
+  try {
+    document.execCommand("copy")
+    textArea.remove()
+    return Promise.resolve()
+  } catch (e) {
+    textArea.remove()
+    return Promise.reject(e)
+  }
+}
+
 export function LicenseManager() {
   const [status, setStatus] = useState<LicenseStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -75,7 +96,7 @@ export function LicenseManager() {
 
   const copyMachineId = () => {
     if (!status?.machine_id) return
-    navigator.clipboard.writeText(status.machine_id).then(
+    copyText(status.machine_id).then(
       () => {
         setCopied(true)
         toast.success("机器识别码已复制到剪贴板")
@@ -189,11 +210,7 @@ export function LicenseManager() {
           </CardHeader>
           <CardContent className="space-y-4 pt-0">
             {status?.active ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-muted/30 rounded-lg p-3 text-xs">
-                <div>
-                  <span className="text-muted-foreground block mb-0.5">授权客户</span>
-                  <span className="font-medium text-foreground">{status.customer || "VIP客户"}</span>
-                </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-muted/30 rounded-lg p-3 text-xs">
                 <div>
                   <span className="text-muted-foreground block mb-0.5">有效期限</span>
                   <span className="font-medium text-foreground">{status.expire_date}</span>
@@ -211,10 +228,6 @@ export function LicenseManager() {
                 <div>
                   <span className="text-muted-foreground block mb-0.5">许可证 ID</span>
                   <span className="font-mono text-muted-foreground">{status.license_id || "—"}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block mb-0.5">双轨保护</span>
-                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">离线验签 + 7天心跳容灾</span>
                 </div>
               </div>
             ) : (
@@ -364,14 +377,14 @@ export function LicenseManager() {
             {status?.active ? "升级 / 更换 / 续期许可证" : "输入许可证密钥激活"}
           </CardTitle>
           <CardDescription className="text-xs">
-            粘贴以 <code className="text-xs font-mono font-bold">PPLIC-</code> 开头的授权字符串并提交即可即时生效
+            输入以 <code className="text-xs font-mono font-bold">PP-</code> 开头的 23 位商业授权码或离线签名凭据即可即刻生效
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleActivate} className="space-y-4">
             <textarea
               className="w-full h-24 font-mono text-xs p-3 bg-muted/20 border rounded-md focus:outline-none focus:ring-1 focus:ring-ring resize-none"
-              placeholder="请粘贴您的许可证激活代码，形如: PPLIC-eyJhbGciOiJFZDI1NTE5In0......."
+              placeholder="请粘贴您的专属商业授权码（如: PP-XXXX-XXXX-XXXX-XXXX）或离线激活密钥"
               value={licenseInput}
               onChange={(e) => setLicenseInput(e.target.value)}
               disabled={activating}

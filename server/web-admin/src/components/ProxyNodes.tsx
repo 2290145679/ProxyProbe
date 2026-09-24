@@ -103,11 +103,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     version: "sing-box version 1.14.1 (linux/amd64)",
     running: true,
   })
-  const [realmStatus, setRealmStatus] = useState<CoreStatus>({
-    installed: false,
-    version: "",
-    running: false,
-  })
   const [nodeMode, setNodeMode] = useState<"direct" | "relay">("direct")
   const [relayTargetMode, setRelayTargetMode] = useState<"link_existing" | "custom">("link_existing")
   const [selectedTargetNodeId, setSelectedTargetNodeId] = useState<string>("")
@@ -125,6 +120,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [licenseStatus, setLicenseStatus] = useState<any>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [includeServerPrefix, setIncludeServerPrefix] = useState<boolean>(false)
   const [form, setForm] = useState({
     server_id: "0",
     server_name: "本机",
@@ -149,6 +145,52 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     target_node_id: 0,
   })
 
+  const getProtocolCleanLabel = (p: string) => {
+    const label = PROTOCOL_OPTIONS.find(o => o.value === p)?.label || p
+    return label.split(" ")[0].replace("+", "").trim()
+  }
+
+  const computeNodeName = (
+    serverName: string,
+    proto: string,
+    mode: "direct" | "relay",
+    prefixEnabled: boolean,
+    targetName?: string
+  ) => {
+    const cleanProto = getProtocolCleanLabel(proto)
+    if (mode === "relay") {
+      const base = targetName ? `中转 ➔ ${targetName}` : "中转落地"
+      return prefixEnabled ? `[${serverName}] ${base}` : base
+    } else {
+      const base = cleanProto || "Reality"
+      return prefixEnabled ? `[${serverName}] ${base}` : base
+    }
+  }
+
+  const handleTogglePrefix = (checked: boolean) => {
+    setIncludeServerPrefix(checked)
+    setForm(prev => {
+      let curName = prev.name.trim()
+      const sPrefix = `[${prev.server_name}] `
+      const sPrefixNoSpace = `[${prev.server_name}]`
+      const sDash = `${prev.server_name}-`
+      if (checked) {
+        if (!curName.startsWith(sPrefix) && !curName.startsWith(sPrefixNoSpace)) {
+          curName = `${sPrefix}${curName}`
+        }
+      } else {
+        if (curName.startsWith(sPrefix)) {
+          curName = curName.substring(sPrefix.length).trim()
+        } else if (curName.startsWith(sPrefixNoSpace)) {
+          curName = curName.substring(sPrefixNoSpace.length).trim()
+        } else if (curName.startsWith(sDash)) {
+          curName = curName.substring(sDash.length).trim()
+        }
+      }
+      return { ...prev, name: curName }
+    })
+  }
+
   const loadStatus = useCallback(async () => {
     setStatusLoading(true)
     try {
@@ -162,9 +204,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         }
         if (data.singbox) {
           setSingboxStatus(data.singbox)
-        }
-        if (data.realm) {
-          setRealmStatus(data.realm)
         }
       }
     } catch {
@@ -283,36 +322,21 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     }
   }
 
-  const serverOptions: ProxyServer[] = servers.length > 0 ? servers : [
-    {
-      id: 0,
-      name: "本机 (当前服务器)",
-      host: "189.24.108.25",
-      is_local: true,
-      token: "",
-      xray_installed: xrayStatus.installed,
-      xray_running: xrayStatus.running,
-      singbox_installed: singboxStatus.installed,
-      singbox_running: singboxStatus.running,
-      realm_installed: realmStatus.installed,
-      realm_running: realmStatus.running
-    },
-    ...nodes.map(n => ({
-      id: n.id,
-      name: n.name,
-      host: n.ipv4 || n.ip || "自动解析",
-      ipv4: n.ipv4 || n.ip || "",
-      ipv6: n.ipv6 || "",
-      is_local: false,
-      token: "",
-      xray_installed: false,
-      xray_running: false,
-      singbox_installed: false,
-      singbox_running: false,
-      realm_installed: false,
-      realm_running: false
-    }))
-  ]
+  const serverOptions: ProxyServer[] = (servers.length > 0 ? servers : nodes.map(n => ({
+    id: n.id,
+    name: n.name,
+    host: n.ipv4 || n.ip || "自动解析",
+    ipv4: n.ipv4 || n.ip || "",
+    ipv6: n.ipv6 || "",
+    is_local: false,
+    token: "",
+    xray_installed: false,
+    xray_running: false,
+    singbox_installed: false,
+    singbox_running: false,
+    realm_installed: false,
+    realm_running: false
+  }))).filter(s => s.id !== 0)
 
   const currentSelectedServer = serverOptions.find(s => String(s.id) === form.server_id)
   const isSingboxProto = form.protocol === "hysteria2" || form.protocol === "tuic"
@@ -333,20 +357,26 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       return
     }
 
+    if (serverOptions.length === 0) {
+      toast.error("暂无可用的服务器！请先在「节点」页面添加探针服务器并在其上安装代理探针。")
+      return
+    }
+
     setIpType("ipv4")
-    const defaultServer = serverOptions.length > 0 ? serverOptions[0] : null
-    const sId = defaultServer ? String(defaultServer.id) : "0"
-    const sName = defaultServer ? defaultServer.name : "本机"
-    const sHost = defaultServer ? (defaultServer.ipv4 || defaultServer.host) : "189.24.108.25"
+    const defaultServer = serverOptions[0]
+    const sId = String(defaultServer.id)
+    const sName = defaultServer.name
+    const sHost = defaultServer.ipv4 || defaultServer.host || ""
 
     setNodeMode("direct")
     setRelayTargetMode("link_existing")
     setSelectedTargetNodeId("")
+    setIncludeServerPrefix(false)
     setForm({
       server_id: sId,
       server_name: sName,
       server_host: sHost,
-      name: `${sName}-Reality`,
+      name: "Reality",
       protocol: "vless_reality",
       port: String(recommendedPort),
       uuid: "",
@@ -370,16 +400,17 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   }
 
   const handleProtocolChange = (p: string) => {
-    const label = PROTOCOL_OPTIONS.find(o => o.value === p)?.label || p
-    const cleanLabel = label.split(" ")[0]
-    setForm(prev => ({ ...prev, protocol: p, name: `${prev.server_name}-${cleanLabel}` }))
+    setForm(prev => {
+      const targetNode = proxyNodes.find(n => String(n.id) === selectedTargetNodeId)
+      const newName = computeNodeName(prev.server_name, p, nodeMode, includeServerPrefix, targetNode?.name)
+      return { ...prev, protocol: p, name: newName }
+    })
     handleKeygen(p, form.method)
   }
 
   const handleServerChange = (sId: string) => {
     const s = serverOptions.find(n => String(n.id) === sId)
     if (s) {
-      const cleanProto = PROTOCOL_OPTIONS.find(o => o.value === form.protocol)?.label?.split(" ")[0] || "Node"
       let chosenHost = s.ipv4 || s.host
       if (ipType === "ipv6") {
         if (s.ipv6) {
@@ -388,15 +419,17 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           setIpType("ipv4")
         }
       }
-      setForm(prev => ({ 
-        ...prev, 
-        server_id: sId, 
-        server_name: s.name, 
-        server_host: chosenHost,
-        name: nodeMode === "relay" 
-          ? `[中转] ${s.name} ➔ ${prev.remote_host || "落地"}`
-          : `${s.name}-${cleanProto}`
-      }))
+      setForm(prev => {
+        const targetNode = proxyNodes.find(n => String(n.id) === selectedTargetNodeId)
+        const newName = computeNodeName(s.name, prev.protocol, nodeMode, includeServerPrefix, targetNode?.name)
+        return { 
+          ...prev, 
+          server_id: sId, 
+          server_name: s.name, 
+          server_host: chosenHost,
+          name: newName
+        }
+      })
     }
   }
 
@@ -404,10 +437,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     setSelectedTargetNodeId(targetId)
     const targetNode = proxyNodes.find(n => String(n.id) === targetId)
     if (targetNode) {
+      const newName = computeNodeName(form.server_name, targetNode.protocol, "relay", includeServerPrefix, targetNode.name)
       setForm(prev => ({
         ...prev,
         target_node_id: targetNode.id,
-        name: `[中转] ${prev.server_name} ➔ ${targetNode.name}`,
+        name: newName,
         protocol: targetNode.protocol,
         remote_host: targetNode.server_host,
         remote_port: String(targetNode.port),
@@ -978,7 +1012,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
       {/* Create Node Modal */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="w-[96vw] max-w-2xl max-h-[88vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="text-base font-semibold">新建代理节点</DialogTitle>
             <DialogDescription className="text-xs">
@@ -986,66 +1020,65 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleCreateNode} className="space-y-4 py-2">
+          <form onSubmit={handleCreateNode} className="space-y-4 py-1 w-full min-w-0 overflow-x-hidden">
             {/* 节点模式选择：直连 vs 中转落地 */}
-            <div className="flex p-1 bg-muted/60 rounded-lg text-xs font-medium">
+            <div className="grid grid-cols-2 p-1 bg-muted/60 rounded-lg text-xs font-medium gap-1">
               <button
                 type="button"
-                className={`flex-1 py-1.5 px-3 rounded-md transition-all ${
+                className={`py-1.5 px-2 rounded-md transition-all truncate text-center ${
                   nodeMode === "direct"
                     ? "bg-card text-foreground shadow-sm font-semibold"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
                 onClick={() => {
                   setNodeMode("direct")
-                  setForm(prev => ({ ...prev, is_relay: 0 }))
+                  const newName = computeNodeName(form.server_name, form.protocol, "direct", includeServerPrefix)
+                  setForm(prev => ({ ...prev, is_relay: 0, name: newName }))
                 }}
               >
                 🟢 普通直连节点 (Direct)
               </button>
               <button
                 type="button"
-                className={`flex-1 py-1.5 px-3 rounded-md transition-all ${
+                className={`py-1.5 px-2 rounded-md transition-all truncate text-center ${
                   nodeMode === "relay"
                     ? "bg-card text-foreground shadow-sm font-semibold"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
                 onClick={() => {
                   setNodeMode("relay")
-                  setForm(prev => ({ 
-                    ...prev, 
-                    is_relay: 1,
-                    name: `[中转] ${prev.server_name} ➔ 落地`
-                  }))
+                  const targetNode = proxyNodes.find(n => String(n.id) === selectedTargetNodeId)
+                  const newName = computeNodeName(form.server_name, form.protocol, "relay", includeServerPrefix, targetNode?.name)
+                  setForm(prev => ({ ...prev, is_relay: 1, name: newName }))
                 }}
               >
-                🔄 中转落地节点 (Realm 转发)
+                🔄 中转落地节点 (Realm)
               </button>
             </div>
 
             {/* 所属服务器 / 入口中转机 */}
-            <div className="space-y-1.5 w-full">
+            <div className="space-y-1.5 w-full min-w-0">
               <Label className="text-xs">{nodeMode === "relay" ? "入口中转服务器" : "所属服务器"}</Label>
               <Select value={form.server_id} onValueChange={handleServerChange}>
-                <SelectTrigger className="text-xs h-9 w-full">
+                <SelectTrigger className="text-xs h-9 w-full min-w-0">
                   <SelectValue placeholder="选择服务器">
                     {(() => {
                       const cur = serverOptions.find(s => String(s.id) === form.server_id)
                       if (!cur) return form.server_name
                       return (
-                        <div className="flex items-center justify-between w-full pr-1 gap-2 overflow-hidden">
-                          <span className="truncate font-medium">{cur.name} ({cur.host})</span>
-                          <div className="flex items-center gap-2.5 shrink-0">
-                            <span className="inline-flex items-center gap-1 text-[11px]">
-                              <span className={`size-2 rounded-full ${cur.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                        <div className="flex items-center justify-between w-full min-w-0 pr-1 gap-2 overflow-hidden">
+                          <span className="truncate font-medium min-w-0 flex-1 text-left">{cur.name} ({cur.host})</span>
+                          <div className="flex items-center gap-1.5 shrink-0 text-[11px]">
+                            <span className="inline-flex items-center gap-1">
+                              <span className={`size-1.5 rounded-full ${cur.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
                               <span className={cur.xray_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Xray</span>
                             </span>
-                            <span className="inline-flex items-center gap-1 text-[11px]">
-                              <span className={`size-2 rounded-full ${cur.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                            <span className="inline-flex items-center gap-1">
+                              <span className={`size-1.5 rounded-full ${cur.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
                               <span className={cur.singbox_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Sing-box</span>
                             </span>
-                            <span className="inline-flex items-center gap-1 text-[11px]">
-                              <span className={`size-2 rounded-full ${cur.realm_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                            <span className="inline-flex items-center gap-1">
+                              <span className={`size-1.5 rounded-full ${cur.realm_installed ? "bg-emerald-500" : "bg-red-500"}`} />
                               <span className={cur.realm_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Realm</span>
                             </span>
                           </div>
@@ -1055,38 +1088,42 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {serverOptions.map(s => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      <div className="flex items-center justify-between w-full min-w-[320px] gap-3">
-                        <span className="truncate font-medium text-xs">
-                          {s.name} ({s.host})
-                        </span>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="inline-flex items-center gap-1 text-[11px]">
-                            <span className={`size-2 rounded-full ${s.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                            <span className={s.xray_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Xray</span>
+                  {serverOptions.length === 0 ? (
+                    <div className="p-3 text-xs text-muted-foreground text-center">暂无可用的探针服务器</div>
+                  ) : (
+                    serverOptions.map(s => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        <div className="flex items-center justify-between w-full min-w-0 max-w-full gap-3">
+                          <span className="truncate font-medium text-xs">
+                            {s.name} ({s.host})
                           </span>
-                          <span className="inline-flex items-center gap-1 text-[11px]">
-                            <span className={`size-2 rounded-full ${s.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                            <span className={s.singbox_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Sing-box</span>
-                          </span>
-                          <span className="inline-flex items-center gap-1 text-[11px]">
-                            <span className={`size-2 rounded-full ${s.realm_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                            <span className={s.realm_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Realm</span>
-                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="inline-flex items-center gap-1 text-[11px]">
+                              <span className={`size-1.5 rounded-full ${s.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                              <span className={s.xray_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Xray</span>
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[11px]">
+                              <span className={`size-1.5 rounded-full ${s.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                              <span className={s.singbox_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Sing-box</span>
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[11px]">
+                              <span className={`size-1.5 rounded-full ${s.realm_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                              <span className={s.realm_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Realm</span>
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    </SelectItem>
-                  ))}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
 
             {/* 连接 IP 类型与地址协议 (IPv4 vs IPv6 vs 自定义) */}
-            <div className="space-y-2 p-3 rounded-lg border bg-muted/20">
-              <div className="flex items-center justify-between">
+            <div className="space-y-2 p-3 rounded-lg border bg-muted/20 w-full min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <Label className="text-xs font-medium">连接 IP 协议 / 连接地址</Label>
-                <div className="flex gap-1 bg-muted p-0.5 rounded-md text-[11px]">
+                <div className="flex flex-wrap gap-1 bg-muted p-0.5 rounded-md text-[11px]">
                   <button
                     type="button"
                     className={`px-2.5 py-0.5 rounded transition-all ${
@@ -1138,9 +1175,9 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 pt-0.5">
+              <div className="flex items-center gap-2 pt-0.5 w-full min-w-0">
                 <Input
-                  className="text-xs h-8 font-mono flex-1"
+                  className="text-xs h-8 font-mono flex-1 min-w-0"
                   value={form.server_host}
                   onChange={e => {
                     setForm(prev => ({ ...prev, server_host: e.target.value }))
@@ -1161,8 +1198,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 </Badge>
               </div>
 
-              <div className="text-[11px] text-muted-foreground flex items-center justify-between">
-                <span>
+              <div className="text-[11px] text-muted-foreground flex flex-wrap items-center justify-between gap-1">
+                <span className="min-w-0 flex-1 truncate">
                   {ipType === "ipv6" && currentSelectedServer?.ipv6 && (
                     <span className="text-purple-600 dark:text-purple-400 font-medium">✓ 已绑定该服务器的 IPv6 专属连接地址</span>
                   )}
@@ -1186,13 +1223,13 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
             {/* 中转落地专属：落地机目标设置 */}
             {nodeMode === "relay" && (
-              <div className="rounded-xl border p-3.5 bg-muted/20 space-y-3">
-                <div className="flex items-center justify-between">
+              <div className="rounded-xl border p-3.5 bg-muted/20 space-y-3 w-full min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                     <ArrowRightLeft className="size-3.5 text-blue-600 dark:text-blue-400" />
                     <span>落地机目标设置</span>
                   </div>
-                  <div className="flex gap-1 bg-muted p-0.5 rounded-md text-[11px]">
+                  <div className="flex flex-wrap gap-1 bg-muted p-0.5 rounded-md text-[11px]">
                     <button
                       type="button"
                       className={`px-2 py-0.5 rounded transition-all ${
@@ -1219,21 +1256,21 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 </div>
 
                 {relayTargetMode === "link_existing" ? (
-                  <div className="space-y-1.5">
+                  <div className="space-y-1.5 w-full min-w-0">
                     <Label className="text-xs">选择关联的落地节点</Label>
                     <Select value={selectedTargetNodeId} onValueChange={handleSelectTargetNode}>
-                      <SelectTrigger className="text-xs h-9">
+                      <SelectTrigger className="text-xs h-9 w-full min-w-0">
                         <SelectValue placeholder="点击选择落地代理节点..." />
                       </SelectTrigger>
                       <SelectContent>
                         {proxyNodes.filter(n => !n.is_relay).map(n => (
                           <SelectItem key={n.id} value={String(n.id)}>
-                            <div className="flex items-center justify-between w-full min-w-[320px] gap-3">
-                              <span className="font-medium text-xs truncate">
-                                [{n.server_name}] {n.name}
+                            <div className="flex items-center justify-between w-full min-w-0 max-w-full gap-2">
+                              <span className="font-medium text-xs truncate min-w-0">
+                                {n.name}
                               </span>
                               <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-muted-foreground font-mono">
-                                <span>{n.server_host}:{n.port}</span>
+                                <span className="truncate max-w-[120px]">{n.server_host}:{n.port}</span>
                                 <Badge variant="secondary" className="text-[10px] py-0 px-1">{formatProtocolBadge(n.protocol)}</Badge>
                               </div>
                             </div>
@@ -1242,27 +1279,27 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                       </SelectContent>
                     </Select>
                     {form.remote_host && (
-                      <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                      <p className="text-[11px] text-emerald-600 dark:text-emerald-400 break-words leading-relaxed">
                         ✓ 已自动继承落地目标: {form.remote_host}:{form.remote_port} ({formatProtocolBadge(form.protocol)}) 及其全部解密凭证
                       </p>
                     )}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full min-w-0">
+                    <div className="space-y-1.5 min-w-0">
                       <Label className="text-xs">落地服务器 IP / 域名</Label>
                       <Input
-                        className="text-xs h-8 font-mono"
+                        className="text-xs h-8 font-mono w-full"
                         placeholder="如 156.226.173.102"
                         value={form.remote_host}
                         onChange={e => setForm(prev => ({ ...prev, remote_host: e.target.value }))}
                         required
                       />
                     </div>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 min-w-0">
                       <Label className="text-xs">落地监听端口</Label>
                       <Input
-                        className="text-xs h-8 font-mono"
+                        className="text-xs h-8 font-mono w-full"
                         type="number"
                         placeholder="如 44297"
                         value={form.remote_port}
@@ -1275,33 +1312,47 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </div>
             )}
 
-            {/* 节点名称与协议类型并排展示 */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">节点名称</Label>
+            {/* 节点名称与协议类型并排展示 (响应式网格) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full min-w-0">
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">节点名称</Label>
+                </div>
                 <Input
-                  className="text-xs h-9"
-                  placeholder="如：香港-Reality"
+                  className="text-xs h-9 w-full"
+                  placeholder="如：Reality 或 直连节点"
                   value={form.name}
                   onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
                   required
                 />
+                <div className="flex items-center gap-2 pt-0.5">
+                  <input
+                    type="checkbox"
+                    id="checkbox-server-prefix"
+                    checked={includeServerPrefix}
+                    onChange={e => handleTogglePrefix(e.target.checked)}
+                    className="size-3.5 rounded border-muted-foreground/30 accent-primary cursor-pointer shrink-0"
+                  />
+                  <Label htmlFor="checkbox-server-prefix" className="text-[11px] text-muted-foreground cursor-pointer font-normal select-none">
+                    附加服务器名称前缀 (如 [{form.server_name}])
+                  </Label>
+                </div>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 min-w-0">
                 <Label className="text-xs">{nodeMode === "relay" ? "落地协议类型" : "协议类型"}</Label>
                 <Select 
                   value={form.protocol} 
                   onValueChange={handleProtocolChange}
                   disabled={nodeMode === "relay" && relayTargetMode === "link_existing" && !!selectedTargetNodeId}
                 >
-                  <SelectTrigger className="text-xs h-9">
+                  <SelectTrigger className="text-xs h-9 w-full min-w-0">
                     <SelectValue placeholder="选择协议" />
                   </SelectTrigger>
                   <SelectContent>
                     {PROTOCOL_OPTIONS.map(opt => (
                       <SelectItem key={opt.value} value={opt.value}>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-between w-full gap-2">
                           <span>{opt.label}</span>
                           <Badge variant="secondary" className="text-[10px] py-0 px-1">{opt.badge}</Badge>
                         </div>
@@ -1313,7 +1364,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
             </div>
 
             {!isRequiredCoreInstalled && (
-              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2">
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-400 flex items-start gap-2 w-full min-w-0">
                 <AlertCircle className="size-4 shrink-0 mt-0.5 text-red-600" />
                 <div>
                   <span className="font-semibold">核心未安装提醒：</span>
@@ -1326,8 +1377,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full min-w-0">
+              <div className="space-y-1.5 min-w-0">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs">{nodeMode === "relay" ? "中转机监听端口 (对外开放)" : "端口"}</Label>
                   <button
@@ -1339,7 +1390,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   </button>
                 </div>
                 <Input
-                  className="text-xs h-8 font-mono"
+                  className="text-xs h-8 font-mono w-full"
                   type="number"
                   value={form.port}
                   onChange={e => setForm(prev => ({ ...prev, port: e.target.value }))}
@@ -1348,7 +1399,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </div>
 
               {form.protocol === "ss2022" && (
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 min-w-0">
                   <Label className="text-xs">加密算法</Label>
                   <Select
                     value={form.method}
@@ -1357,7 +1408,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                       handleKeygen("ss2022", m)
                     }}
                   >
-                    <SelectTrigger className="text-xs h-8">
+                    <SelectTrigger className="text-xs h-8 w-full min-w-0">
                       <SelectValue placeholder="选择加密" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1369,10 +1420,10 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               )}
 
               {form.protocol === "socks5" && (
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 min-w-0">
                   <Label className="text-xs">用户名 (可选)</Label>
                   <Input
-                    className="text-xs h-8"
+                    className="text-xs h-8 w-full"
                     placeholder="留空为无认证"
                     value={form.username}
                     onChange={e => setForm(prev => ({ ...prev, username: e.target.value }))}
@@ -1381,10 +1432,10 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               )}
 
               {(form.protocol.includes("ws") || form.protocol.includes("xhttp")) && (
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 min-w-0">
                   <Label className="text-xs">路径 (Path)</Label>
                   <Input
-                    className="text-xs h-8 font-mono"
+                    className="text-xs h-8 font-mono w-full"
                     value={form.ws_path}
                     onChange={e => setForm(prev => ({ ...prev, ws_path: e.target.value }))}
                   />
@@ -1393,7 +1444,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
             </div>
 
             {(form.protocol === "vless_reality" || form.protocol === "vless_reality_xhttp") && (
-              <div className="rounded-lg border p-3 bg-muted/20 space-y-2.5">
+              <div className="rounded-lg border p-3 bg-muted/20 space-y-2.5 w-full min-w-0">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium">Reality 伪装与 x25519 密钥</span>
                   <button
@@ -1406,37 +1457,37 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs w-full min-w-0">
+                  <div className="min-w-0">
                     <Label className="text-[11px] text-muted-foreground">SNI 伪装域名</Label>
                     <Input
-                      className="text-xs h-7 font-mono"
+                      className="text-xs h-7 font-mono w-full"
                       value={form.sni}
                       onChange={e => setForm(prev => ({ ...prev, sni: e.target.value, dest: `${e.target.value}:443` }))}
                     />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <Label className="text-[11px] text-muted-foreground">Dest 目标</Label>
                     <Input
-                      className="text-xs h-7 font-mono"
+                      className="text-xs h-7 font-mono w-full"
                       value={form.dest}
                       onChange={e => setForm(prev => ({ ...prev, dest: e.target.value }))}
                     />
                   </div>
                 </div>
 
-                <div className="space-y-1 text-xs">
+                <div className="space-y-1 text-xs w-full min-w-0">
                   <Label className="text-[11px] text-muted-foreground">Public Key (公钥)</Label>
-                  <Input className="text-xs h-7 font-mono bg-background" value={form.public_key} readOnly />
+                  <Input className="text-xs h-7 font-mono bg-background w-full truncate" value={form.public_key} readOnly />
                 </div>
               </div>
             )}
 
             {form.protocol === "hysteria2" && (
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 w-full min-w-0">
                 <Label className="text-xs">SNI 伪装域名</Label>
                 <Input
-                  className="text-xs h-8 font-mono"
+                  className="text-xs h-8 font-mono w-full"
                   value={form.sni}
                   placeholder="如: bing.com 或 www.apple.com"
                   onChange={e => setForm(prev => ({ ...prev, sni: e.target.value, dest: `https://${e.target.value}` }))}
@@ -1445,7 +1496,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </div>
             )}
 
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 w-full min-w-0">
               <div className="flex items-center justify-between">
                 <Label className="text-xs">
                   {form.protocol === "ss2022" ? "预共享密钥 (Base64 Key)" : 
@@ -1461,7 +1512,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 </button>
               </div>
               <Input
-                className="text-xs h-8 font-mono"
+                className="text-xs h-8 font-mono w-full"
                 value={form.protocol === "ss2022" || form.protocol === "trojan" || form.protocol === "socks5" || form.protocol === "hysteria2" ? form.password : form.uuid}
                 onChange={e => {
                   const val = e.target.value

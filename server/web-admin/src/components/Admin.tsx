@@ -2173,7 +2173,216 @@ const DB_ROWS: [string, string][] = [
   ["ping_record", "延迟记录"],
 ]
 
-function Data() {
+function TelegramBackupCard({ go, onOpenPicker }: { go?: (to: string) => void; onOpenPicker?: () => void }) {
+  const [config, setConfig] = useState<{
+    enabled: boolean
+    interval_hours: number
+    custom_chat: string
+    default_chat: string
+    has_token: boolean
+    last_time: number
+    last_status: string
+  } | null>(null)
+  const [enabled, setEnabled] = useState(false)
+  const [intervalHours, setIntervalHours] = useState("24")
+  const [customChat, setCustomChat] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [running, setRunning] = useState(false)
+
+  const loadConfig = () => {
+    fetch("/api/proxy/backup/telegram/config")
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.ok) {
+          setConfig(res)
+          setEnabled(res.enabled)
+          setIntervalHours(String(res.interval_hours || 24))
+          setCustomChat(res.custom_chat || "")
+        }
+      })
+      .catch(() => {})
+  }
+
+  useEffect(() => {
+    loadConfig()
+  }, [])
+
+  const tgConfigured = Boolean(config?.has_token && (config?.default_chat || customChat.trim()))
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/backup/telegram/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled,
+          interval_hours: parseInt(intervalHours, 10) || 24,
+          custom_chat: customChat.trim(),
+        }),
+      }).then((r) => r.json())
+      if (res.ok) {
+        toast.success("定时备份设置已保存")
+        loadConfig()
+      } else {
+        toast.error(res.error || "保存失败")
+      }
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRunNow = async () => {
+    setRunning(true)
+    try {
+      const res = await fetch("/api/proxy/backup/telegram/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ custom_chat: customChat.trim() }),
+      }).then((r) => r.json())
+      if (res.ok) {
+        toast.success(res.message || "备份已成功推送至 Telegram！")
+        loadConfig()
+      } else {
+        toast.error(res.error || "备份发送失败")
+      }
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const formatTime = (ts?: number) => {
+    if (!ts) return "尚未执行"
+    return new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false })
+  }
+
+  const isConfigured = Boolean(enabled && tgConfigured)
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Database className="size-4 text-primary" />
+            <h3 className="text-sm font-medium">Telegram 机器人定时自动备份</h3>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            利用「通知」中配置的 Telegram 机器人，按指定周期自动将系统 SQLite 完整数据库（含节点、用户、设置及许可证数据）打包为 Gzip 镜像压缩包（.db.gz）推送到指定的 Telegram Chat。
+          </p>
+        </div>
+        <Badge variant={isConfigured ? "secondary" : "outline"} className="shrink-0">
+          {isConfigured ? "已开启自动备份" : "未开启"}
+        </Badge>
+      </div>
+
+      {!tgConfigured && config !== null && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-500 flex flex-wrap items-center justify-between gap-2">
+          <span>⚠️ 提示：自动备份功能复用「通知」页面中配置的 Telegram 机器人。当前尚未检测到有效的 Telegram 配置。</span>
+          {go && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs border-amber-500/30 text-amber-500 hover:bg-amber-500/20 cursor-pointer"
+              onClick={() => go("/admin/notify")}
+            >
+              去配置 Telegram
+            </Button>
+          )}
+        </div>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="定时自动备份" hint="后台守护进程常驻独立调度，服务器重启自动生效">
+          <div className="flex h-9 items-center gap-3">
+            <Switch
+              id="backup-enabled-switch"
+              checked={enabled}
+              onCheckedChange={setEnabled}
+              disabled={!tgConfigured}
+            />
+            <Label htmlFor="backup-enabled-switch" className="cursor-pointer text-sm">
+              {enabled ? "开启自动定时备份" : "已关闭定时备份"}
+            </Label>
+          </div>
+        </Field>
+
+        <Field label="备份执行周期" hint="推荐设置为每天一次">
+          <Select value={intervalHours} onValueChange={setIntervalHours} disabled={!enabled}>
+            <SelectTrigger>
+              <SelectValue placeholder="选择备份周期" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="6">每 6 小时备份一次</SelectItem>
+              <SelectItem value="12">每 12 小时备份一次</SelectItem>
+              <SelectItem value="24">每天备份一次 (推荐)</SelectItem>
+              <SelectItem value="72">每 3 天备份一次</SelectItem>
+              <SelectItem value="168">每周备份一次</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+
+        <Field
+          label="专属接收 Chat ID（可选）"
+          hint={config?.default_chat ? `留空默认使用「通知」设置中的 Chat ID: ${config.default_chat}` : "留空则使用「通知」设置中配置的 Chat ID"}
+        >
+          <Input
+            placeholder={config?.default_chat || "-100xxxxxxxxxx"}
+            value={customChat}
+            onChange={(e) => setCustomChat(e.target.value)}
+          />
+        </Field>
+
+        <Field label="最近备份状态" hint={config?.last_status ? `运行记录: ${config.last_status}` : "暂无历史备份记录"}>
+          <div className="flex h-9 items-center text-xs text-muted-foreground">
+            <span className="font-mono">上次备份: {formatTime(config?.last_time)}</span>
+          </div>
+        </Field>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <Button size="sm" onClick={handleSave} disabled={saving}>
+          {saving ? "保存中…" : "保存备份设置"}
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={running || !tgConfigured}
+          onClick={handleRunNow}
+        >
+          <Send className="mr-1 size-3.5" />
+          {running ? "正在打包并发送至 TG…" : "立即备份并推送到 TG"}
+        </Button>
+        <Button size="sm" variant="outline" asChild>
+          <a href="/api/proxy/backup/download" download>
+            <Download className="mr-1 size-3.5" />
+            导出下载镜像副本 (.db.gz)
+          </a>
+        </Button>
+        {onOpenPicker && (
+          <Button size="sm" variant="secondary" onClick={onOpenPicker}>
+            <Upload className="mr-1 size-3.5" />
+            导入恢复备份包 (.db / .db.gz)
+          </Button>
+        )}
+      </div>
+
+      <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground space-y-1">
+        <div className="font-medium text-foreground flex items-center gap-1.5">
+          <span>💡 备份文件如何导入与还原？</span>
+        </div>
+        <p>
+          从 Telegram 机器人下载推送的 <code>monitor_backup_*.db.gz</code> 文件后，可直接点击上方的<strong>「导入恢复备份包」</strong>或「备份」卡片中的<strong>「导入备份」</strong>按钮上传。系统已全面支持 <code>.db</code> 与 <code>.db.gz</code>，将在浏览器本地自动完成解压验算并覆盖恢复，所有服务器、代理节点、用户及许可证数据即刻恢复。
+        </p>
+      </div>
+    </Card>
+  )
+}
+
+function Data({ go }: { go?: (to: string) => void }) {
   const [info, setInfo] = useState<DbInfo | null>(null)
   const [busy, setBusy] = useState("")
   const [confirm, setConfirm] = useState<"vacuum" | null>(null)
@@ -2207,7 +2416,24 @@ function Data() {
     setSent(0)
     abort.current = new AbortController()
     try {
-      await upload("/db/restore", file, setSent, abort.current.signal)
+      let uploadFile = file
+      // 支持直接导入来自 Telegram 机器人推送的 .db.gz 镜像备份
+      if (file.name.endsWith(".gz") || file.name.endsWith(".gzip")) {
+        toast.info("检测到 Gzip 压缩备份包，正在解压校验...")
+        try {
+          const ds = new DecompressionStream("gzip")
+          const decompressedStream = file.stream().pipeThrough(ds)
+          const res = new Response(decompressedStream)
+          const blob = await res.blob()
+          const uncompressedName = file.name.replace(/\.gz$/i, "").replace(/\.gzip$/i, "")
+          uploadFile = new File([blob], uncompressedName.endsWith(".db") ? uncompressedName : `${uncompressedName}.db`, {
+            type: "application/octet-stream",
+          })
+        } catch (decompErr) {
+          throw new Error("解压 .gz 备份文件失败，请确认文件是否完整: " + (decompErr as Error).message)
+        }
+      }
+      await upload("/db/restore", uploadFile, setSent, abort.current.signal)
       toast.success("已恢复，正在重新加载")
       // Every node, setting and session on the page came from the database just
       // replaced.
@@ -2289,7 +2515,7 @@ function Data() {
           <input
             ref={picker}
             type="file"
-            accept=".db,application/octet-stream"
+            accept=".db,.gz,.gzip,application/octet-stream,application/gzip,application/x-gzip"
             className="hidden"
             onChange={(e) => {
               setPending(e.target.files?.[0] ?? null)
@@ -2298,6 +2524,8 @@ function Data() {
           />
         </div>
       </Card>
+
+      <TelegramBackupCard go={go} onOpenPicker={() => picker.current?.click()} />
 
       {confirm === "vacuum" && (
         <ConfirmDialog
@@ -2312,7 +2540,11 @@ function Data() {
       {pending && (
         <ConfirmDialog
           title="用备份覆盖当前数据？"
-          description={`将用 ${pending.name}（${bytes(pending.size)}）整体替换当前数据库。当前的节点、设置和历史全部丢失，且无法撤销。`}
+          description={`将用 ${pending.name}（${bytes(pending.size)}）整体替换当前数据库。当前的节点、设置和历史全部丢失，且无法撤销。${
+            pending.name.endsWith(".gz") || pending.name.endsWith(".gzip")
+              ? "（已识别为 Telegram 自动备份压缩包，系统将自动解压还原）"
+              : ""
+          }`}
           confirmLabel={busy === "restore" ? `已上传 ${bytes(sent)} / ${bytes(pending.size)}` : "确认恢复"}
           busy={!!busy}
           onClose={() => { abort.current?.abort(); setPending(null) }}
@@ -2389,7 +2621,7 @@ export function Admin({
         ) : path === "/admin/notify" ? (
           <Notify nodes={nodes} refresh={refresh} />
         ) : path === "/admin/data" ? (
-          <Data />
+          <Data go={go} />
         ) : path === "/admin/themes" ? (
           <Themes />
         ) : path === "/admin/security" ? (

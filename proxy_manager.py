@@ -1,3 +1,4 @@
+import gzip
 import json
 import os
 import random
@@ -6,8 +7,11 @@ import secrets
 import socket
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -976,6 +980,190 @@ def init_db():
             """, (adm_hash, sub_tok, int(time.time())))
     conn.close()
 
+def get_setting(key, default=""):
+    try:
+        conn = get_db()
+        cur = conn.execute("SELECT value FROM setting WHERE key = ?", (key,))
+        row = cur.fetchone()
+        conn.close()
+        return row["value"] if row else default
+    except Exception:
+        return default
+
+def set_setting(key, value):
+    try:
+        conn = get_db()
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)", (key, str(value)))
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[set_setting error] {e}")
+        return False
+
+def generate_backup_gz():
+    fd, tmp_db = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        dst = sqlite3.connect(tmp_db)
+        src = sqlite3.connect(DB_PATH)
+        try:
+            src.backup(dst)
+        finally:
+            src.close()
+            dst.close()
+
+        with open(tmp_db, "rb") as f_in:
+            raw_data = f_in.read()
+
+        gz_data = gzip.compress(raw_data, compresslevel=6)
+        raw_size = len(raw_data)
+        gz_size = len(gz_data)
+        return gz_data, raw_size, gz_size
+    finally:
+        if os.path.exists(tmp_db):
+            try:
+                os.remove(tmp_db)
+            except Exception:
+                pass
+
+def send_telegram_document(token, chat_id, doc_bytes, filename, caption=""):
+    boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
+    body = bytearray()
+
+    # chat_id
+    body.extend(f"--{boundary}\r\n".encode("utf-8"))
+    body.extend(f'Content-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n'.encode("utf-8"))
+
+    # caption
+    if caption:
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n'.encode("utf-8"))
+
+    # document
+    body.extend(f"--{boundary}\r\n".encode("utf-8"))
+    body.extend(f'Content-Disposition: form-data; name="document"; filename="{filename}"\r\n'.encode("utf-8"))
+    body.extend(b"Content-Type: application/gzip\r\n\r\n")
+    body.extend(doc_bytes)
+    body.extend(b"\r\n")
+
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    req = urllib.request.Request(
+        url,
+        data=bytes(body),
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": "ProxyProbe-Backup/1.0"
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=35) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            if not res.get("ok"):
+                desc = res.get("description", "Telegram API returned error")
+                raise RuntimeError(desc)
+            return res
+    except urllib.error.HTTPError as e:
+        err_msg = str(e)
+        try:
+            err_data = json.loads(e.read().decode("utf-8"))
+            err_msg = err_data.get("description", err_msg)
+        except Exception:
+            pass
+        raise RuntimeError(f"Telegram API 报错: {err_msg}")
+    except Exception as e:
+        raise RuntimeError(f"发送失败: {e}")
+
+def perform_telegram_backup(custom_chat_id=None):
+    token = get_setting("notify_telegram_token", "").strip()
+    chat_id = (custom_chat_id or get_setting("backup_tg_chat", "") or get_setting("notify_telegram_chat", "")).strip()
+
+    if not token:
+        raise ValueError("尚未配置 Telegram Bot Token，请在通知设置中填写并保存")
+    if not chat_id:
+        raise ValueError("尚未配置 Telegram Chat ID，请在通知设置中填写并保存")
+
+    gz_data, raw_size, gz_size = generate_backup_gz()
+
+    server_count = 0
+    node_count = 0
+    user_count = 0
+    try:
+        conn = get_db()
+        cur = conn.execute("SELECT COUNT(*) FROM node")
+        server_count = cur.fetchone()[0]
+        cur = conn.execute("SELECT COUNT(*) FROM proxy_node")
+        node_count = cur.fetchone()[0]
+        cur = conn.execute("SELECT COUNT(*) FROM proxy_user")
+        user_count = cur.fetchone()[0]
+        conn.close()
+    except Exception:
+        pass
+
+    site_name = get_setting("site_name", "ProxyProbe")
+    ts_now = int(time.time())
+    time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts_now))
+    file_time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime(ts_now))
+    filename = f"monitor_backup_{file_time_str}.db.gz"
+
+    caption = (
+        f"📦 ProxyProbe 数据库自动备份\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🌐 站点: {site_name}\n"
+        f"📅 时间: {time_str}\n"
+        f"💾 大小: {gz_size / 1024:.1f} KB (原始: {raw_size / 1024:.1f} KB)\n"
+        f"📊 资产: {server_count} 台服务器 · {node_count} 个代理节点 · {user_count} 位用户\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 还原说明:\n"
+        f"登录管理后台「数据」->「备份」-> 点击「导入备份」上传此 .db.gz 文件即可一键无缝还原；亦可解压为 monitor.db 覆盖 /opt/monitor/data/monitor.db。"
+    )
+
+    send_telegram_document(token, chat_id, gz_data, filename, caption)
+
+    set_setting("backup_tg_last_time", str(ts_now))
+    set_setting("backup_tg_last_status", f"成功 ({time_str}, {gz_size / 1024:.1f} KB)")
+    return True, f"备份成功并已推送至 Telegram ({gz_size / 1024:.1f} KB)", gz_size
+
+def telegram_backup_loop():
+    while True:
+        try:
+            time.sleep(60)
+            enabled = get_setting("backup_tg_enabled", "0") == "1"
+            if not enabled:
+                continue
+
+            token = get_setting("notify_telegram_token", "").strip()
+            chat_id = (get_setting("backup_tg_chat", "") or get_setting("notify_telegram_chat", "")).strip()
+            if not token or not chat_id:
+                continue
+
+            try:
+                interval_hours = int(get_setting("backup_tg_interval_hours", "24"))
+                if interval_hours <= 0:
+                    interval_hours = 24
+            except ValueError:
+                interval_hours = 24
+
+            last_time = 0
+            try:
+                last_time = int(get_setting("backup_tg_last_time", "0"))
+            except ValueError:
+                last_time = 0
+
+            now = int(time.time())
+            if now - last_time >= interval_hours * 3600:
+                print(f"[Backup] 触发定时备份 (周期 {interval_hours} 小时)...")
+                try:
+                    perform_telegram_backup()
+                    print(f"[Backup] 数据库定时备份已成功推送到 Telegram")
+                except Exception as e:
+                    print(f"[Backup Error] 定时备份失败: {e}")
+                    set_setting("backup_tg_last_status", f"失败 ({time.strftime('%Y-%m-%d %H:%M:%S')}: {str(e)[:80]})")
+        except Exception as e:
+            print(f"[Backup Worker Error] {e}")
+
 def hash_password(password, salt=None):
     if not salt:
         salt = secrets.token_hex(16)
@@ -1424,10 +1612,7 @@ def format_node_link(node, user=None):
     host = node.get("server_host") or "189.24.108.25"
     uri_host = format_host_for_uri(host)
     port = node.get("port") or 20443
-    if node.get("is_relay"):
-        name_raw = f"[{node.get('server_name', '中转')}] ➔ {node.get('name', '落地')}"
-    else:
-        name_raw = f"[{node.get('server_name', '本机')}] {node.get('name', 'node')}"
+    name_raw = (node.get("name") or "").strip() or f"Proxy-{port}"
     name = quote(name_raw, safe=":/[] -_()@➔")
     
     if proto == "vless_reality":
@@ -1501,6 +1686,48 @@ def format_node_link(node, user=None):
 
     return ""
 
+def build_subscription_info_nodes(user):
+    """
+    生成用于展示给用户的订阅流量与到期时间虚拟节点
+    让用户在客户端刷新订阅时，直接在节点列表顶部看到自己的剩余流量和到期时间
+    """
+    if not user:
+        return []
+
+    u_bytes = user.get("upload_bytes", 0) or 0
+    d_bytes = user.get("download_bytes", 0) or 0
+    total_used = u_bytes + d_bytes
+    limit = user.get("traffic_limit_bytes", 0) or 0
+    exp_time = user.get("expires_at", 0) or 0
+
+    def format_bytes(b):
+        if b >= 1024**3:
+            return f"{b / (1024**3):.2f} GB"
+        elif b >= 1024**2:
+            return f"{b / (1024**2):.1f} MB"
+        elif b >= 1024:
+            return f"{b / 1024:.1f} KB"
+        else:
+            return f"{b} B"
+
+    used_str = format_bytes(total_used)
+
+    if limit > 0:
+        remaining = max(0, limit - total_used)
+        rem_str = format_bytes(remaining)
+        limit_str = format_bytes(limit)
+        traffic_title = f"📊 剩余流量 | {rem_str} (总计 {limit_str})"
+    else:
+        traffic_title = f"📊 剩余流量 | 不限量 (已用 {used_str})"
+
+    if exp_time > 0:
+        exp_date = time.strftime("%Y-%m-%d", time.localtime(exp_time))
+        expire_title = f"⏳ 订阅到期 | {exp_date}"
+    else:
+        expire_title = "⏳ 订阅到期 | 永久有效"
+
+    return [traffic_title, expire_title]
+
 def generate_clash_yaml(nodes, user=None, warning_msg=None):
     if warning_msg:
         cfg = {
@@ -1549,6 +1776,18 @@ rules:
   - MATCH,DIRECT
 """
 
+    info_proxies = []
+    info_names = []
+    if user:
+        for title in build_subscription_info_nodes(user):
+            info_proxies.append({
+                "name": title,
+                "type": "socks5",
+                "server": "127.0.0.1",
+                "port": 0
+            })
+            info_names.append(title)
+
     proxies = []
     names = []
     for n in nodes:
@@ -1562,11 +1801,7 @@ rules:
             uuid_str = u_uuid
             pwd_str = u_pwd
 
-        if n.get("is_relay"):
-            name = f"[{n.get('server_name', '中转')}] ➔ {n.get('name', '落地')}"
-        else:
-            name = f"[{n.get('server_name', '本机')}] {n.get('name', 'node')}"
-
+        name = (n.get("name") or "").strip() or f"Node-{port}"
         base_name = name
         counter = 2
         while name in names:
@@ -1715,12 +1950,12 @@ rules:
         "mode": "rule",
         "log-level": "info",
         "unified-delay": True,
-        "proxies": proxies,
+        "proxies": info_proxies + proxies,
         "proxy-groups": [
             {
                 "name": "节点选择",
                 "type": "select",
-                "proxies": ["自动选择"] + names
+                "proxies": ["自动选择"] + info_names + names
             },
             {
                 "name": "自动选择",
@@ -1750,7 +1985,7 @@ rules:
             "unified-delay: true",
             "proxies:"
         ]
-        for p in proxies:
+        for p in (info_proxies + proxies):
             lines.append(f"  - name: \"{p['name']}\"")
             lines.append(f"    type: {p['type']}")
             lines.append(f"    server: \"{p['server']}\"")
@@ -1784,6 +2019,8 @@ rules:
         lines.append("    type: select")
         lines.append("    proxies:")
         lines.append("      - \"自动选择\"")
+        for iname in info_names:
+            lines.append(f"      - \"{iname}\"")
         for n in names:
             lines.append(f"      - \"{n}\"")
         lines.append("  - name: \"自动选择\"")
@@ -2622,8 +2859,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 return
 
             links = [format_node_link(n, user=user) for n in nodes if format_node_link(n, user=user)]
+            info_links = []
+            if user:
+                for title in build_subscription_info_nodes(user):
+                    info_links.append(f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:0?security=none#{quote(title)}")
+            all_links = info_links + links
             import base64
-            encoded = base64.b64encode("\n".join(links).encode("utf-8"))
+            encoded = base64.b64encode("\n".join(all_links).encode("utf-8"))
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Subscription-Userinfo", sub_userinfo)
@@ -2759,6 +3001,48 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Unauthorized"}, 401)
             return
 
+        if path == "/api/proxy/backup/telegram/config":
+            enabled = get_setting("backup_tg_enabled", "0") == "1"
+            try:
+                interval_hours = int(get_setting("backup_tg_interval_hours", "24"))
+            except ValueError:
+                interval_hours = 24
+            try:
+                last_time = int(get_setting("backup_tg_last_time", "0"))
+            except ValueError:
+                last_time = 0
+            token = get_setting("notify_telegram_token", "").strip()
+            default_chat = get_setting("notify_telegram_chat", "").strip()
+            custom_chat = get_setting("backup_tg_chat", "").strip()
+            last_status = get_setting("backup_tg_last_status", "")
+            self.send_json({
+                "ok": True,
+                "enabled": enabled,
+                "interval_hours": interval_hours,
+                "custom_chat": custom_chat,
+                "default_chat": default_chat,
+                "has_token": bool(token),
+                "last_time": last_time,
+                "last_status": last_status
+            })
+            return
+
+        if path == "/api/proxy/backup/download":
+            try:
+                gz_data, raw_size, gz_size = generate_backup_gz()
+                file_time_str = time.strftime("%Y%m%d_%H%M%S")
+                filename = f"monitor_backup_{file_time_str}.db.gz"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/gzip")
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Content-Length", str(len(gz_data)))
+                self.end_headers()
+                self.wfile.write(gz_data)
+                return
+            except Exception as e:
+                self.send_json({"ok": False, "error": f"导出备份失败: {e}"}, 500)
+                return
+
         if path == "/api/proxy/users":
             conn = get_db()
             cur = conn.execute("SELECT * FROM proxy_user ORDER BY id ASC")
@@ -2865,25 +3149,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             local_ipv4 = get_local_ip(socket.AF_INET) or "189.24.108.25"
             local_ipv6 = get_local_ip(socket.AF_INET6)
 
-            servers = [{
-                "id": 0,
-                "name": "本机 (当前服务器)",
-                "host": local_ipv4,
-                "ipv4": local_ipv4,
-                "ipv6": local_ipv6,
-                "is_local": True,
-                "token": "",
-                "xray_installed": local_xray_installed,
-                "xray_running": local_xray_running,
-                "xray_version": "Xray 26.3.27" if local_xray_installed else "",
-                "singbox_installed": local_singbox_installed,
-                "singbox_running": local_singbox_running,
-                "singbox_version": "sing-box 1.14.1" if local_singbox_installed else "",
-                "realm_installed": local_realm_installed,
-                "realm_running": local_realm_running,
-                "realm_version": "Realm 2.9.6" if local_realm_installed else "",
-                "last_seen": now
-            }]
+            servers = []
 
             for r in remote_nodes:
                 r_ipv4 = (r.get("ipv4") or r.get("ip") or "").strip()
@@ -3222,6 +3488,30 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Unauthorized"}, 401)
             return
 
+        if path == "/api/proxy/backup/telegram/config":
+            enabled = "1" if req.get("enabled") else "0"
+            interval_hours = str(max(1, int(req.get("interval_hours", 24))))
+            custom_chat = str(req.get("custom_chat", "")).strip()
+
+            set_setting("backup_tg_enabled", enabled)
+            set_setting("backup_tg_interval_hours", interval_hours)
+            set_setting("backup_tg_chat", custom_chat)
+            self.send_json({"ok": True, "message": "定时备份配置已保存"})
+            return
+
+        if path == "/api/proxy/backup/telegram/run":
+            custom_chat = str(req.get("custom_chat", "")).strip() or None
+            try:
+                ok, msg, gz_size = perform_telegram_backup(custom_chat)
+                self.send_json({
+                    "ok": True,
+                    "message": msg,
+                    "size_kb": round(gz_size / 1024, 1)
+                })
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 500)
+            return
+
         if path == "/api/proxy/users":
             # 商业许可证/套餐配额检查
             conn_chk = get_db()
@@ -3431,8 +3721,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 return
 
             server_id = int(req.get("server_id", 0))
-            server_name = req.get("server_name", "本机")
-            server_host = req.get("server_host", "189.24.108.25")
+            if server_id == 0:
+                self.send_json({"ok": False, "message": "无法使用未纳管的本机创建节点，请先在「探针节点」页面添加服务器！"}, 400)
+                return
+
+            server_name = req.get("server_name", "")
+            server_host = req.get("server_host", "")
             
             # Resolve private IP to public IP
             if (is_private_ip(server_host) or server_host == "127.0.0.1") and server_id != 0:
@@ -3654,6 +3948,8 @@ if __name__ == "__main__":
     license_guard.start_heartbeat_thread(DB_PATH, "http://156.226.173.102:18888")
     t = threading.Thread(target=traffic_collector_loop, daemon=True)
     t.start()
+    t_backup = threading.Thread(target=telegram_backup_loop, daemon=True)
+    t_backup.start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), ProxyHandler)
     print(f"ProxyManager daemon listening on 127.0.0.1:{PORT}")
     server.serve_forever()
