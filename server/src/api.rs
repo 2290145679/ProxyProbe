@@ -569,7 +569,7 @@ pub async fn me(State(app): State<Shared>, headers: HeaderMap) -> Json<Value> {
     Json(json!({
         "authed": authed(&app, &headers),
         "github": app.db.get("github_client_id").is_some_and(|v| !v.is_empty()),
-        "site_name": app.db.get("site_name").unwrap_or_else(|| "Monitor".into()),
+        "site_name": app.db.get("site_name").unwrap_or_else(|| "HHUB".into()),
         "public_page": app.public_page(),
         // Whether this browser may provision is not answered here: a GET carries
         // no `Origin`, so the panel applies `provisioning_allowed`'s rule itself.

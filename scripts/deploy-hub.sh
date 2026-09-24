@@ -568,6 +568,7 @@ try:
         argon_h = ph.hash(admin_pass)
         db.execute("CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT)")
         db.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('admin_password_hash', ?)", (argon_h,))
+        db.execute("INSERT OR IGNORE INTO setting (key, value) VALUES ('site_name', 'HHUB')")
     except Exception as err:
         print(f"  [!] Argon2 哈希设置跳过: {err}")
 

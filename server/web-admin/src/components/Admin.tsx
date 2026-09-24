@@ -1718,7 +1718,7 @@ function SettingsTab() {
       <Card className="gap-4 p-5">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="站点名称">
-            <Input value={String(s.site_name ?? "")} onChange={(e) => set("site_name", e.target.value)} placeholder="Monitor" />
+            <Input value={String(s.site_name ?? "")} onChange={(e) => set("site_name", e.target.value)} placeholder="HHUB" />
           </Field>
           <Field label="历史数据保留天数" hint="超出的明细自动清理，累计流量不受影响">
             <Input
@@ -1923,7 +1923,7 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
         <Field label="消息模板" hint={`纯文本。占位符 ${PLACEHOLDERS}`}>
           <textarea rows={3} className={TEXTAREA} value={text("notify_telegram_text")} onChange={(e) => set("notify_telegram_text", e.target.value)} />
         </Field>
-        <TemplatePreview template={text("notify_telegram_text")} site={text("site_name") || "Monitor"} />
+        <TemplatePreview template={text("notify_telegram_text")} site={text("site_name") || "HHUB"} />
         <div className="flex gap-2">
           <Button
             size="sm"
@@ -1967,7 +1967,7 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
         <Field label="请求体" hint={`以 POST 发送，Content-Type 为 application/json。占位符 ${PLACEHOLDERS}，须写在引号内`}>
           <textarea rows={4} className={TEXTAREA} value={text("notify_webhook_body")} onChange={(e) => set("notify_webhook_body", e.target.value)} />
         </Field>
-        <TemplatePreview template={text("notify_webhook_body")} site={text("site_name") || "Monitor"} json />
+        <TemplatePreview template={text("notify_webhook_body")} site={text("site_name") || "HHUB"} json />
         <div className="flex gap-2">
           <Button
             size="sm"

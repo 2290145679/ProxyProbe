@@ -150,7 +150,7 @@ export default function App() {
           {/* The site name is the way back to the status page, as in the
               theme's own header. */}
           <a href="/" className="font-semibold transition-opacity hover:opacity-70">
-            {me.site_name || "Monitor"}
+            {me.site_name || "HHUB"}
           </a>
           <span className="text-xs text-muted-foreground">后台</span>
           <div className="flex-1" />

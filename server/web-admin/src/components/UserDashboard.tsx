@@ -220,7 +220,7 @@ export function UserDashboard({
       <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-base tracking-tight">{siteName || "Monitor"}</span>
+            <span className="font-bold text-base tracking-tight">{siteName || "HHUB"}</span>
             <Badge variant="outline" className="text-[11px] font-normal">用户中心</Badge>
           </div>
 

@@ -616,7 +616,7 @@ fn span(seconds: i64) -> String {
 }
 
 fn site_name(app: &App) -> String {
-    setting(app, "site_name").unwrap_or_else(|| "Monitor".into())
+    setting(app, "site_name").unwrap_or_else(|| "HHUB".into())
 }
 
 /// Hub-local time with its offset: a hub in a container commonly runs on UTC
