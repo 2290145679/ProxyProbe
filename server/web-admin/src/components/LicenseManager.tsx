@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { ShieldCheck, KeyRound, Copy, Check, RefreshCw, AlertTriangle, Clock, XCircle, Sparkles, Server, Network, Users, ExternalLink, Ticket } from "lucide-react"
+import { ShieldCheck, KeyRound, Copy, Check, RefreshCw, AlertTriangle, Clock, XCircle, Sparkles, Server, Network, Users } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
@@ -151,62 +151,6 @@ export function LicenseManager() {
           刷新状态
         </Button>
       </div>
-
-      {/* 🏷️ 独立商业发卡与签发中心入口卡片 */}
-      <Card className="border border-rose-300/40 dark:border-rose-900/40 bg-gradient-to-r from-rose-500/5 via-card to-card shadow-sm">
-        <CardHeader className="pb-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-start sm:items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-primary/10 text-primary shrink-0 mt-0.5 sm:mt-0">
-                <Ticket className="size-5" />
-              </div>
-              <div>
-                <CardTitle className="text-base font-semibold flex items-center gap-2">
-                  <span>商业发卡与许可证签发中心 (License Center)</span>
-                  <Badge variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10">
-                    运行中 · 端口 18888
-                  </Badge>
-                </CardTitle>
-                <CardDescription className="text-xs mt-1">
-                  服务端已部署并常驻运行独立发卡中心，支持单次批量签发 1~50 张短卡密、五大套餐规格与机器码管控。
-                </CardDescription>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                size="sm"
-                className="gap-1.5 text-xs h-9 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
-                asChild
-              >
-                <a
-                  href="/card/?key=proxyprobe_admin_2026"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ExternalLink className="size-3.5" />
-                  管理发卡中心 (/card/)
-                </a>
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0 pb-4 text-xs text-muted-foreground">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-border/50">
-            <div className="flex items-center gap-2">
-              <span className="size-2 rounded-full bg-emerald-500 shrink-0" />
-              <span>服务端口：<strong className="text-foreground font-mono">:18888</strong> (开箱即用)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="size-2 rounded-full bg-blue-500 shrink-0" />
-              <span>反向代理：<strong className="text-foreground font-mono">/card/</strong></span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="size-2 rounded-full bg-rose-500 shrink-0" />
-              <span>签发能力：<strong className="text-foreground">批量 1~50 张短卡密</strong></span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       {/* 授权状态概览卡片 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

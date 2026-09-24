@@ -109,9 +109,6 @@ view_status() {
     _check_service "caddy" "Caddy 网关服务      "
     _check_service "monitor-hub" "探针主控服务 (Rust) "
     _check_service "proxy-manager" "代理中枢服务 (ProxyManager)"
-    if [ -f /etc/systemd/system/license-center.service ] || [ -d /opt/license-center ]; then
-        _check_service "license-center" "商业发号中心 (License) "
-    fi
 
     echo ""
     echo -e "${BOLD}═══════════════════ 网络与访问信息 ═════════════════${N}"
@@ -135,11 +132,6 @@ view_status() {
             echo -e "  探针公开大屏:     ${C}https://${CUR_DOMAIN}${site_suffix}/${N}"
             echo -e "  管理控制面板:     ${C}https://${CUR_DOMAIN}${site_suffix}/admin${N}"
         fi
-    fi
-
-    if systemctl is-active --quiet license-center 2>/dev/null; then
-        local lic_host="${CUR_DOMAIN:-127.0.0.1}"
-        echo -e "  发号管控中心:     ${C}http://${lic_host}:18888${N}"
     fi
 
     # 用户数与节点数统计
@@ -172,9 +164,7 @@ except Exception:
 restart_all() {
     echo ""
     info "正在重启所有 ProxyProbe 服务..."
-    local extra_svc=""
-    systemctl is-active --quiet license-center 2>/dev/null && extra_svc="license-center"
-    systemctl restart monitor-hub proxy-manager caddy $extra_svc
+    systemctl restart monitor-hub proxy-manager caddy
     sleep 2
     info "服务重启完成！"
     view_status
@@ -184,7 +174,7 @@ restart_all() {
 stop_all() {
     echo ""
     warn "正在停止所有 ProxyProbe 服务..."
-    systemctl stop monitor-hub proxy-manager caddy license-center 2>/dev/null || true
+    systemctl stop monitor-hub proxy-manager caddy 2>/dev/null || true
     info "所有服务已停止！"
 }
 
@@ -192,9 +182,7 @@ stop_all() {
 start_all() {
     echo ""
     info "正在启动所有 ProxyProbe 服务..."
-    local extra_svc=""
-    [ -f /etc/systemd/system/license-center.service ] && extra_svc="license-center"
-    systemctl start monitor-hub proxy-manager caddy $extra_svc
+    systemctl start monitor-hub proxy-manager caddy
     sleep 2
     info "服务启动完成！"
     view_status
