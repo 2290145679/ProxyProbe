@@ -71,12 +71,31 @@ validate_port() {
 # ---- 收集配置 ----
 header "📋 配置信息"
 
+DETECTED_IP=$(curl -s4 --max-time 3 https://api.ipify.org 2>/dev/null || \
+              curl -s4 --max-time 3 https://ifconfig.me 2>/dev/null || \
+              curl -s4 --max-time 3 https://icanhazip.com 2>/dev/null || true)
+DETECTED_IP=$(echo "$DETECTED_IP" | tr -d '[:space:]')
+
 if [ -z "${DOMAIN:-}" ]; then
-  read -r -p "  请输入你的域名（已解析到本机 IP）: " DOMAIN </dev/tty || true
+  echo -e "  ${BOLD}访问域名或 IP 配置${N}:"
+  echo -e "  ${D}• 若有域名（已解析到本机）：输入域名（如 probe.example.com），Caddy 自动申请 SSL 证书并启用 HTTPS${N}"
+  echo -e "  ${D}• 若无域名：直接回车或输入公网 IP（检测到: ${DETECTED_IP:-未识别}），将以纯 IP 模式运行 (HTTP)${N}"
+  if [ -n "$DETECTED_IP" ]; then
+    read -r -p "  请输入域名或公网 IP [回车默认使用纯 IP: ${DETECTED_IP}]: " INPUT_DOMAIN </dev/tty || true
+    DOMAIN="${INPUT_DOMAIN:-$DETECTED_IP}"
+  else
+    read -r -p "  请输入你的域名或公网 IP: " DOMAIN </dev/tty || true
+  fi
 fi
-[ -z "$DOMAIN" ] && die "域名不能为空"
+[ -z "$DOMAIN" ] && die "域名或公网 IP 不能为空"
 DOMAIN=$(echo "$DOMAIN" | tr -d '[:space:]' | sed -E 's#^https?://##' | sed 's#/.*$##')
-[ -z "$DOMAIN" ] && die "解析后的有效域名为空，请检查输入"
+[ -z "$DOMAIN" ] && die "解析后的有效地址为空，请检查输入"
+
+# 判断是 IP 还是域名
+IS_IP=0
+if [[ "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$DOMAIN" =~ ^\[?[0-9a-fA-F:]+\]?$ ]]; then
+  IS_IP=1
+fi
 
 if [ -z "${ADMIN_PASS:-}" ]; then
   read -r -p "  请输入管理员密码（留空则随机生成）: " ADMIN_PASS </dev/tty || true
@@ -86,19 +105,31 @@ if [ -z "$ADMIN_PASS" ]; then
   warn "已随机生成密码: ${BOLD}${ADMIN_PASS}${N}  ← 请务必记录！"
 fi
 
-# Web 外部访问端口 (HTTPS)
-if [ -z "${WEB_PORT:-}" ]; then
-  echo ""
-  echo -e "  ${BOLD}Web 外部访问端口 (HTTPS)${N}:"
-  echo -e "  ${D}• 默认 443 为标准 HTTPS 端口，浏览器直接访问域名即可${N}"
-  echo -e "  ${D}• 若修改为非 443（如 8443），访问后台需加上端口号 (https://$DOMAIN:8443)${N}"
-  echo -e "  ${D}• 若使用 Cloudflare CDN 加速代理，仅支持特定的 HTTPS 端口: 2053, 2083, 2087, 2096, 8443${N}"
-  echo -e "  ${D}• 注意: Caddy 仍需要监听 80 端口用于 Let's Encrypt 申请 SSL 证书验证${N}"
-  read -r -p "  请输入 Web 外部访问端口 [回车默认 443]: " INPUT_WEB_PORT </dev/tty || true
-  WEB_PORT="${INPUT_WEB_PORT:-443}"
+# Web 外部访问端口
+if [ "$IS_IP" = "1" ]; then
+  if [ -z "${WEB_PORT:-}" ]; then
+    echo ""
+    echo -e "  ${BOLD}Web 外部访问端口 (纯 IP 模式 - HTTP)${N}:"
+    echo -e "  ${D}• 默认 80 为标准 HTTP 端口，浏览器直接访问 http://${DOMAIN} 即可${N}"
+    echo -e "  ${D}• 若修改为非 80（如 8080），访问后台需加上端口号 (http://${DOMAIN}:8080/admin)${N}"
+    read -r -p "  请输入 Web 外部访问端口 [回车默认 80]: " INPUT_WEB_PORT </dev/tty || true
+    WEB_PORT="${INPUT_WEB_PORT:-80}"
+  fi
+  validate_port "$WEB_PORT" "Web 外部端口"
+else
+  if [ -z "${WEB_PORT:-}" ]; then
+    echo ""
+    echo -e "  ${BOLD}Web 外部访问端口 (域名模式 - HTTPS)${N}:"
+    echo -e "  ${D}• 默认 443 为标准 HTTPS 端口，浏览器直接访问域名即可${N}"
+    echo -e "  ${D}• 若修改为非 443（如 8443），访问后台需加上端口号 (https://$DOMAIN:8443)${N}"
+    echo -e "  ${D}• 若使用 Cloudflare CDN 加速代理，仅支持特定的 HTTPS 端口: 2053, 2083, 2087, 2096, 8443${N}"
+    echo -e "  ${D}• 注意: Caddy 仍需要监听 80 端口用于 Let's Encrypt 申请 SSL 证书验证${N}"
+    read -r -p "  请输入 Web 外部访问端口 [回车默认 443]: " INPUT_WEB_PORT </dev/tty || true
+    WEB_PORT="${INPUT_WEB_PORT:-443}"
+  fi
+  validate_port "$WEB_PORT" "Web 外部端口"
+  [ "$WEB_PORT" = "80" ] && die "域名 HTTPS 模式下 Web 外部端口不能设为 80，该端口由 Caddy 用于 ACME 证书申请！"
 fi
-validate_port "$WEB_PORT" "Web 外部端口"
-[ "$WEB_PORT" = "80" ] && die "Web 外部端口不能设为 80，该端口由 Caddy 用于 ACME 证书申请！"
 
 # 探针主控 (monitor-hub) 本地端口
 if [ -z "${HUB_PORT:-}" ]; then
@@ -127,8 +158,19 @@ validate_port "$PM_PORT" "代理中枢内部端口"
 [ "$WEB_PORT" = "$HUB_PORT" ] && die "Web 外部端口 ($WEB_PORT) 不能与探针内部端口 ($HUB_PORT) 冲突！"
 [ "$WEB_PORT" = "$PM_PORT" ] && die "Web 外部端口 ($WEB_PORT) 不能与代理中枢内部端口 ($PM_PORT) 冲突！"
 
+if [ "$IS_IP" = "1" ]; then
+  SITE_URL="http://${DOMAIN}"
+  [ "$WEB_PORT" != "80" ] && SITE_URL="http://${DOMAIN}:${WEB_PORT}"
+  DEPLOY_MODE="纯 IP 模式 (HTTP)"
+else
+  SITE_URL="https://${DOMAIN}"
+  [ "$WEB_PORT" != "443" ] && SITE_URL="https://${DOMAIN}:${WEB_PORT}"
+  DEPLOY_MODE="域名模式 (HTTPS 自动证书)"
+fi
+
 echo ""
-echo -e "  域名:               ${BOLD}${DOMAIN}${N}"
+echo -e "  部署模式:           ${BOLD}${DEPLOY_MODE}${N}"
+echo -e "  访问地址:           ${BOLD}${SITE_URL}${N}"
 echo -e "  管理密码:           ${BOLD}${ADMIN_PASS}${N}"
 echo -e "  Web 外部访问端口:   ${BOLD}${WEB_PORT}${N}"
 echo -e "  探针主控内部端口:   ${BOLD}${HUB_PORT}${N} (127.0.0.1)"
@@ -238,8 +280,11 @@ systemctl disable monitor-hub.service 2>/dev/null || true
 rm -f /etc/systemd/system/multi-user.target.wants/monitor-hub.service
 rm -f /etc/systemd/system/monitor-hub.service
 
-SITE_URL="https://$DOMAIN"
-[ "$WEB_PORT" != "443" ] && SITE_URL="https://${DOMAIN}:${WEB_PORT}"
+if [ "$IS_IP" = "1" ]; then
+  HUB_EXEC="$ROOT/monitor-hub --listen 127.0.0.1:$HUB_PORT --db $DATA/monitor.db"
+else
+  HUB_EXEC="$ROOT/monitor-hub --listen 127.0.0.1:$HUB_PORT --db $DATA/monitor.db --site $SITE_URL"
+fi
 
 cat > /etc/systemd/system/monitor-hub.service << EOF
 [Unit]
@@ -252,7 +297,7 @@ Type=simple
 User=monitor
 Group=monitor
 WorkingDirectory=$ROOT
-ExecStart=$ROOT/monitor-hub --listen 127.0.0.1:$HUB_PORT --db $DATA/monitor.db --site $SITE_URL
+ExecStart=$HUB_EXEC
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
@@ -370,11 +415,70 @@ info "proxy-manager 已启动（端口 $PM_PORT）"
 # ---- 步骤 6: 配置 Caddy ----
 header "步骤 6/8 · 配置 Caddy 反向代理"
 
-CADDY_SITE="$DOMAIN"
-[ "$WEB_PORT" != "443" ] && CADDY_SITE="${DOMAIN}:${WEB_PORT}"
-
 mkdir -p /etc/caddy
-cat > /etc/caddy/Caddyfile << CADDY_EOF
+
+if [ "$IS_IP" = "1" ]; then
+  # 纯 IP 模式：使用标准 HTTP 监听，禁用 ACME，并为探针主控注入 Header 避免 Origin 拒绝
+  cat > /etc/caddy/Caddyfile << CADDY_EOF
+http://$DOMAIN:$WEB_PORT {
+    # 代理管理 API（订阅、用户、节点等）
+    handle /api/proxy/* {
+        reverse_proxy 127.0.0.1:$PM_PORT
+    }
+
+    # 子节点安装脚本（由 proxy-manager 动态生成）
+    handle /proxy-agent.sh {
+        reverse_proxy 127.0.0.1:$PM_PORT
+    }
+
+    # 子节点探针安装脚本与离线二进制分发
+    handle /install.sh {
+        root * $SCRIPTS_DIR
+        try_files /install.sh
+        file_server
+    }
+    handle /Xray-linux-*.zip {
+        root * $SCRIPTS_DIR
+        file_server
+    }
+    handle /sing-box-linux-*.tar.gz {
+        root * $SCRIPTS_DIR
+        file_server
+    }
+    handle /realm-*.tar.gz {
+        root * $SCRIPTS_DIR
+        file_server
+    }
+
+    # 管理后台前端（React SPA）
+    redir /admin /admin/
+    handle_path /admin* {
+        root * $WEB_DIST
+        try_files {path} /index.html
+        file_server
+    }
+
+    # 探针主控（纯 IP 模式：注入伪装 Origin 头与 Sec-Fetch-Site 满足安全校验）
+    handle {
+        reverse_proxy 127.0.0.1:$HUB_PORT {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up Origin https://probe.local
+            header_up Sec-Fetch-Site same-origin
+        }
+    }
+}
+CADDY_EOF
+else
+  # 域名模式：配置自动 SSL 证书与双轨降级
+  CADDY_SITE="$DOMAIN"
+  [ "$WEB_PORT" != "443" ] && CADDY_SITE="${DOMAIN}:${WEB_PORT}"
+
+  cat > /etc/caddy/Caddyfile << CADDY_EOF
+{
+    email admin@${DOMAIN}
+}
+
 $CADDY_SITE {
     # 代理管理 API（订阅、用户、节点等）
     handle /api/proxy/* {
@@ -419,6 +523,7 @@ $CADDY_SITE {
     }
 }
 CADDY_EOF
+fi
 
 systemctl daemon-reload
 systemctl enable --force caddy.service 2>/dev/null || {
@@ -497,16 +602,26 @@ command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --reload 2>/dev/null || 
 info "防火墙端口已放行 ($PORTS_TO_OPEN)"
 
 # ---- 完成 ----
-SITE_SUFFIX=""
-[ "$WEB_PORT" != "443" ] && SITE_SUFFIX=":$WEB_PORT"
+if [ "$IS_IP" = "1" ]; then
+  SITE_SUFFIX=""
+  [ "$WEB_PORT" != "80" ] && SITE_SUFFIX=":$WEB_PORT"
+  DASH_URL="http://${DOMAIN}${SITE_SUFFIX}/"
+  ADMIN_URL="http://${DOMAIN}${SITE_SUFFIX}/admin"
+else
+  SITE_SUFFIX=""
+  [ "$WEB_PORT" != "443" ] && SITE_SUFFIX=":$WEB_PORT"
+  DASH_URL="https://${DOMAIN}${SITE_SUFFIX}/"
+  ADMIN_URL="https://${DOMAIN}${SITE_SUFFIX}/admin"
+fi
 
 echo ""
 echo -e "${BOLD}${G}══════════════════════════════════════════════${N}"
 echo -e "${BOLD}${G}  🎉  ProxyProbe 部署完成！${N}"
 echo -e "${BOLD}${G}══════════════════════════════════════════════${N}"
 echo ""
-echo -e "  探针公开大屏:       ${C}https://${DOMAIN}${SITE_SUFFIX}/${N}"
-echo -e "  管理控制面板:       ${C}https://${DOMAIN}${SITE_SUFFIX}/admin${N}"
+echo -e "  部署模式:           ${BOLD}${DEPLOY_MODE}${N}"
+echo -e "  探针公开大屏:       ${C}${DASH_URL}${N}"
+echo -e "  管理控制面板:       ${C}${ADMIN_URL}${N}"
 echo ""
 echo -e "  管理账号:           ${BOLD}admin${N}"
 echo -e "  管理密码:           ${BOLD}${ADMIN_PASS}${N}"
@@ -519,7 +634,7 @@ echo -e "${BOLD}${C}════════════════════
 echo -e "  ${BOLD}${C}✨ 快捷运维工具已安装！${N}"
 echo -e "  在任意终端直接输入 ${BOLD}${G}hhub${N} 即可进入控制台："
 echo -e "  • 一键无损升级系统 (代码/前端/核心二进制)"
-echo -e "  • 修改 Web 外部访问端口 / 内部监听端口 / 绑定域名"
+echo -e "  • 修改 Web 外部访问端口 / 内部监听端口 / 绑定域名或 IP"
 echo -e "  • 重置管理员登录密码"
 echo -e "  • 实时查看服务运行日志 / 服务批量重启、停止、启动"
 echo -e "  • SQLite 数据库备份与还原"
@@ -527,7 +642,7 @@ echo -e "  • 安全卸载与数据管理"
 echo -e "${BOLD}${C}══════════════════════════════════════════════${N}"
 echo ""
 echo -e "  ${BOLD}下一步：${N}"
-echo -e "  1. 访问 ${C}https://${DOMAIN}${SITE_SUFFIX}/admin${N} 登录管理后台"
+echo -e "  1. 访问 ${C}${ADMIN_URL}${N} 登录管理后台"
 echo -e "  2. 在「服务器」页面添加子节点，复制一键安装指令"
 echo -e "  3. 在「用户」页面创建代理用户"
 echo ""

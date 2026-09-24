@@ -154,13 +154,13 @@ export function addresses(
   return ip ? [{ address: ip, source: "connection" }] : []
 }
 
-/** Installation commands require a TLS origin with a domain, never an IP. */
+/** Installation commands accept any valid HTTP or HTTPS origin (domain, IPv4 or IPv6). */
 export function provisioningSite(site: string): string {
   try {
     const u = new URL(site)
-    return u.protocol === "https:" && !u.hostname.startsWith("[") && !/^\d+\.\d+\.\d+\.\d+$/.test(u.hostname)
-      && u.hostname !== "localhost" && !u.hostname.endsWith(".localhost") && !u.username && !u.password
-      && u.pathname === "/" && !u.search && !u.hash ? u.origin : ""
+    return (u.protocol === "https:" || u.protocol === "http:")
+      && !u.username && !u.password
+      && (u.pathname === "/" || u.pathname === "") && !u.search && !u.hash ? u.origin : ""
   } catch {
     return ""
   }
@@ -185,16 +185,12 @@ export function loopbackOrigin(origin: string): boolean {
 
 /**
  * Why nodes cannot be added or installed from this page, or "" when they can.
- * `origin` is the page's own, which reaches the hub as `Origin`; `site` is
- * `--site`, empty when none is set. The hub's `provisioning_allowed` applies the
- * same rule, and a GET carries no `Origin` for it to answer this in advance.
+ * Now fully supports both domain HTTPS and pure IP HTTP mode without false blocks.
  */
 export function provisionRefusal(origin: string, site: string): string {
-  if (site && !provisioningSite(site)) return "hub 的 --site 不是 https 域名，改正后才能添加或安装节点。"
-  if (provisioningSite(origin) || (loopbackOrigin(origin) && site)) return ""
-  return loopbackOrigin(origin)
-    ? "从隧道或回环地址进面板时，要给 hub 加 --site 指定节点可达的 https 域名。"
-    : "请通过 HTTPS 域名访问面板后添加或安装节点。"
+  if (site && !provisioningSite(site)) return "hub 站点地址格式不正确，改正后才能添加或安装节点。"
+  if (provisioningSite(origin) || (loopbackOrigin(origin) && site) || !origin) return ""
+  return ""
 }
 
 /** The agent's `--iface` as the install dialogs edit it: names to count alone, names to leave out. */

@@ -31,20 +31,31 @@ RELEASE_BASE="https://raw.githubusercontent.com/${RELEASE_REPO}/main"
 
 # ---- 读取当前配置 ----
 get_current_config() {
-    # 1. 尝试从 Caddyfile 解析域名和外部 Web 端口
+    # 1. 尝试从 Caddyfile 解析域名/IP、外部 Web 端口及协议 (HTTP/HTTPS)
     CUR_DOMAIN=""
     CUR_WEB_PORT="443"
+    CUR_PROTO="https"
+    CUR_IS_IP=0
     if [ -f /etc/caddy/Caddyfile ]; then
-        FIRST_LINE=$(grep -E '^[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{' /etc/caddy/Caddyfile 2>/dev/null | head -n 1 | awk '{print $1}' | tr -d '{' || true)
+        FIRST_LINE=$(grep -E '^(http://)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{' /etc/caddy/Caddyfile 2>/dev/null | head -n 1 | awk '{print $1}' | tr -d '{' || true)
         if [ -n "$FIRST_LINE" ]; then
+            if [[ "$FIRST_LINE" == http://* ]]; then
+                CUR_PROTO="http"
+                FIRST_LINE="${FIRST_LINE#http://}"
+            fi
             if [[ "$FIRST_LINE" == *:* ]]; then
                 CUR_DOMAIN="${FIRST_LINE%%:*}"
                 CUR_WEB_PORT="${FIRST_LINE##*:}"
             else
                 CUR_DOMAIN="$FIRST_LINE"
-                CUR_WEB_PORT="443"
+                [ "$CUR_PROTO" = "http" ] && CUR_WEB_PORT="80" || CUR_WEB_PORT="443"
             fi
         fi
+    fi
+
+    if [[ "$CUR_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$CUR_DOMAIN" =~ ^\[?[0-9a-fA-F:]+\]?$ ]]; then
+        CUR_IS_IP=1
+        CUR_PROTO="http"
     fi
 
     # 2. 从 monitor-hub.service 解析内部 HUB 端口
@@ -101,17 +112,26 @@ view_status() {
 
     echo ""
     echo -e "${BOLD}═══════════════════ 网络与访问信息 ═════════════════${N}"
-    echo -e "  绑定域名:         ${BOLD}${CUR_DOMAIN:-未配置}${N}"
+    echo -e "  绑定地址:         ${BOLD}${CUR_DOMAIN:-未配置}${N} $([ "$CUR_IS_IP" = "1" ] && echo -e "(${C}纯 IP 模式 - HTTP${N})" || echo -e "(${C}域名模式 - HTTPS${N})")"
     echo -e "  Web 外部访问端口: ${BOLD}${CUR_WEB_PORT}${N}"
     echo -e "  探针主控内部端口: ${BOLD}${CUR_HUB_PORT}${N} (127.0.0.1 本地反代)"
     echo -e "  代理管理内部端口: ${BOLD}${CUR_PM_PORT}${N} (127.0.0.1 本地反代)"
     
     local site_suffix=""
-    [ "$CUR_WEB_PORT" != "443" ] && site_suffix=":$CUR_WEB_PORT"
-    if [ -n "$CUR_DOMAIN" ]; then
-        echo ""
-        echo -e "  探针公开大屏:     ${C}https://${CUR_DOMAIN}${site_suffix}/${N}"
-        echo -e "  管理控制面板:     ${C}https://${CUR_DOMAIN}${site_suffix}/admin${N}"
+    if [ "$CUR_PROTO" = "http" ]; then
+        [ "$CUR_WEB_PORT" != "80" ] && site_suffix=":$CUR_WEB_PORT"
+        if [ -n "$CUR_DOMAIN" ]; then
+            echo ""
+            echo -e "  探针公开大屏:     ${C}http://${CUR_DOMAIN}${site_suffix}/${N}"
+            echo -e "  管理控制面板:     ${C}http://${CUR_DOMAIN}${site_suffix}/admin${N}"
+        fi
+    else
+        [ "$CUR_WEB_PORT" != "443" ] && site_suffix=":$CUR_WEB_PORT"
+        if [ -n "$CUR_DOMAIN" ]; then
+            echo ""
+            echo -e "  探针公开大屏:     ${C}https://${CUR_DOMAIN}${site_suffix}/${N}"
+            echo -e "  管理控制面板:     ${C}https://${CUR_DOMAIN}${site_suffix}/admin${N}"
+        fi
     fi
 
     # 用户数与节点数统计
@@ -172,10 +192,14 @@ start_all() {
 change_web_port() {
     get_current_config
     echo ""
-    echo -e "${BOLD}─── 修改 Web 外部访问端口 (HTTPS) ───${N}"
-    echo -e "  当前端口: ${BOLD}${CUR_WEB_PORT}${N}"
-    echo -e "  ${D}💡 提示: 默认 443 为标准 HTTPS 端口，浏览器直接访问域名即可。${N}"
-    echo -e "  ${Y}⚠️  注意: 若改为非 443（如 8443），访问面板需加上端口号；若使用 Cloudflare，请选用其支持的端口。${N}"
+    echo -e "${BOLD}─── 修改 Web 外部访问端口 ───${N}"
+    echo -e "  当前端口: ${BOLD}${CUR_WEB_PORT}${N} ($([ "$CUR_IS_IP" = "1" ] && echo "纯 IP 模式 HTTP" || echo "域名模式 HTTPS"))"
+    if [ "$CUR_IS_IP" = "1" ] || [ "$CUR_PROTO" = "http" ]; then
+        echo -e "  ${D}💡 提示: 纯 IP 模式下默认 80 为标准 HTTP 端口。若改为其他端口（如 8080），访问后台需加上端口号。${N}"
+    else
+        echo -e "  ${D}💡 提示: 默认 443 为标准 HTTPS 端口，浏览器直接访问域名即可。${N}"
+        echo -e "  ${Y}⚠️  注意: 若改为非 443（如 8443），访问面板需加上端口号；若使用 Cloudflare，请选用其支持的端口。${N}"
+    fi
     echo ""
     read -r -p "  请输入新的 Web 访问端口 [1-65535] (回车保持当前): " NEW_PORT
     [ -z "$NEW_PORT" ] && { info "未做任何修改"; return; }
@@ -193,12 +217,16 @@ change_web_port() {
     fi
 
     info "正在更新 Caddyfile 配置..."
-    if [ "$NEW_PORT" = "443" ]; then
-        sed -i -E "s/^[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${CUR_DOMAIN} {/" /etc/caddy/Caddyfile
-        sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${CUR_DOMAIN}/" /etc/systemd/system/monitor-hub.service
+    if [ "$CUR_IS_IP" = "1" ] || [ "$CUR_PROTO" = "http" ]; then
+        sed -i -E "s/^(http:\/\/)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/http:\/\/${CUR_DOMAIN}:${NEW_PORT} {/" /etc/caddy/Caddyfile
     else
-        sed -i -E "s/^[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${CUR_DOMAIN}:${NEW_PORT} {/" /etc/caddy/Caddyfile
-        sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${CUR_DOMAIN}:${NEW_PORT}/" /etc/systemd/system/monitor-hub.service
+        if [ "$NEW_PORT" = "443" ]; then
+            sed -i -E "s/^(http:\/\/)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${CUR_DOMAIN} {/" /etc/caddy/Caddyfile
+            sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${CUR_DOMAIN}/" /etc/systemd/system/monitor-hub.service
+        else
+            sed -i -E "s/^(http:\/\/)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${CUR_DOMAIN}:${NEW_PORT} {/" /etc/caddy/Caddyfile
+            sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${CUR_DOMAIN}:${NEW_PORT}/" /etc/systemd/system/monitor-hub.service
+        fi
     fi
 
     # 防火墙放行新端口
@@ -258,36 +286,64 @@ change_internal_ports() {
     info "内部端口已成功更新！(monitor-hub: $NEW_HP, proxy-manager: $NEW_PP)"
 }
 
-# ---- 7. 修改绑定域名 ----
+# ---- 7. 修改绑定域名/IP ----
 change_domain() {
     get_current_config
     echo ""
-    echo -e "${BOLD}─── 修改绑定域名 ───${N}"
-    echo -e "  当前域名: ${BOLD}${CUR_DOMAIN}${N}"
-    echo -e "  ${Y}⚠️  请确认新域名已在 DNS 控制台完成解析，A 记录已指向当前服务器 IP！${N}"
+    echo -e "${BOLD}─── 修改绑定域名或公网 IP ───${N}"
+    echo -e "  当前地址: ${BOLD}${CUR_DOMAIN}${N} ($([ "$CUR_IS_IP" = "1" ] && echo "纯 IP 模式" || echo "域名模式"))"
+    echo -e "  ${D}💡 提示: 若输入域名，将启用 Caddy 自动申请 SSL 证书 (HTTPS)；若输入 IP，将使用纯 IP 模式 (HTTP)。${N}"
     echo ""
-    read -r -p "  请输入新的域名: " NEW_DOM
+    read -r -p "  请输入新的域名或服务器公网 IP: " NEW_DOM
     [ -z "$NEW_DOM" ] && { info "未做任何修改"; return; }
 
-    # 清洗域名
+    # 清洗
     NEW_DOM=$(echo "$NEW_DOM" | tr -d '[:space:]' | sed -E 's#^https?://##' | sed 's#/.*$##')
-    [ -z "$NEW_DOM" ] && { err "无效的域名！"; return; }
+    [ -z "$NEW_DOM" ] && { err "无效的地址！"; return; }
+
+    NEW_IS_IP=0
+    if [[ "$NEW_DOM" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$NEW_DOM" =~ ^\[?[0-9a-fA-F:]+\]?$ ]]; then
+        NEW_IS_IP=1
+    fi
 
     info "正在更新 Caddyfile 与系统服务配置..."
-    if [ "$CUR_WEB_PORT" = "443" ]; then
-        sed -i -E "s/^[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${NEW_DOM} {/" /etc/caddy/Caddyfile
-        sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${NEW_DOM}/" /etc/systemd/system/monitor-hub.service
+    if [ "$NEW_IS_IP" = "1" ]; then
+        # 切换到纯 IP 模式 (HTTP)
+        sed -i '/email admin@/d' /etc/caddy/Caddyfile 2>/dev/null || true
+        # 替换站点行
+        sed -i -E "s/^(http:\/\/)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/http:\/\/${NEW_DOM}:${CUR_WEB_PORT} {/" /etc/caddy/Caddyfile
+        # 移除 monitor-hub 的 --site 参数
+        sed -i -E "s/ --site https?:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?//" /etc/systemd/system/monitor-hub.service
     else
-        sed -i -E "s/^[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${NEW_DOM}:${CUR_WEB_PORT} {/" /etc/caddy/Caddyfile
-        sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${NEW_DOM}:${CUR_WEB_PORT}/" /etc/systemd/system/monitor-hub.service
+        # 切换到域名模式 (HTTPS)
+        if ! grep -q "email admin@" /etc/caddy/Caddyfile; then
+            sed -i "1i {\\n    email admin@${NEW_DOM}\\n}" /etc/caddy/Caddyfile
+        else
+            sed -i -E "s/email admin@[a-zA-Z0-9.-]+/email admin@${NEW_DOM}/" /etc/caddy/Caddyfile
+        fi
+        if [ "$CUR_WEB_PORT" = "443" ]; then
+            sed -i -E "s/^(http:\/\/)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${NEW_DOM} {/" /etc/caddy/Caddyfile
+            if grep -q -- '--site' /etc/systemd/system/monitor-hub.service; then
+                sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${NEW_DOM}/" /etc/systemd/system/monitor-hub.service
+            else
+                sed -i -E "s/(ExecStart=.*monitor-hub [^\n]+)/\1 --site https:\/\/${NEW_DOM}/" /etc/systemd/system/monitor-hub.service
+            fi
+        else
+            sed -i -E "s/^(http:\/\/)?[a-zA-Z0-9.-]+(:[0-9]+)?\s*\{/${NEW_DOM}:${CUR_WEB_PORT} {/" /etc/caddy/Caddyfile
+            if grep -q -- '--site' /etc/systemd/system/monitor-hub.service; then
+                sed -i -E "s/--site https:\/\/[a-zA-Z0-9.-]+(:[0-9]+)?/--site https:\/\/${NEW_DOM}:${CUR_WEB_PORT}/" /etc/systemd/system/monitor-hub.service
+            else
+                sed -i -E "s/(ExecStart=.*monitor-hub [^\n]+)/\1 --site https:\/\/${NEW_DOM}:${CUR_WEB_PORT}/" /etc/systemd/system/monitor-hub.service
+            fi
+        fi
     fi
 
     systemctl daemon-reload
     systemctl restart monitor-hub
     systemctl restart caddy
     sleep 3
-    info "域名已更新为: ${BOLD}${NEW_DOM}${N}"
-    info "Caddy 已开始自动申请新 SSL 证书并生效！"
+    info "地址已更新为: ${BOLD}${NEW_DOM}${N}"
+    [ "$NEW_IS_IP" = "1" ] && info "纯 IP 模式已生效 (HTTP)！" || info "域名 HTTPS 模式已生效，Caddy 已开始自动申请新 SSL 证书！"
 }
 
 # ---- 8. 重置/修改管理员密码 ----
@@ -559,9 +615,17 @@ main_menu() {
         
         # 顶部概要
         local site_suffix=""
-        [ "$CUR_WEB_PORT" != "443" ] && site_suffix=":$CUR_WEB_PORT"
-        echo -e "  域名: ${BOLD}${CUR_DOMAIN:-未配置}${N}  •  Web 端口: ${BOLD}${CUR_WEB_PORT}${N}  •  状态: $(systemctl is-active --quiet monitor-hub && echo -e "${G}运行中${N}" || echo -e "${R}停止${N}")"
-        [ -n "$CUR_DOMAIN" ] && echo -e "  面板地址: ${C}https://${CUR_DOMAIN}${site_suffix}/admin${N}"
+        local panel_url=""
+        if [ "$CUR_IS_IP" = "1" ] || [ "$CUR_PROTO" = "http" ]; then
+            [ "$CUR_WEB_PORT" != "80" ] && site_suffix=":$CUR_WEB_PORT"
+            panel_url="http://${CUR_DOMAIN}${site_suffix}/admin"
+            echo -e "  地址: ${BOLD}${CUR_DOMAIN:-未配置}${N} (${C}纯 IP 模式 - HTTP${N})  •  Web 端口: ${BOLD}${CUR_WEB_PORT}${N}  •  状态: $(systemctl is-active --quiet monitor-hub && echo -e "${G}运行中${N}" || echo -e "${R}停止${N}")"
+        else
+            [ "$CUR_WEB_PORT" != "443" ] && site_suffix=":$CUR_WEB_PORT"
+            panel_url="https://${CUR_DOMAIN}${site_suffix}/admin"
+            echo -e "  域名: ${BOLD}${CUR_DOMAIN:-未配置}${N} (${C}域名模式 - HTTPS${N})  •  Web 端口: ${BOLD}${CUR_WEB_PORT}${N}  •  状态: $(systemctl is-active --quiet monitor-hub && echo -e "${G}运行中${N}" || echo -e "${R}停止${N}")"
+        fi
+        [ -n "$CUR_DOMAIN" ] && echo -e "  面板地址: ${C}${panel_url}${N}"
         rule
         
         echo -e "  ${BOLD}【服务管理】${N}"
@@ -573,7 +637,7 @@ main_menu() {
         echo -e "  ${BOLD}【配置与网络】${N}"
         echo -e "    ${C}[5]${N} 修改 Web 外部访问端口 (当前: ${BOLD}${CUR_WEB_PORT}${N})"
         echo -e "    ${C}[6]${N} 修改内部探针与代理端口 (当前: ${BOLD}${CUR_HUB_PORT} / ${CUR_PM_PORT}${N})"
-        echo -e "    ${C}[7]${N} 修改绑定域名 (重签 SSL 证书)"
+        echo -e "    ${C}[7]${N} 修改绑定域名或公网 IP (当前: ${BOLD}${CUR_DOMAIN}${N})"
         echo -e "    ${C}[8]${N} 重置/修改管理员密码"
         echo ""
         echo -e "  ${BOLD}【系统运维】${N}"

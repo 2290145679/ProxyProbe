@@ -41,11 +41,12 @@ def get_request_base_url(headers=None):
     if headers:
         host = headers.get("X-Forwarded-Host") or headers.get("Host") or ""
         host = host.split(",")[0].strip()
-        proto = headers.get("X-Forwarded-Proto") or "https"
+        proto = headers.get("X-Forwarded-Proto") or ("https" if headers.get("X-Forwarded-Ssl") == "on" else "http")
         proto = proto.split(",")[0].strip()
         if host:
             return f"{proto}://{host}"
-    return "https://test.yohoo.xyz"
+    local_ip = get_local_ip() or "127.0.0.1"
+    return f"http://{local_ip}"
 
 def get_local_ip(family=socket.AF_INET):
     try:
@@ -133,7 +134,7 @@ fi
 if [ -z "$HUB_SERVER" ] || [ -z "$HUB_TOKEN" ]; then
   echo "[-] 错误：无法自动获取主控端地址或节点 Token！" >&2
   echo "    请手动指定参数运行：" >&2
-  echo "    curl -fsSL https://test.yohoo.xyz/proxy-agent.sh | bash -s -- --server https://test.yohoo.xyz --token <TOKEN>" >&2
+  echo "    curl -fsSL <主控地址>/proxy-agent.sh | bash -s -- --server <主控地址> --token <TOKEN>" >&2
   exit 1
 fi
 

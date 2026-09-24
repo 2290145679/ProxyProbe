@@ -456,23 +456,28 @@ check_port "$PORT"
 # which is at fault.
 SITE="${SITE%/}"
 if [ -n "$SITE" ]; then
-	case "$SITE" in
-	https://*) ;;
-	*) die "--site 必须以 https:// 开头：$SITE" ;;
-	esac
-	rest="${SITE#https://}"
-	case "$rest" in
-	*/*) die "--site 后面不能带路径，只要 https://域名[:端口]：$SITE" ;;
-	*@*) die "--site 里不能带用户名：$SITE" ;;
-	"["*) die "--site 必须是域名，不能是 IP 地址：$SITE" ;;
-	esac
-	# A port is permitted; what precedes it must be a name rather than an
-	# address.
-	case "${rest%%:*}" in
-	"" | localhost | *.localhost) die "--site 必须是一个域名：$SITE" ;;
-	*[!0-9.]*) ;;
-	*) die "--site 必须是域名而不是 IP 地址：$SITE" ;;
-	esac
+	if [[ "$SITE" =~ ^https?://[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(:[0-9]+)?$ ]] || [[ "$SITE" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+		# 纯 IP 模式：留空 --site，避免 monitor-hub 拒绝
+		SITE=""
+	else
+		case "$SITE" in
+		https://*) ;;
+		*) die "--site 必须以 https:// 开头：$SITE" ;;
+		esac
+		rest="${SITE#https://}"
+		case "$rest" in
+		*/*) die "--site 后面不能带路径，只要 https://域名[:端口]：$SITE" ;;
+		*@*) die "--site 里不能带用户名：$SITE" ;;
+		"["*) die "--site 必须是域名，不能是 IP 地址：$SITE" ;;
+		esac
+		# A port is permitted; what precedes it must be a name rather than an
+		# address.
+		case "${rest%%:*}" in
+		"" | localhost | *.localhost) die "--site 必须是一个域名：$SITE" ;;
+		*[!0-9.]*) ;;
+		*) die "--site 必须是域名而不是 IP 地址：$SITE" ;;
+		esac
+	fi
 fi
 [ "$(id -u)" = 0 ] || die "需要 root：sudo sh $0"
 command -v curl >/dev/null 2>&1 || die "需要 curl"
