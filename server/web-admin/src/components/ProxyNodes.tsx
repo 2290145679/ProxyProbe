@@ -27,6 +27,8 @@ export interface ProxyNode {
   name: string
   protocol: string
   port: number
+  flag?: string
+  display_name?: string
   uuid: string
   flow?: string
   sni?: string
@@ -1200,7 +1202,10 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   </TableCell>
 
                   <TableCell className="text-xs font-medium">
-                    {n.name}
+                    <div className="flex items-center gap-1.5">
+                      {n.flag && <span className="text-sm select-none leading-none">{n.flag}</span>}
+                      <span>{n.name}</span>
+                    </div>
                   </TableCell>
 
                   {isUnlockColVisible && (
@@ -1776,7 +1781,20 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               )}
             </div>
 
-            {(form.protocol === "vless_reality" || form.protocol === "vless_reality_xhttp") && (
+                        {/* 极简折叠：高级配置与密钥 (默认收起降噪) */}
+            <details className="group rounded-lg border border-border/70 bg-muted/15 p-3 space-y-3 transition-all [&_summary::-webkit-details-marker]:hidden">
+              <summary className="flex cursor-pointer items-center justify-between text-xs font-semibold text-muted-foreground select-none hover:text-foreground">
+                <span className="flex items-center gap-1.5">
+                  <SlidersHorizontal className="size-3.5 text-primary" />
+                  <span>⚙️ 高级配置 (SNI / 密钥 / UUID · 已自动生成)</span>
+                </span>
+                <span className="text-[10px] rounded px-1.5 py-0.5 bg-muted text-muted-foreground group-open:bg-primary/10 group-open:text-primary transition-colors">
+                  点击展开
+                </span>
+              </summary>
+
+              <div className="pt-2 space-y-3 border-t border-border/40">
+{(form.protocol === "vless_reality" || form.protocol === "vless_reality_xhttp") && (
               <div className="rounded-lg border p-3 bg-muted/20 space-y-2.5 w-full min-w-0">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium">Reality 伪装与 x25519 密钥</span>
@@ -1858,6 +1876,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 required
               />
             </div>
+              </div>
+            </details>
 
             <DialogFooter className="pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(false)} className="h-8 text-xs">

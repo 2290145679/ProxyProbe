@@ -46,6 +46,7 @@ export type UserProfile = {
   sub_token: string
   sub_url: string
   clash_url?: string
+  singbox_url?: string
   traffic_limit_bytes: number
   device_limit?: number
   online_devices?: number
@@ -68,6 +69,8 @@ type NodeItem = {
   server_host: string
   port: number
   enabled: number
+  flag?: string
+  display_name?: string
 }
 
 function formatBytes(bytes: number) {
@@ -171,6 +174,9 @@ export function UserDashboard({
   const effectiveClashUrl = user.clash_url
     ? getDynamicSubUrl(user.clash_url)
     : (effectiveSubUrl ? `${effectiveSubUrl}${effectiveSubUrl.includes("?") ? "&" : "?"}clash=1` : "")
+  const effectiveSingboxUrl = user.singbox_url
+    ? getDynamicSubUrl(user.singbox_url)
+    : (effectiveSubUrl ? `${effectiveSubUrl}${effectiveSubUrl.includes("?") ? "&" : "?"}singbox=1` : "")
 
   // 生成二维码
   useEffect(() => {
@@ -428,7 +434,7 @@ export function UserDashboard({
               <Zap className="size-4 text-amber-500" /> 一键聚合订阅
             </h2>
             <p className="text-xs text-muted-foreground">
-              支持一键同步全部可用节点，兼容 Clash、Shadowrocket、Sing-box 等主流客户端
+              ⚡ 采用智能 UA 自适应技术，单一链接自动适配 Clash、Sing-box、Shadowrocket、v2rayN 等全主流客户端
             </p>
           </div>
 
@@ -439,14 +445,14 @@ export function UserDashboard({
                 <Input
                   readOnly
                   value={effectiveSubUrl}
-                  className="font-mono text-xs h-10 bg-muted/40 pr-24 select-all"
+                  className="font-mono text-xs h-10 bg-muted/40 pr-36 select-all"
                 />
                 <Button
                   onClick={copySubUrl}
                   size="sm"
-                  className="absolute right-1 top-1 h-8 px-3 text-xs gap-1.5"
+                  className="absolute right-1 top-1 h-8 px-3 text-xs gap-1.5 shadow-sm font-medium"
                 >
-                  <Copy className="size-3.5" /> 复制链接
+                  <Copy className="size-3.5" /> 复制万能智能订阅
                 </Button>
               </div>
 
@@ -524,7 +530,7 @@ export function UserDashboard({
                   asChild
                   className="h-11 px-3 text-xs justify-between hover:border-primary/50 hover:bg-accent/40 transition-colors"
                 >
-                  <a href={`sing-box://import-remote-profile?url=${encodeURIComponent(effectiveSubUrl)}#${encodeURIComponent(subName)}`}>
+                  <a href={`sing-box://import-remote-profile?url=${encodeURIComponent(effectiveSingboxUrl)}#${encodeURIComponent(subName)}`}>
                     <div className="flex items-center gap-2.5 min-w-0">
                       <Globe className="size-4 text-amber-500 shrink-0" />
                       <div className="flex flex-col text-left leading-tight min-w-0">
@@ -593,7 +599,7 @@ export function UserDashboard({
                   >
                     <div className="space-y-1 min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-semibold truncate">{n.name}</span>
+                        <span className="font-semibold truncate">{n.flag ? `${n.flag} ` : ""}{n.name}</span>
                         <Badge 
                           variant={n.server_host.includes(":") ? "secondary" : "outline"}
                           className={`text-[10px] py-0 px-1 font-mono shrink-0 ${

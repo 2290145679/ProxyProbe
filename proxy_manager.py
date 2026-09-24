@@ -1998,7 +1998,7 @@ def test_node_connectivity(node):
     else:
         return True, f"TCP 端口连通正常 (延迟 ~{tcp_ms}ms)", tcp_ms
 
-def format_node_link(node, user=None):
+def format_node_link(node, user=None, server_country_map=None):
     proto = node["protocol"]
     uuid_str = node.get("uuid") or ""
     pwd_str = node.get("password") or uuid_str
@@ -2010,7 +2010,7 @@ def format_node_link(node, user=None):
     host = node.get("server_host") or "189.24.108.25"
     uri_host = format_host_for_uri(host)
     port = node.get("port") or 20443
-    name_raw = (node.get("name") or "").strip() or f"Proxy-{port}"
+    name_raw = format_node_display_name(node, server_country_map)
     name = quote(name_raw, safe=":/[] -_()@➔")
     
     if proto == "vless_reality":
@@ -2126,7 +2126,72 @@ def build_subscription_info_nodes(user):
 
     return [traffic_title, expire_title]
 
-def generate_clash_yaml(nodes, user=None, warning_msg=None):
+
+def country_code_to_flag(code: str) -> str:
+    """将两字母国家代码 (如 HK, JP, US) 转换为对应的 Emoji 国旗 (如 🇭🇰, 🇯🇵, 🇺🇸)"""
+    if not code or len(code) != 2:
+        return ""
+    code = code.upper()
+    try:
+        return "".join(chr(0x1F1E6 + ord(c) - ord('A')) for c in code)
+    except Exception:
+        return ""
+
+KEYWORD_FLAG_MAP = [
+    ("香港", "🇭🇰"), ("hong kong", "🇭🇰"), ("hk", "🇭🇰"),
+    ("日本", "🇯🇵"), ("japan", "🇯🇵"), ("tokyo", "🇯🇵"), ("osaka", "🇯🇵"), ("jp", "🇯🇵"),
+    ("台湾", "🇹🇼"), ("taiwan", "🇹🇼"), ("tw", "🇹🇼"),
+    ("新加坡", "🇸🇬"), ("singapore", "🇸🇬"), ("sg", "🇸🇬"),
+    ("美国", "🇺🇸"), ("america", "🇺🇸"), ("united states", "🇺🇸"), ("us", "🇺🇸"),
+    ("韩国", "🇰🇷"), ("korea", "🇰🇷"), ("seoul", "🇰🇷"), ("kr", "🇰🇷"),
+    ("英国", "🇬🇧"), ("london", "🇬🇧"), ("united kingdom", "🇬🇧"), ("uk", "🇬🇧"), ("gb", "🇬🇧"),
+    ("德国", "🇩🇪"), ("germany", "🇩🇪"), ("frankfurt", "🇩🇪"), ("de", "🇩🇪"),
+    ("法国", "🇫🇷"), ("france", "🇫🇷"), ("paris", "🇫🇷"), ("fr", "🇫🇷"),
+    ("加拿大", "🇨🇦"), ("canada", "🇨🇦"), ("ca", "🇨🇦"),
+    ("澳大利亚", "🇦🇺"), ("australia", "🇦🇺"), ("sydney", "🇦🇺"), ("au", "🇦🇺"),
+    ("俄罗斯", "🇷🇺"), ("russia", "🇷🇺"), ("moscow", "🇷🇺"), ("ru", "🇷🇺"),
+    ("荷兰", "🇳🇱"), ("netherlands", "🇳🇱"), ("amsterdam", "🇳🇱"), ("nl", "🇳🇱"),
+    ("土耳其", "🇹🇷"), ("turkey", "🇹🇷"), ("istanbul", "🇹🇷"), ("tr", "🇹🇷"),
+    ("阿根廷", "🇦🇷"), ("argentina", "🇦🇷"), ("ar", "🇦🇷"),
+    ("印度", "🇮🇳"), ("india", "🇮🇳"), ("in", "🇮🇳"),
+    ("巴西", "🇧🇷"), ("brazil", "🇧🇷"), ("br", "🇧🇷"),
+    ("马来西亚", "🇲🇾"), ("malaysia", "🇲🇾"), ("my", "🇲🇾"),
+    ("泰国", "🇹🇭"), ("thailand", "🇹🇭"), ("th", "🇹🇭"),
+    ("越南", "🇻🇳"), ("vietnam", "🇻🇳"), ("vn", "🇻🇳"),
+    ("菲律宾", "🇵🇭"), ("philippines", "🇵🇭"), ("ph", "🇵🇭"),
+]
+
+def resolve_node_flag(node, server_country_map=None) -> str:
+    """根据服务器归属国籍或名称关键词智能解析国旗 Emoji"""
+    name = node.get("name", "")
+    # 若节点名已自带国旗 Emoji，则不重复补充
+    for char in name[:4]:
+        if 0x1F1E6 <= ord(char) <= 0x1F1FF:
+            return ""
+
+    sid = node.get("server_id")
+    if server_country_map and sid in server_country_map:
+        c_code = server_country_map[sid]
+        flg = country_code_to_flag(c_code)
+        if flg:
+            return flg
+
+    text = f"{node.get('server_name', '')} {name}".lower()
+    for kw, flg in KEYWORD_FLAG_MAP:
+        if kw in text:
+            return flg
+
+    return "🌐"
+
+def format_node_display_name(node, server_country_map=None) -> str:
+    """格式化带国旗标识的优雅节点名称"""
+    raw_name = (node.get("name") or "").strip() or f"Node-{node.get('port', 0)}"
+    flag = resolve_node_flag(node, server_country_map)
+    if flag:
+        return f"{flag} {raw_name}"
+    return raw_name
+
+def generate_clash_yaml(nodes, user=None, warning_msg=None, server_country_map=None):
     if warning_msg:
         cfg = {
             "port": 7890,
@@ -2199,7 +2264,7 @@ rules:
             uuid_str = u_uuid
             pwd_str = u_pwd
 
-        name = (n.get("name") or "").strip() or f"Node-{port}"
+        name = format_node_display_name(n, server_country_map)
         base_name = name
         counter = 2
         while name in names:
@@ -2433,6 +2498,224 @@ rules:
         lines.append("  - GEOIP,LAN,DIRECT")
         lines.append("  - MATCH,节点选择")
         return "\n".join(lines)
+
+
+def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_country_map=None) -> str:
+    """生成标准 Sing-box 客户端跨平台通用订阅 JSON 结构 (兼容 SFA / SFI / Sing-box Desktop)"""
+    if warning_msg:
+        cfg = {
+            "version": 1,
+            "outbounds": [
+                {
+                    "type": "socks",
+                    "tag": warning_msg,
+                    "server": "127.0.0.1",
+                    "server_port": 1080
+                }
+            ]
+        }
+        return json.dumps(cfg, indent=2, ensure_ascii=False)
+
+    outbounds = []
+    node_tags = []
+
+    if user:
+        for title in build_subscription_info_nodes(user):
+            outbounds.append({
+                "type": "socks",
+                "tag": title,
+                "server": "127.0.0.1",
+                "server_port": 1080
+            })
+            node_tags.append(title)
+
+    for n in nodes:
+        proto = n.get("protocol")
+        host = n.get("server_host") or "189.24.108.25"
+        port = int(n.get("port") or 20443)
+        uuid_str = n.get("uuid") or ""
+        pwd_str = n.get("password") or uuid_str
+        if user:
+            u_uuid, u_pwd = ensure_user_credentials(user)
+            uuid_str = u_uuid
+            pwd_str = u_pwd
+
+        tag = format_node_display_name(n, server_country_map)
+        base_tag = tag
+        counter = 2
+        while tag in node_tags:
+            tag = f"{base_tag} ({counter})"
+            counter += 1
+
+        node_item = None
+        if proto in ("vless_reality", "vless_reality_xhttp"):
+            pbk = n.get("public_key") or ""
+            sid = n.get("short_id") or ""
+            sni = n.get("sni") or "www.apple.com"
+            flow = n.get("flow") or "xtls-rprx-vision"
+            node_item = {
+                "type": "vless",
+                "tag": tag,
+                "server": host,
+                "server_port": port,
+                "uuid": uuid_str,
+                "tls": {
+                    "enabled": True,
+                    "server_name": sni,
+                    "reality": {
+                        "enabled": True,
+                        "public_key": pbk,
+                        "short_id": sid
+                    }
+                }
+            }
+            if flow:
+                node_item["flow"] = flow
+            if proto == "vless_reality_xhttp":
+                xpath = n.get("ws_path") or "/xhttp"
+                node_item["transport"] = {
+                    "type": "http",
+                    "path": xpath
+                }
+        elif proto == "hysteria2":
+            sni = n.get("sni") or "bing.com"
+            node_item = {
+                "type": "hysteria2",
+                "tag": tag,
+                "server": host,
+                "server_port": port,
+                "password": pwd_str,
+                "tls": {
+                    "enabled": True,
+                    "server_name": sni,
+                    "insecure": True
+                }
+            }
+        elif proto == "tuic":
+            sni = n.get("sni") or "bing.com"
+            node_item = {
+                "type": "tuic",
+                "tag": tag,
+                "server": host,
+                "server_port": port,
+                "uuid": uuid_str,
+                "password": pwd_str,
+                "congestion_controller": "bbr",
+                "tls": {
+                    "enabled": True,
+                    "server_name": sni,
+                    "insecure": True
+                }
+            }
+        elif proto == "trojan":
+            sni = n.get("sni") or host
+            node_item = {
+                "type": "trojan",
+                "tag": tag,
+                "server": host,
+                "server_port": port,
+                "password": pwd_str,
+                "tls": {
+                    "enabled": True,
+                    "server_name": sni
+                }
+            }
+        elif proto == "ss2022":
+            method = n.get("method") or "2022-blake3-aes-128-gcm"
+            node_item = {
+                "type": "shadowsocks",
+                "tag": tag,
+                "server": host,
+                "server_port": port,
+                "method": method,
+                "password": pwd_str
+            }
+        elif proto == "vless_ws":
+            ws_path = n.get("ws_path") or "/ws-proxy"
+            node_item = {
+                "type": "vless",
+                "tag": tag,
+                "server": host,
+                "server_port": port,
+                "uuid": uuid_str,
+                "transport": {
+                    "type": "ws",
+                    "path": ws_path
+                }
+            }
+        elif proto == "vmess_ws":
+            ws_path = n.get("ws_path") or "/ws-proxy"
+            node_item = {
+                "type": "vmess",
+                "tag": tag,
+                "server": host,
+                "server_port": port,
+                "uuid": uuid_str,
+                "security": "auto",
+                "transport": {
+                    "type": "ws",
+                    "path": ws_path
+                }
+            }
+
+        if node_item:
+            outbounds.append(node_item)
+            node_tags.append(tag)
+
+    valid_nodes = [t for t in node_tags if not t.startswith("📊") and not t.startswith("⏳")]
+    selector_tags = (["AUTO"] + valid_nodes + ["DIRECT"]) if valid_nodes else ["DIRECT"]
+    urltest_tags = valid_nodes if valid_nodes else ["DIRECT"]
+
+    config = {
+        "version": 1,
+        "outbounds": [
+            {
+                "type": "selector",
+                "tag": "PROXY",
+                "outbounds": selector_tags,
+                "default": selector_tags[0]
+            },
+            {
+                "type": "urltest",
+                "tag": "AUTO",
+                "outbounds": urltest_tags,
+                "url": "https://www.gstatic.com/generate_204",
+                "interval": "3m",
+                "tolerance": 50
+            }
+        ] + outbounds + [
+            {
+                "type": "direct",
+                "tag": "DIRECT"
+            },
+            {
+                "type": "block",
+                "tag": "BLOCK"
+            },
+            {
+                "type": "dns",
+                "tag": "dns-out"
+            }
+        ],
+        "route": {
+            "rules": [
+                {
+                    "protocol": "dns",
+                    "outbound": "dns-out"
+                },
+                {
+                    "clash_mode": "Direct",
+                    "outbound": "DIRECT"
+                },
+                {
+                    "clash_mode": "Global",
+                    "outbound": "PROXY"
+                }
+            ],
+            "auto_detect_interface": True
+        }
+    }
+    return json.dumps(config, indent=2, ensure_ascii=False)
 
 def is_local_node(node):
     s_id = node.get("server_id", 0)
@@ -3204,7 +3487,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
             sub_userinfo = f"upload={u_bytes}; download={d_bytes}; total={limit}; expire={exp_time}"
 
             ua = self.headers.get("User-Agent", "").lower()
-            is_clash = ("clash" in ua or "meta" in ua or "mihomo" in ua or qs.get("clash", [""])[0] == "1")
+
+            # 智能 UA 客户端检测引擎 (支持 Clash, Sing-box, Surge, Shadowrocket, v2rayN 等)
+            force_clash = qs.get("clash", [""])[0] == "1"
+            force_sb = qs.get("singbox", [""])[0] == "1" or qs.get("sb", [""])[0] == "1"
+            force_b64 = qs.get("b64", [""])[0] == "1" or qs.get("v2ray", [""])[0] == "1"
+
+            is_clash = force_clash or (not force_sb and not force_b64 and (
+                "clash" in ua or "meta" in ua or "mihomo" in ua or "stash" in ua or "verge" in ua or "flclash" in ua
+            ))
+            is_singbox = force_sb or (not force_clash and not force_b64 and not is_clash and (
+                "sing-box" in ua or "singbox" in ua or "sfa" in ua or "sfi" in ua
+            ))
 
             if not is_enabled or is_expired or is_over_quota or is_device_over:
                 conn.close()
@@ -3220,6 +3514,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     self.send_header("Content-Length", str(len(encoded)))
                     self.end_headers()
                     self.wfile.write(encoded)
+                elif is_singbox:
+                    sb_content = generate_singbox_client_config([], user=user, warning_msg=f"⚠️ {status_reason}，请联系管理员")
+                    encoded = sb_content.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Subscription-Userinfo", sub_userinfo)
+                    self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.json"')
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
                 else:
                     warning_link = f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:0?security=none#{quote('⚠️ ' + status_reason + '，请联系管理员')}"
                     import base64
@@ -3232,6 +3536,60 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(encoded)
                 return
+
+            cur = conn.execute("SELECT * FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
+            nodes = [dict(r) for r in cur.fetchall()]
+            cur_nodes = conn.execute("SELECT id, ip, ipv4, country FROM node")
+            server_rows = cur_nodes.fetchall()
+            node_ip_map = {r["id"]: resolve_server_host(dict(r)) for r in server_rows}
+            server_country_map = {r["id"]: (r["country"] or "") for r in server_rows}
+            conn.close()
+
+            for n in nodes:
+                sid = n.get("server_id")
+                if sid in node_ip_map and is_private_ip(n.get("server_host")):
+                    n["server_host"] = node_ip_map[sid]
+
+            if is_clash:
+                yaml_content = generate_clash_yaml(nodes, user=user, server_country_map=server_country_map)
+                encoded = yaml_content.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/yaml; charset=utf-8")
+                self.send_header("Subscription-Userinfo", sub_userinfo)
+                self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.yaml"')
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
+
+            if is_singbox:
+                sb_content = generate_singbox_client_config(nodes, user=user, server_country_map=server_country_map)
+                encoded = sb_content.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Subscription-Userinfo", sub_userinfo)
+                self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.json"')
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
+
+            links = [format_node_link(n, user=user, server_country_map=server_country_map) for n in nodes if format_node_link(n, user=user, server_country_map=server_country_map)]
+            info_links = []
+            if user:
+                for title in build_subscription_info_nodes(user):
+                    info_links.append(f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:0?security=none#{quote(title)}")
+            all_links = info_links + links
+            import base64
+            encoded = base64.b64encode("\n".join(all_links).encode("utf-8"))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Subscription-Userinfo", sub_userinfo)
+            self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.txt"')
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
 
             cur = conn.execute("SELECT * FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
             nodes = [dict(r) for r in cur.fetchall()]
@@ -3348,6 +3706,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "sub_token": sub_token,
                     "sub_url": f"{base_url}/api/proxy/sub?token={sub_token}",
                     "clash_url": f"{base_url}/api/proxy/sub?token={sub_token}&clash=1",
+                    "singbox_url": f"{base_url}/api/proxy/sub?token={sub_token}&singbox=1",
                     "traffic_limit_bytes": limit,
                     "device_limit": device_limit,
                     "online_devices": online_devs,
@@ -3370,15 +3729,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "未登录"}, 401)
                 return
             conn = get_db()
-            cur = conn.execute("SELECT id, name, protocol, server_name, server_host, port, enabled FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
+            cur = conn.execute("SELECT id, server_id, name, protocol, server_name, server_host, port, enabled FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
             nodes = [dict(r) for r in cur.fetchall()]
-            cur_nodes = conn.execute("SELECT id, ip, ipv4 FROM node")
-            node_ip_map = {r["id"]: resolve_server_host(dict(r)) for r in cur_nodes.fetchall()}
+            cur_nodes = conn.execute("SELECT id, ip, ipv4, country FROM node")
+            server_rows = cur_nodes.fetchall()
+            node_ip_map = {r["id"]: resolve_server_host(dict(r)) for r in server_rows}
+            server_country_map = {r["id"]: (r["country"] or "") for r in server_rows}
             conn.close()
             for n in nodes:
                 sid = n.get("server_id")
                 if sid in node_ip_map and is_private_ip(n.get("server_host")):
                     n["server_host"] = node_ip_map[sid]
+                n["flag"] = resolve_node_flag(n, server_country_map)
+                n["display_name"] = format_node_display_name(n, server_country_map)
             self.send_json({"ok": True, "nodes": nodes})
             return
 
@@ -3602,8 +3965,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
             conn = get_db()
             cur = conn.execute("SELECT * FROM proxy_node ORDER BY id DESC")
             nodes = [dict(r) for r in cur.fetchall()]
-            cur_nodes = conn.execute("SELECT id, ip, ipv4 FROM node")
-            node_ip_map = {r["id"]: resolve_server_host(dict(r)) for r in cur_nodes.fetchall()}
+            cur_nodes = conn.execute("SELECT id, ip, ipv4, country FROM node")
+            server_rows = cur_nodes.fetchall()
+            node_ip_map = {r["id"]: resolve_server_host(dict(r)) for r in server_rows}
+            server_country_map = {r["id"]: (r["country"] or "") for r in server_rows}
             for n in nodes:
                 sid = n.get("server_id")
                 if sid in node_ip_map:
@@ -3615,7 +3980,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                                 conn.execute("UPDATE proxy_node SET server_host = ? WHERE id = ?", (resolved, n["id"]))
                         except Exception:
                             pass
-                n["link"] = format_node_link(n)
+                n["flag"] = resolve_node_flag(n, server_country_map)
+                n["display_name"] = format_node_display_name(n, server_country_map)
+                n["link"] = format_node_link(n, server_country_map=server_country_map)
             conn.close()
             self.send_json({
                 "nodes": nodes,

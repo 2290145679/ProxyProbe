@@ -1,16 +1,17 @@
 # 🚀 ProxyProbe - 分布式服务器监控与 Xray / Sing-box / Realm 代理拓扑管理系统
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v2.1.0-blue.svg" alt="Release">
+  <img src="https://img.shields.io/badge/Release-v2.4.0-blue.svg" alt="Release">
   <img src="https://img.shields.io/badge/Dual_Core-Xray_%2B_Sing--box_%2B_Realm-success.svg" alt="Cores">
+  <img src="https://img.shields.io/badge/Subscription-Smart_UA_Adaptive-orange.svg" alt="Smart UA Subscription">
+  <img src="https://img.shields.io/badge/GeoIP-Auto_Flag_Emoji-purple.svg" alt="Auto Flag Emoji">
   <img src="https://img.shields.io/badge/Theme-Sakura_%2B_Classic-pink.svg" alt="Sakura Theme">
   <img src="https://img.shields.io/badge/Responsive-Mobile_Optimized-brightgreen.svg" alt="Mobile Optimized">
   <img src="https://img.shields.io/badge/Backup-Telegram_Automated-blue.svg" alt="Telegram Backup">
-  <img src="https://img.shields.io/badge/Protocols-15_Types_Supported-purple.svg" alt="Protocols">
-  <img src="https://img.shields.io/badge/Backend-Rust_%2B_Python-orange.svg" alt="Backend">
+  <img src="https://img.shields.io/badge/Backend-Rust_%2B_Python-red.svg" alt="Backend">
 </p>
 
-**ProxyProbe** 是一套现代化、高颜值、轻量且强大的**分布式服务器状态监控、代理节点拓扑调度与聚合订阅分发平台**。系统在高性能 Rust 分布式探针的基础上，深度融合了 **Xray-Core、Sing-box 与 Realm 多核心协同调度矩阵**，支持全主流代理协议拓扑、全平台客户端聚合订阅一键分发、AI 与流媒体智能解锁自选检测、移动端精细适配与双主题自由切换。详细版本更新内容请参阅 [版本更新日志 (CHANGELOG.md)](CHANGELOG.md)。
+**ProxyProbe** 是一套现代化、高颜值、轻量且强大的**分布式服务器状态监控、代理节点拓扑调度与聚合订阅分发平台**。系统在高性能 Rust 分布式探针的基础上，深度融合了 **Xray-Core、Sing-box 与 Realm 多核心协同调度矩阵**，支持全主流代理协议拓扑、全平台客户端自适应万能订阅、节点国旗 Emoji 智能解析、AI 与流媒体自选检测、移动端精细适配与双主题自由切换。详细版本更新内容请参阅 [版本更新日志 (CHANGELOG.md)](CHANGELOG.md)。
 
 ---
 
@@ -22,6 +23,16 @@
   - **Xray-Core**：负责承载 VLESS + Reality (Vision / XHTTP)、Trojan、VMess-WS、Shadowsocks 2022、SOCKS5 等 TCP/TLS 极致伪装协议。
   - **Sing-box**：原生驱动 Hysteria 2 (Hy2)、TUIC v5 等基于 QUIC / UDP 的极速网络协议。
   - **Realm**：高效低延迟端口中转转发调度，轻松组建多级中继拓扑。
+- ⚡ **万能自适应智能订阅 (Universal Smart UA Subscription)**：
+  - 单一订阅链接全客户端自适应：后端依据客户端 `User-Agent` 智能感知客户端类型，自动分发最优订阅配置（Clash/Mihomo -> Clash YAML 规则组；Sing-box -> Sing-box JSON 核心配置；Shadowrocket/v2rayN -> 标准 Base64 聚合节点链）。
+  - 支持手动强制覆盖参数（`?clash=1`、`?singbox=1`、`?b64=1`）。
+  - 用户面板化繁为简，突出醒目的「⚡ 复制万能智能订阅」核心按钮，搭配小火箭/Clash/Sing-box 一键唤醒导入与手机扫码导入，体验极致丝滑。
+- 🌍 **节点自动识别国家地区国旗 Emoji (Auto GeoIP Flag)**：
+  - 探针及节点管理自动根据被控端地理位置信息（`node.country`）或地区关键字（HK/JP/US/SG/TW/DE 等）智能解析并前置对应国家地区国旗 Emoji（🇭🇰/🇯🇵/🇺🇸/🇸🇬/🇨🇳/🇩🇪/🇬🇧 等）。
+  - 全订阅协议（Clash YAML、Sing-box JSON、Base64）以及管理后台、用户自服务面板的节点展示名均自动携带国旗图标，节点归属一目了然。
+- ⚙️ **节点创建弹窗极简降噪 (Decluttered Modal)**：
+  - 节点添加/编辑弹窗重构：默认仅露出「服务器、中转模式、协议、节点名称、监听端口」核心必填项。
+  - 复杂的 SNI 伪装域名、Dest 目标、Reality x25519 密钥、UUID / 连接密码全量收纳进「⚙️ 高级配置 (点击展开)」折叠卡片中，且默认自动完成安全密钥生成，实现开箱即用的极致简约。
 - 🌸 **全新高颜值樱花浪漫主题 (Sakura Theme)**：
   - 内置经典工业灰与浪漫落樱粉双主题引擎，界面灵动优雅。
   - 主题设置随用户账号持久化存储，管理员与普通用户可按需独立随心切换。
@@ -31,9 +42,6 @@
 - 🎯 **AI 与流媒体解锁检测自定义筛选**：
   - 针对节点流媒体（Netflix、Disney+、YouTube 等）与 AI 矩阵（ChatGPT、Claude、Gemini 等）提供全自动流媒体解锁探测。
   - 支持用户自定义勾选“仅关注的服务”，告别全量大卡片冗余堆叠，界面清爽聚焦。
-- 📋 **全平台客户端聚合订阅一键复制**：
-  - 自动将所有已启用节点整合成标准化订阅，深度适配 **Clash Verge Rev、v2rayN、Shadowrocket、Sing-box、Loon、Surge** 等客户端。
-  - 内置跨域与非安全上下文兼容复制引擎，确保在各类浏览器与手机端均可一键极速复制。
 - 📶 **全链路握手测速与红绿灯防呆拦截**：
   - 节点列表内置 **【测试】** 按钮，一键发起全链路 TLS / UDP 握手测试，毫秒级回显实际往返延迟。
   - 新建节点弹窗中，所属服务器实时显示核心就绪情况：`[🟢/🔴 Xray]  [🟢/🔴 Sing-box]  [🟢/🔴 Realm]`，未安装核心自动拦截防呆。
