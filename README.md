@@ -1,39 +1,50 @@
-# 🚀 ProxyProbe - 分布式服务器监控与 Xray / Sing-box 双核心代理管理系统
+# 🚀 ProxyProbe - 分布式服务器监控与 Xray / Sing-box / Realm 代理拓扑管理系统
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v2.0.0-blue.svg" alt="Release">
-  <img src="https://img.shields.io/badge/Dual_Core-Xray_Core_%2B_Sing--box-success.svg" alt="Dual Core">
+  <img src="https://img.shields.io/badge/Release-v2.1.0-blue.svg" alt="Release">
+  <img src="https://img.shields.io/badge/Dual_Core-Xray_%2B_Sing--box_%2B_Realm-success.svg" alt="Cores">
+  <img src="https://img.shields.io/badge/Theme-Sakura_%2B_Classic-pink.svg" alt="Sakura Theme">
+  <img src="https://img.shields.io/badge/Responsive-Mobile_Optimized-brightgreen.svg" alt="Mobile Optimized">
+  <img src="https://img.shields.io/badge/Backup-Telegram_Automated-blue.svg" alt="Telegram Backup">
   <img src="https://img.shields.io/badge/Protocols-15_Types_Supported-purple.svg" alt="Protocols">
-  <img src="https://img.shields.io/badge/Frontend-Vite_%2B_React_%2B_Tailwind-cyan.svg" alt="Frontend">
   <img src="https://img.shields.io/badge/Backend-Rust_%2B_Python-orange.svg" alt="Backend">
-  <img src="https://img.shields.io/badge/License-Commercial-red.svg" alt="License">
 </p>
 
-**ProxyProbe** 是一套现代化、高颜值且极度轻量的**分布式服务器状态监控与全自动代理协议拓扑管理平台**。项目在高性能分布式探针的基础上，深度融合了 **Xray-Core 与 Sing-box 双核心调度体系**，彻底解决了多节点下跨协议部署繁琐、配置容易冲突、客户端格式不兼容的痛点。详细版本更新内容请参阅 [版本更新日志 (Changelog)](CHANGELOG.md)。
+**ProxyProbe** 是一套现代化、高颜值、轻量且强大的**分布式服务器状态监控、代理节点拓扑调度与聚合订阅分发平台**。系统在高性能 Rust 分布式探针的基础上，深度融合了 **Xray-Core、Sing-box 与 Realm 多核心协同调度矩阵**，支持全主流代理协议拓扑、全平台客户端聚合订阅一键分发、AI 与流媒体智能解锁自选检测、移动端精细适配与双主题自由切换。详细版本更新内容请参阅 [版本更新日志 (CHANGELOG.md)](CHANGELOG.md)。
 
 ---
 
 ## 🌟 核心特性
 
-- ⚡ **超低资源开销**：主控端与探针核心采用 Rust 编写，探针端内存占用极低（< 15MB），CPU 占用常态接近 0%。
-- 🔄 **Xray-Core + Sing-box 双核心协同**：
+- ⚡ **超低资源极速探针**：
+  - 主控端与探针核心采用 Rust 编写，探针客户端内存占用极低（< 15MB），CPU 常态占用接近 0%。
+- 🔄 **Xray-Core + Sing-box + Realm 三核心协同调度**：
   - **Xray-Core**：负责承载 VLESS + Reality (Vision / XHTTP)、Trojan、VMess-WS、Shadowsocks 2022、SOCKS5 等 TCP/TLS 极致伪装协议。
   - **Sing-box**：原生驱动 Hysteria 2 (Hy2)、TUIC v5 等基于 QUIC / UDP 的极速网络协议。
-- 🛡️ **智能核心在线管理**：
-  - 管理后台顶部直观呈现 Xray 与 Sing-box 双核心的运行版本与健康状态。
-  - 支持后台一键 **【安装核心】** 与 **【卸载核心】**，自动生成高强度 ECC 自签名证书（prime256v1）并配置 Systemd 守护进程。
-- 🚦 **服务器双核心红绿灯感知与防呆拦截**：
-  - 新建节点弹窗中，所属服务器实时显示核心就绪情况：`[🟢/🔴 Xray]  [🟢/🔴 Sing-box]`。
-  - 若所选服务器尚未安装目标协议所需核心，前端与后端均自动弹出警示并严格拦截，杜绝创建出无效节点。
-- 📶 **一键实时连通性与握手测速**：
-  - 节点列表内置 **【测试】** 按钮，一键发起全链路 TLS / UDP 握手测试，毫秒级回显实际网络延迟。
-- 🔗 **聚合订阅一键分发**：
-  - 自动将所有已启用节点整合成通用 Base64 聚合订阅，支持 **Clash Verge Rev、v2rayN、Shadowrocket、Sing-box、Loon、Surge** 等客户端一键导入。
-- 🔑 **商业许可证双轨授权**：
-  - 探针监控功能**永久免费**；节点管理功能需要商业授权激活。
-  - 支持离线 Ed25519 签名验签 + 机器指纹绑定 + 在线吊销管控。
-- 🔒 **二进制发布保护**：
-  - 核心业务逻辑编译为独立 Linux ELF 可执行文件发布，客户服务器上无明文源码。
+  - **Realm**：高效低延迟端口中转转发调度，轻松组建多级中继拓扑。
+- 🌸 **全新高颜值樱花浪漫主题 (Sakura Theme)**：
+  - 内置经典工业灰与浪漫落樱粉双主题引擎，界面灵动优雅。
+  - 主题设置随用户账号持久化存储，管理员与普通用户可按需独立随心切换。
+- 📱 **移动端与全端响应式深度适配**：
+  - 针对手机端、Pad 及超宽/超窄视口重新优化网格排版与弹性布局，彻底消灭横向滚动条。
+  - 顶部导航栏、卡片状态组、操作按钮及退出登录项均做手机触控微调，单手滑动丝滑自如。
+- 🎯 **AI 与流媒体解锁检测自定义筛选**：
+  - 针对节点流媒体（Netflix、Disney+、YouTube 等）与 AI 矩阵（ChatGPT、Claude、Gemini 等）提供全自动流媒体解锁探测。
+  - 支持用户自定义勾选“仅关注的服务”，告别全量大卡片冗余堆叠，界面清爽聚焦。
+- 📋 **全平台客户端聚合订阅一键复制**：
+  - 自动将所有已启用节点整合成标准化订阅，深度适配 **Clash Verge Rev、v2rayN、Shadowrocket、Sing-box、Loon、Surge** 等客户端。
+  - 内置跨域与非安全上下文兼容复制引擎，确保在各类浏览器与手机端均可一键极速复制。
+- 📶 **全链路握手测速与红绿灯防呆拦截**：
+  - 节点列表内置 **【测试】** 按钮，一键发起全链路 TLS / UDP 握手测试，毫秒级回显实际往返延迟。
+  - 新建节点弹窗中，所属服务器实时显示核心就绪情况：`[🟢/🔴 Xray]  [🟢/🔴 Sing-box]  [🟢/🔴 Realm]`，未安装核心自动拦截防呆。
+- 🤖 **Telegram 自动化数据热备份**：
+  - 内置 SQLite 在线热备份（Online Backup API）与 Gzip 压缩归档，零停机备份。
+  - 支持对接 Telegram Bot，定时将数据库备份文件及用户节点统计简报自动推送到指定的 TG 会话。
+- 🖥️ **可视化终端运维工具 `hhub`**：
+  - 纯 IP 模式与域名 HTTPS 模式一键智能无损切换，自动处理 80 / 443 端口与防火墙规则。
+  - 支持一键服务启停、重置密码、修改端口、实时日志滚屏、无损热升级与数据库还原。
+- 🔒 **无源码独立二进制分发**：
+  - 代理管理中枢编译为独立 Linux ELF 二进制程序分发，杜绝生产服务器源码泄露风险。
 
 ---
 
@@ -41,8 +52,8 @@
 
 ```
                       ┌───────────────────────────────────────────────┐
-                      │            Caddy 统一反向代理网关 (443)         │
-                      │                 your-domain.com               │
+                      │            Caddy 统一反向代理网关 (443 / 80)    │
+                      │                 your-domain.com / IP          │
                       └───────┬──────────────┬──────────────┬─────────┘
                               │              │              │
       /admin*, /install.sh    │ /api/proxy/* │              │ /api/*, /ws, /
@@ -66,7 +77,7 @@
              ┌─────────────────┐                             ┌─────────────────┐
              │  探针被控节点 A   │                             │  探针被控节点 B   │
              │   monitor-agent │                             │   monitor-agent │
-             │   Xray + Singbox│                             │   Xray + Singbox│
+             │ Xray+Singbox+Rlm│                             │ Xray+Singbox+Rlm│
              └─────────────────┘                             └─────────────────┘
 ```
 
@@ -74,123 +85,106 @@
 
 ## 🚀 一键部署
 
-> **本仓库为私有仓库，部署文件通过 GitHub Release 公开分发。**
-
 ### 主控端一键安装（全新服务器）
 
-> 推荐操作系统：**Ubuntu 22.04+ / Debian 11+**，已将域名 DNS 解析到本机 IP。
+> 推荐操作系统：**Ubuntu 22.04+ / Debian 11+**。支持纯 IP 安装或预先解析域名。
 
 ```bash
-curl -fsSL https://github.com/2290145679/ProxyProbe/releases/latest/download/deploy-hub.sh | bash
+curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/deploy-hub.sh | bash
 ```
 
-脚本会交互式询问：
-- 📌 绑定域名（必填，用于自动申请 SSL 证书）
-- 🔑 管理员密码（留空则随机生成）
-- 🌐 外部访问端口（默认 443，支持自定义）
-- ⚙️ 内部服务端口（默认 28080 / 28090，支持自定义）
+脚本会交互式引导完成配置：
+- 📌 **绑定域名或公网 IP**（输入域名将自动申请 SSL 证书，输入 IP 则启用纯 IP 模式）
+- 🔑 **管理员密码**（留空则自动生成高强度安全随机密码）
+- 🌐 **外部访问端口**（域名模式默认 443，纯 IP 模式默认 80，支持自定义）
+- ⚙️ **内部通信端口**（默认 28080 / 28090 本地回环反代）
 
-脚本自动完成：
-- ✅ 安装系统依赖（Python3、curl、git、openssl 等）
-- ✅ 安装并配置 **Caddy**（自动申请 SSL 证书）
-- ✅ 下载 **monitor-hub** 探针主控二进制（Rust，超低资源占用）
-- ✅ 下载 **proxy-manager** 代理管理二进制（含商业授权核心）
-- ✅ 下载并部署前端管理面板
-- ✅ 配置所有 systemd 服务并设置开机自启
-- ✅ 安装 `hhub` 终端运维控制台
-- ✅ 初始化管理员账户
-- ✅ 自动放行防火墙端口
+脚本自动执行并完成：
+- ✅ 安装系统核心依赖（Python3、curl、git、openssl 等）
+- ✅ 安装并配置 **Caddy**（自动化 SSL 证书或 IP 反代网关）
+- ✅ 安装 **monitor-hub** 探针主控核心（Rust 编写，超低资源开销）
+- ✅ 安装 **proxy-manager** 代理中枢核心（独立 Linux ELF 二进制程序）
+- ✅ 部署现代化前端静态资源（React SPA，支持樱花/经典多主题）
+- ✅ 配置 systemd 守护进程并开启开机自启
+- ✅ 安装 `hhub` 终端可视化运维控制台
+- ✅ 自动放行防火墙端口与 ACME 验证端口
 
-安装完成后访问 `https://your-domain.com/admin` 即可登录后台。
+安装完成后，打开浏览器访问 `https://your-domain.com/admin`（或 `http://your-ip:port/admin`）即可登录控制面板。
 
 ---
 
-### 非交互静默部署（预设参数）
+### 非交互静默部署（脚本预设参数）
+
+适用于批量运维或自动化安装脚本：
 
 ```bash
 export DOMAIN=your-domain.com ADMIN_PASS=yourpassword
-curl -fsSL https://github.com/2290145679/ProxyProbe/releases/latest/download/deploy-hub.sh | bash
+curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/deploy-hub.sh | bash
 ```
 
 ---
 
-### 添加被控探针节点（一键接入）
+### 添加被控探针节点（一键秒级接入）
 
-1. 在管理后台「服务器」页面添加节点，复制生成的**安装指令**（已自动包含 TOKEN）。
-2. 在被控服务器上直接粘贴运行即可，脚本自动：
-   - 安装 `monitor-agent` 性能探针
-   - 按需部署 `Xray-core` / `Sing-box` / `Realm` 代理核心
-   - 自动生成自签 ECC 证书
-   - 启动 `proxy-agent.service` 后台同步进程（5 秒热同步）
+1. 在管理后台「服务器」页面点击添加服务器，复制系统自动生成的**一键安装指令**（已包含独立通信 TOKEN）。
+2. 在被控服务器终端直接粘贴执行，脚本将自动完成：
+   - 部署 `monitor-agent` 系统监控探针
+   - 按需极速安装 `Xray-core` / `Sing-box` / `Realm` 核心
+   - 自动签发 ECC 加密证书
+   - 启动 `proxy-agent.service` 后台同步进程（5 秒热同步节点变更）
 
 ---
 
 ## 🖥️ hhub 终端运维控制台
 
-安装完成后，SSH 登录服务器，直接输入：
+安装完成后，在任意 SSH 终端中直接输入：
 
 ```bash
 hhub
 ```
 
-即可进入可视化终端管理菜单，支持：
+即可进入可视化运维控制台，随时调整配置：
 
-| 功能 | 说明 |
-|:---|:---|
-| 查看系统状态 | 服务存活、端口占用、用户节点数 |
-| 一键重启 / 停止 / 启动 | 控制所有服务 |
-| 修改 Web 外部端口 | 自动同步 Caddyfile 与防火墙 |
-| 修改内部通信端口 | 探针端口与代理端口独立调整 |
-| 修改绑定域名 | 自动重置 Caddy 申请新 SSL |
-| 重置管理员密码 | 双端同步更新 |
-| 一键无损热升级 | 自动拉取最新 Release 文件 |
-| 实时查看日志 | proxy-manager / monitor-hub / caddy |
-| 数据库备份与还原 | 自动打时间戳 |
-| 安全卸载 | 支持保留数据库或彻底清除 |
-
----
-
-## 🔑 商业授权说明
-
-| 功能项 | 免费体验版 | 商业授权版 |
-|:---|:---:|:---:|
-| 探针全功能（服务器状态/CPU/内存/流量监控）| ✅ 无限制 | ✅ 无限制 |
-| 公开探针状态大屏 | ✅ 支持 | ✅ 支持 |
-| 服务器管理配额 | 最多 **1** 台 | 🚀 **无限制** |
-| 代理协议节点配额 | 最多 **1** 个 | 🚀 **无限制** |
-| 客户端用户配额 | 最多 **1** 个 | 🚀 **无限制** |
-| Xray / Sing-box / Realm 多协议拓扑 | ✅ 支持完整体验 | 🚀 全核心集群调度 |
-| 聚合订阅链接一键生成分发 | ✅ 支持 | 🚀 支持 |
-| 节点连通性毫秒级测速 | ✅ 支持 | 🚀 支持 |
-| 独立用户流量限制与设备数限制 | ✅ 支持 | 🚀 支持 |
-
-如需扩容服务器、解锁多节点集群与无限用户分发，请联系项目作者获取商业授权激活码。
+| 序号 | 功能模块 | 说明 |
+|:---:|:---|:---|
+| `[1]` | **查看系统运行状态** | 实时查看 Caddy / 探针 / 代理中枢运行状态与外部访问链接 |
+| `[2]` | **一键重启所有服务** | 平滑热重启全套服务组件 |
+| `[3]` | **停止所有服务** | 临时关停业务与监控服务 |
+| `[4]` | **启动所有服务** | 批量拉起后台守护进程 |
+| `[5]` | **修改 Web 外部端口** | 自动同步 Caddyfile 并同步放行系统防火墙端口 |
+| `[6]` | **修改内部通信端口** | 探针主控与代理中枢本地监听端口独立调整 |
+| `[7]` | **修改绑定域名 / IP** | **纯 IP 模式与域名 HTTPS 模式自由无损切换**，端口自动适配（80 ↔ 443）并自动申请证书 |
+| `[8]` | **重置管理员密码** | 同时更新普通用户中心与主控管理后台两个入口密码 |
+| `[9]` | **一键无损热升级系统** | 自动比对远端版本，无缝拉取最新二进制与前端资源，保留所有数据库数据 |
+| `[10]` | **查看服务实时日志** | 动态查看代理中枢、探针核心与 Caddy 网关的 real-time journal 日志 |
+| `[11]` | **数据库备份与还原** | 一键创建带时间戳的 SQLite 备份或从历史存档点还原 |
+| `[12]` | **卸载 ProxyProbe** | 支持选择保留历史数据或完全彻底清理 |
 
 ---
 
 ## ❓ 常见问题排查 (FAQ)
 
-### Q1: 新建了 Hysteria 2 节点却连不上？
-- **检查核心安装**：请检查该节点服务器是否安装了 `Sing-box`。在后台"所属服务器"下拉列表中，Sing-box 标点为红色 `🔴` 代表尚未安装。
-- **一键补装**：在目标服务器终端重新执行探针一键安装指令即可自动补装 Sing-box 核心。
-- **防火墙端口**：Hysteria 2 使用 UDP 传输协议，请确保云服务商控制台已放行对应的 **UDP 端口**。
+### Q1: 新建了 Hysteria 2 / TUIC 节点却连接失败？
+- **检查核心安装状态**：在后台新建节点时，查看“所属服务器”旁的核心状态指示灯。Sing-box 显示为红色 `🔴` 代表尚未安装该核心。
+- **一键补装**：在目标服务器终端重新执行该服务器对应的探针一键安装指令即可自动补齐缺失的核心。
+- **防火墙端口放行**：Hysteria 2 与 TUIC 均基于 UDP 协议传输，请确保安全组与云服务商控制台已放行节点配置的 **UDP 端口**。
 
 ### Q2: 节点列表中的【测试】按钮是测什么的？
-- 该按钮会向后端发起真实链路握手：
-  - 若为 TCP 协议（如 Reality / Trojan），测试 TCP 连接与 TLS Client Hello 握手；
-  - 若为 UDP 协议（如 Hysteria 2），测试 UDP 端口连通与协议套接字握手；
-- 测试通过后会以绿色字样显示实际网络往返延迟（如 `45ms`）。
+- 该按钮用于进行真实的端到端网络握手：
+  - 对 TCP 伪装协议（如 VLESS-Reality、Trojan），发起 TCP 建连与 TLS Client Hello 握手；
+  - 对 UDP 协议（如 Hysteria 2），测试 UDP 连通与协议套接字握手；
+- 握手成功后会以绿色标签直观呈现实际网络往返延迟（如 `38ms`）。
 
-### Q3: 为什么订阅无法更新？
-- 请检查后台"聚合订阅服务"卡片中的 Token 是否有效；
-- 若曾点击过【重置 Token】，原先已导入客户端的订阅链接将失效，需重新复制最新链接导入客户端。
+### Q3: 刚开始用 IP 部署，后面解析好域名如何平滑切换？
+- 无需重新安装！在服务器终端输入 `hhub`，选择 `[7] 修改绑定域名/IP`；
+- 输入您解析好的新域名，脚本会自动将外部端口从 80 切换为 443、放行 ACME 验证端口并触发 Caddy 自动申请 SSL 证书；
+- 切换完成后，管理后台、大屏展示以及所有用户的**聚合订阅复制地址会自动变为最新域名**。
 
-### Q4: 部署时提示下载 proxy-manager 失败？
-- 请确认 Release 中存在对应架构的 `proxy-manager-linux-amd64`（或 `arm64`）文件。
-- 访问 Release 页面检查：`https://github.com/2290145679/ProxyProbe/releases`
+### Q4: 订阅地址更新后，客户端需要做什么？
+- 后台的订阅链接完全动态自适应当前访问域名，若在后台点击了【重置 Token】，原订阅链接会失效，只需重新复制一次最新订阅地址导入客户端即可。
 
 ---
 
-## 📄 许可证
+## 📄 许可证说明
 
-本项目为**商业私有软件**，保留所有权利。未经授权，不得复制、修改、分发本项目的源码或二进制文件。
+本项目为**商业私有软件**，保留所有权利。未经官方授权许可，不得非法反编译、逆向工程、篡改或转售本软件的源码与可执行程序。
