@@ -14,6 +14,7 @@ import {
   Laptop,
   LogOut,
   Moon,
+  Palette,
   QrCode,
   RefreshCw,
   Send,
@@ -23,6 +24,7 @@ import {
 } from "lucide-react"
 import QRCode from "qrcode"
 import { toast } from "sonner"
+import { copyToClipboard } from "@/lib/clipboard"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -35,6 +37,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { ThemeSettingsDialog } from "@/components/ThemeSettingsDialog"
 
 export type UserProfile = {
   id: number
@@ -54,6 +57,7 @@ export type UserProfile = {
   enabled: number
   status: "active" | "over_quota" | "expired" | "disabled" | "over_device_limit"
   created_at: number
+  theme_style?: "default" | "sakura"
 }
 
 type NodeItem = {
@@ -98,6 +102,8 @@ export function UserDashboard({
   onSignOut,
   toggleTheme,
   dark,
+  themeStyle = "default",
+  onThemeStyleChange,
 }: {
   user: UserProfile
   siteName: string
@@ -105,7 +111,10 @@ export function UserDashboard({
   onSignOut: () => void
   toggleTheme: () => void
   dark: boolean
+  themeStyle?: "default" | "sakura"
+  onThemeStyleChange?: (style: "default" | "sakura") => void
 }) {
+  const [themeDialogOpen, setThemeDialogOpen] = useState(false)
   const [nodes, setNodes] = useState<NodeItem[]>([])
   const [showIps, setShowIps] = useState<Record<number, boolean>>({})
   const [qrOpen, setQrOpen] = useState(false)
@@ -173,9 +182,13 @@ export function UserDashboard({
   }, [effectiveSubUrl])
 
   // 复制订阅链接
-  function copySubUrl() {
-    navigator.clipboard.writeText(effectiveSubUrl)
-    toast.success("聚合订阅链接已复制到剪贴板！")
+  async function copySubUrl() {
+    const ok = await copyToClipboard(effectiveSubUrl)
+    if (ok) {
+      toast.success("聚合订阅链接已复制到剪贴板！")
+    } else {
+      toast.error("复制失败，请手动选中文本进行复制")
+    }
   }
 
   // 重置订阅链接
@@ -215,41 +228,85 @@ export function UserDashboard({
   const subName = siteName || "ProxySub"
 
   return (
-    <div className="min-h-svh bg-background/50">
+    <div className="min-h-svh bg-background/50 overflow-x-hidden w-full">
       {/* 顶部导航条 */}
-      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-base tracking-tight">{siteName || "HHUB"}</span>
-            <Badge variant="outline" className="text-[11px] font-normal">用户中心</Badge>
+      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur w-full">
+        <div className="mx-auto flex max-w-6xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {themeStyle === "sakura" && <span className="text-base select-none">🌸</span>}
+            <span className="font-bold text-sm sm:text-base tracking-tight truncate max-w-[120px] sm:max-w-none">
+              {siteName || "HHUB"}
+            </span>
+            <Badge variant="outline" className="hidden sm:inline-flex text-[11px] font-medium border-primary/20 bg-primary/10 text-primary whitespace-nowrap shrink-0">
+              用户中心
+            </Badge>
           </div>
 
           <div className="flex-1" />
 
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" asChild className="gap-1.5 text-xs h-8">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            <Button variant="outline" size="sm" asChild className="gap-1.5 text-xs h-8 px-2 sm:px-3 shrink-0">
               <a href="/" target="_blank" rel="noopener noreferrer" title="查看服务器探针状态">
-                <Activity className="size-3.5 text-emerald-500" />
-                <span>服务器探针</span>
-                <ExternalLink className="size-3 text-muted-foreground ml-0.5" />
+                <Activity className="size-3.5 text-emerald-500 shrink-0" />
+                <span className="hidden sm:inline">服务器探针</span>
+                <ExternalLink className="size-3 text-muted-foreground ml-0.5 hidden sm:inline shrink-0" />
               </a>
             </Button>
 
-            <span className="text-xs text-muted-foreground mr-1 hidden sm:inline-flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground mr-1 hidden md:inline-flex items-center gap-1.5">
               <span>用户:</span>
               <strong className="text-foreground">{user.username}</strong>
             </span>
 
-            <Button variant="ghost" size="icon" onClick={toggleTheme} title="切换主题">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setThemeDialogOpen(true)}
+              className="size-8 shrink-0"
+              title="主题外观设置"
+            >
+              {themeStyle === "sakura" ? (
+                <span className="text-sm select-none">🌸</span>
+              ) : (
+                <Palette className="size-4 text-muted-foreground" />
+              )}
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleTheme}
+              className="size-8 shrink-0"
+              title={dark ? "切换为浅色" : "切换为深色"}
+            >
               {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
             </Button>
 
-            <Button variant="ghost" size="sm" onClick={onSignOut} className="gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-              <LogOut className="size-3.5" /> 退出
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSignOut}
+              className="gap-1.5 text-xs text-muted-foreground hover:text-foreground h-8 px-2 sm:px-3 shrink-0"
+              title="退出登录"
+            >
+              <LogOut className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline">退出</span>
             </Button>
           </div>
         </div>
       </header>
+
+      {/* 主题外观切换弹窗 */}
+      {onThemeStyleChange && (
+        <ThemeSettingsDialog
+          open={themeDialogOpen}
+          onOpenChange={setThemeDialogOpen}
+          themeStyle={themeStyle}
+          onThemeStyleChange={onThemeStyleChange}
+          dark={dark}
+          onToggleDark={toggleTheme}
+        />
+      )}
 
       {/* 主面板内容 */}
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">

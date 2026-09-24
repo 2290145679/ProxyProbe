@@ -51,3 +51,5 @@ license-center/
 
 # Temporary scratch files
 scratch/
+scripts/deploy_remote.py
+scripts/test_verify.py

@@ -69,6 +69,65 @@
   --warn: oklch(0.8 0.16 75);
 }
 
+/* 🌸 樱花盛开主题 · 浅色模式 (Spring Sakura Blossom) */
+:root.theme-sakura, .theme-sakura {
+  --radius: 0.75rem;
+  --background: oklch(0.988 0.012 355);
+  --foreground: oklch(0.22 0.045 350);
+  --card: oklch(0.998 0.005 355);
+  --card-foreground: oklch(0.22 0.045 350);
+  --popover: oklch(0.998 0.005 355);
+  --popover-foreground: oklch(0.22 0.045 350);
+  --primary: oklch(0.62 0.22 15);
+  --primary-foreground: oklch(0.99 0.005 355);
+  --secondary: oklch(0.962 0.02 355);
+  --secondary-foreground: oklch(0.35 0.09 350);
+  --muted: oklch(0.965 0.015 355);
+  --muted-foreground: oklch(0.55 0.045 350);
+  --accent: oklch(0.95 0.035 355);
+  --accent-foreground: oklch(0.25 0.06 350);
+  --destructive: oklch(0.58 0.24 25);
+  --border: oklch(0.925 0.028 355);
+  --input: oklch(0.925 0.028 355);
+  --ring: oklch(0.68 0.20 15);
+  --chart-1: oklch(0.62 0.22 15);
+  --chart-2: oklch(0.70 0.16 345);
+  --chart-3: oklch(0.65 0.18 320);
+  --chart-4: oklch(0.75 0.15 45);
+  --chart-5: oklch(0.60 0.15 150);
+  --ok: oklch(0.63 0.17 149);
+  --warn: oklch(0.75 0.17 70);
+}
+
+/* 🌸 夜樱沉醉主题 · 深色模式 (Midnight Sakura & Plum Twilight) */
+:root.dark.theme-sakura, .dark.theme-sakura, .dark .theme-sakura {
+  --background: oklch(0.14 0.03 330);
+  --foreground: oklch(0.97 0.012 350);
+  --card: oklch(0.19 0.038 335);
+  --card-foreground: oklch(0.97 0.012 350);
+  --popover: oklch(0.19 0.038 335);
+  --popover-foreground: oklch(0.97 0.012 350);
+  --primary: oklch(0.73 0.19 355);
+  --primary-foreground: oklch(0.14 0.03 330);
+  --secondary: oklch(0.25 0.04 335);
+  --secondary-foreground: oklch(0.96 0.015 350);
+  --muted: oklch(0.24 0.035 335);
+  --muted-foreground: oklch(0.68 0.04 345);
+  --accent: oklch(0.26 0.048 335);
+  --accent-foreground: oklch(0.97 0.012 350);
+  --destructive: oklch(0.68 0.20 22);
+  --border: oklch(0.30 0.05 340 / 60%);
+  --input: oklch(0.32 0.05 340 / 65%);
+  --ring: oklch(0.73 0.19 355);
+  --chart-1: oklch(0.73 0.19 355);
+  --chart-2: oklch(0.68 0.17 325);
+  --chart-3: oklch(0.78 0.15 75);
+  --chart-4: oklch(0.65 0.22 300);
+  --chart-5: oklch(0.70 0.16 150);
+  --ok: oklch(0.70 0.16 150);
+  --warn: oklch(0.80 0.16 75);
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -103,15 +162,46 @@
 
 @layer base {
   * { @apply border-border outline-ring/50; }
-  /* Reserve the scrollbar's width on every page: without it, leaving a route
-     whose content exceeds the fold widens the page. */
+  /* Reserve the scrollbar's width on every page */
   html { scrollbar-gutter: stable; }
+  html, body {
+    max-width: 100vw;
+    overflow-x: hidden;
+    width: 100%;
+  }
   body { @apply bg-background text-foreground; }
-  /* Tailwind v4 leaves `button` and `input` on the browser's default cursor,
-     where v3 made buttons a pointer. Radix renders Switch as a button, so without
-     this a clickable row loses its pointer exactly where the control sits. The
-     component's own `disabled:cursor-not-allowed` is more specific and wins. */
   [data-slot="switch"], input[type="checkbox"] { cursor: pointer; }
+}
+
+/* 🌸 樱花专属精致细滚动条 */
+.theme-sakura::-webkit-scrollbar,
+.theme-sakura ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.theme-sakura::-webkit-scrollbar-track,
+.theme-sakura ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.theme-sakura::-webkit-scrollbar-thumb,
+.theme-sakura ::-webkit-scrollbar-thumb {
+  background: oklch(0.85 0.04 350 / 60%);
+  border-radius: 9999px;
+}
+.dark.theme-sakura::-webkit-scrollbar-thumb,
+.dark .theme-sakura ::-webkit-scrollbar-thumb,
+.dark.theme-sakura ::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0.06 335 / 60%);
+  border-radius: 9999px;
+}
+.theme-sakura::-webkit-scrollbar-thumb:hover,
+.theme-sakura ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.70 0.12 350);
+}
+.dark.theme-sakura::-webkit-scrollbar-thumb:hover,
+.dark .theme-sakura ::-webkit-scrollbar-thumb:hover,
+.dark.theme-sakura ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.50 0.10 335);
 }
 
 /* Tabular figures keep live numbers from shifting as they update. */

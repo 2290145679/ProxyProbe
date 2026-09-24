@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
 import { Bell, CalendarClock, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Palette, Pencil, Plus, Radio, RefreshCw, Search, Send, Server, Settings, Shield, Trash2, Upload, Users } from "lucide-react"
 import { toast } from "sonner"
+import { copyToClipboard } from "@/lib/clipboard"
 
 import { ProxyNodes } from "./ProxyNodes"
 import { ProxyUsers } from "./ProxyUsers"
@@ -40,11 +41,13 @@ function animate(update: () => void) {
   else update()
 }
 
-function copy(text: string) {
-  navigator.clipboard.writeText(text).then(
-    () => toast.success("已复制"),
-    () => toast.error("复制失败"),
-  )
+async function copy(text: string) {
+  const ok = await copyToClipboard(text)
+  if (ok) {
+    toast.success("已复制")
+  } else {
+    toast.error("复制失败，请手动选中文本复制")
+  }
 }
 
 const SOURCES: Record<Source, string> = {

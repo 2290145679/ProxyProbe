@@ -991,13 +991,19 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+        # Migration: ensure theme_style exists
+        try:
+            conn.execute("ALTER TABLE proxy_user ADD COLUMN theme_style TEXT DEFAULT 'default'")
+        except sqlite3.OperationalError:
+            pass
+
         # Migration: ensure admin user exists in proxy_user
         cur_adm = conn.execute("SELECT id FROM proxy_user WHERE username = 'admin'")
         if not cur_adm.fetchone():
             adm_hash = hash_password("admin123")
             conn.execute("""
-                INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit)
-                VALUES ('admin', ?, ?, 0, 0, 0, 0, 1, 1, ?, 0)
+                INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit, theme_style)
+                VALUES ('admin', ?, ?, 0, 0, 0, 0, 1, 1, ?, 0, 'default')
             """, (adm_hash, sub_tok, int(time.time())))
     conn.close()
 
@@ -3238,6 +3244,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
             })
             return
 
+        # Theme style endpoint
+        if path == "/api/proxy/theme":
+            user = get_current_user(self.headers)
+            theme = "default"
+            if user:
+                theme = user.get("theme_style") or (get_setting("admin_theme_style", "default") if user.get("is_admin") else "default")
+            else:
+                theme = get_setting("admin_theme_style", "default")
+            self.send_json({"ok": True, "theme_style": theme or "default"})
+            return
+
         # 3. User authenticated endpoints (Regular user or Admin)
         if path == "/api/proxy/user/me":
             user = get_current_user(self.headers)
@@ -3258,6 +3275,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             
             sub_token = user.get("sub_token") or get_sub_token()
             base_url = get_request_base_url(self.headers)
+            user_theme = user.get("theme_style") or (get_setting("admin_theme_style", "default") if user.get("is_admin") else "default")
             self.send_json({
                 "ok": True,
                 "user": {
@@ -3277,7 +3295,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "expires_at": user.get("expires_at", 0),
                     "enabled": user.get("enabled", 1),
                     "status": status_text,
-                    "created_at": user.get("created_at", 0)
+                    "created_at": user.get("created_at", 0),
+                    "theme_style": user_theme or "default"
                 }
             })
             return
@@ -3327,9 +3346,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         if path == "/api/proxy/unlock/config":
             enabled, custom = get_unlock_config()
+            show_badges = get_setting("unlock_show_badges", "1") == "1"
             self.send_json({
                 "ok": True,
                 "enabled": enabled,
+                "show_badges": show_badges,
                 "presets": DEFAULT_UNLOCK_PRESETS,
                 "custom": custom
             })
@@ -3363,10 +3384,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     }
             conn.close()
             enabled, custom = get_unlock_config()
+            show_badges = get_setting("unlock_show_badges", "1") == "1"
             self.send_json({
                 "ok": True,
                 "status": status_map,
                 "enabled": enabled,
+                "show_badges": show_badges,
                 "presets": DEFAULT_UNLOCK_PRESETS,
                 "custom": custom
             })
@@ -3877,6 +3900,26 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "sub_token": new_token, "sub_url": f"{base_url}/api/proxy/sub?token={new_token}"})
             return
 
+        # 切换并持久化保存主题风格 (跟随账号)
+        if path == "/api/proxy/theme":
+            user = get_current_user(self.headers)
+            is_adm = check_auth(self.headers) or (user and user.get("is_admin") == 1)
+            if not user and not is_adm:
+                self.send_json({"ok": False, "error": "未登录"}, 401)
+                return
+            new_theme = req.get("theme_style", "default")
+            if new_theme not in ("default", "sakura"):
+                new_theme = "default"
+            if user and user.get("id", 0) > 0:
+                conn = get_db()
+                with conn:
+                    conn.execute("UPDATE proxy_user SET theme_style = ? WHERE id = ?", (new_theme, user["id"]))
+                conn.close()
+            if is_adm:
+                set_setting("admin_theme_style", new_theme)
+            self.send_json({"ok": True, "theme_style": new_theme})
+            return
+
         # License activation API (允许已登录管理员，或本机 127.0.0.1 终端激活)
         if path == "/api/proxy/license/activate":
             if not check_auth(self.headers) and self.client_address[0] not in ("127.0.0.1", "::1"):
@@ -3911,10 +3954,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if path == "/api/proxy/unlock/config":
             enabled = req.get("enabled")
             custom = req.get("custom")
+            show_badges = req.get("show_badges")
             if enabled is not None:
                 set_setting("unlock_enabled_items", json.dumps(enabled))
             if custom is not None:
                 set_setting("unlock_custom_items", json.dumps(custom))
+            if show_badges is not None:
+                set_setting("unlock_show_badges", "1" if show_badges else "0")
             self.send_json({"ok": True, "message": "流媒体与 AI 检测配置已更新"})
             return
 

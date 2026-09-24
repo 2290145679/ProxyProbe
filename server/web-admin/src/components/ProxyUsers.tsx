@@ -11,6 +11,7 @@ import {
   Users,
 } from "lucide-react"
 import { toast } from "sonner"
+import { copyToClipboard } from "@/lib/clipboard"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -434,7 +435,7 @@ export function ProxyUsers() {
                           size="icon"
                           className="size-7 shrink-0"
                           title="复制完整订阅链接"
-                          onClick={() => {
+                          onClick={async () => {
                             let dynUrl = u.sub_url
                             try {
                               if (u.sub_url && u.sub_url.startsWith("http")) {
@@ -444,8 +445,12 @@ export function ProxyUsers() {
                                 dynUrl = `${window.location.origin}${u.sub_url.startsWith('/') ? '' : '/'}${u.sub_url}`
                               }
                             } catch {}
-                            navigator.clipboard.writeText(dynUrl || u.sub_url)
-                            toast.success(`已复制用户【${u.username}】的订阅链接！`)
+                            const ok = await copyToClipboard(dynUrl || u.sub_url)
+                            if (ok) {
+                              toast.success(`已复制用户【${u.username}】的订阅链接！`)
+                            } else {
+                              toast.error("复制失败，请手动选中文本复制")
+                            }
                           }}
                         >
                           <Copy className="size-3.5" />

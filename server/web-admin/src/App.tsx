@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react"
-import { ExternalLink, LogOut, Moon, Sun } from "lucide-react"
+import { ExternalLink, LogOut, Moon, Palette, Sun } from "lucide-react"
 import { Toaster } from "sonner"
 
 import { Admin } from "@/components/Admin"
 import { Login } from "@/components/Login"
+import { ThemeSettingsDialog } from "@/components/ThemeSettingsDialog"
 import { UserDashboard, type UserProfile } from "@/components/UserDashboard"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -43,16 +44,43 @@ function useTheme() {
     const saved = localStorage.getItem("theme")
     return saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches
   })
+  const [themeStyle, setThemeStyleState] = useState<"default" | "sakura">(() => {
+    return (localStorage.getItem("theme_style") as "default" | "sakura") || "default"
+  })
+
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark)
     localStorage.setItem("theme", dark ? "dark" : "light")
   }, [dark])
-  return [dark, () => setDark((d) => !d)] as const
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("theme-sakura", themeStyle === "sakura")
+    localStorage.setItem("theme_style", themeStyle)
+  }, [themeStyle])
+
+  const setThemeStyle = useCallback((style: "default" | "sakura", syncRemote = true) => {
+    setThemeStyleState(style)
+    if (syncRemote) {
+      fetch("/api/proxy/theme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ theme_style: style }),
+      }).catch(() => {})
+    }
+  }, [])
+
+  return {
+    dark,
+    toggleTheme: () => setDark((d) => !d),
+    themeStyle,
+    setThemeStyle,
+  }
 }
 
 export default function App() {
   const [path, go] = usePath()
-  const [dark, toggleTheme] = useTheme()
+  const { dark, toggleTheme, themeStyle, setThemeStyle } = useTheme()
+  const [themeDialogOpen, setThemeDialogOpen] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
   const [meError, setMeError] = useState("")
   const { nodes, admin, error, refresh } = useNodes()
@@ -88,6 +116,26 @@ export default function App() {
       loadUserProfile()
     }
   }, [me?.authed, loadUserProfile])
+
+  // 同步用户或管理员的主题设置 (跟随账号走)
+  useEffect(() => {
+    if (userProfile?.theme_style) {
+      setThemeStyle(userProfile.theme_style, false)
+    }
+  }, [userProfile?.theme_style, setThemeStyle])
+
+  useEffect(() => {
+    if (me?.authed && (!userProfile || userProfile.is_admin)) {
+      fetch("/api/proxy/theme")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data?.ok && data.theme_style) {
+            setThemeStyle(data.theme_style, false)
+          }
+        })
+        .catch(() => {})
+    }
+  }, [me?.authed, userProfile, setThemeStyle])
 
   // Every frame declares its audience. The hub closes the stream when the session
   // behind it is revoked -- signed out from another device, a password change, a
@@ -135,6 +183,8 @@ export default function App() {
           onSignOut={signOut}
           toggleTheme={toggleTheme}
           dark={dark}
+          themeStyle={themeStyle}
+          onThemeStyleChange={setThemeStyle}
         />
         <Toaster position="top-center" theme={dark ? "dark" : "light"} />
       </>
@@ -144,30 +194,66 @@ export default function App() {
   const sorted = [...(nodes ?? [])].sort((a, b) => a.sort - b.sort || a.id - b.id)
 
   return (
-    <div className="min-h-svh">
-      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
-          {/* The site name is the way back to the status page, as in the
-              theme's own header. */}
-          <a href="/" className="font-semibold transition-opacity hover:opacity-70">
-            {me.site_name || "HHUB"}
+    <div className="min-h-svh overflow-x-hidden w-full">
+      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur w-full">
+        <div className="mx-auto flex max-w-7xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
+          {/* Logo / Site name */}
+          <a href="/" className="font-semibold transition-opacity hover:opacity-70 flex items-center gap-1.5 shrink-0 text-sm sm:text-base">
+            {themeStyle === "sakura" && <span className="text-base select-none">🌸</span>}
+            <span className="truncate max-w-[120px] sm:max-w-none">{me.site_name || "HHUB"}</span>
           </a>
-          <span className="text-xs text-muted-foreground">后台</span>
+          <span className="hidden sm:inline-flex text-[11px] px-2 py-0.5 rounded-full border border-primary/20 bg-primary/10 text-primary font-medium whitespace-nowrap shrink-0">
+            管理后台
+          </span>
           <div className="flex-1" />
-          {/* The status page is a separate app, so this is a navigation. */}
-          <Button variant="ghost" size="sm" asChild>
-            <a href="/">
-              <ExternalLink /> 状态面板
+          <Button variant="ghost" size="sm" asChild className="shrink-0 px-2 sm:px-3 text-xs h-8">
+            <a href="/" title="状态面板">
+              <ExternalLink className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline ml-1">状态面板</span>
             </a>
           </Button>
-          <Button variant="ghost" size="icon" onClick={toggleTheme} title="切换主题">
-            {dark ? <Sun /> : <Moon />}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setThemeDialogOpen(true)}
+            className="shrink-0 size-8"
+            title="主题风格设置"
+          >
+            {themeStyle === "sakura" ? (
+              <span className="text-sm select-none">🌸</span>
+            ) : (
+              <Palette className="size-4 text-muted-foreground" />
+            )}
           </Button>
-          <Button variant="ghost" size="icon" onClick={signOut} title="退出登录">
-            <LogOut />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            className="shrink-0 size-8"
+            title={dark ? "切换为浅色" : "切换为深色"}
+          >
+            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={signOut}
+            className="shrink-0 size-8 text-muted-foreground hover:text-foreground"
+            title="退出登录"
+          >
+            <LogOut className="size-4" />
           </Button>
         </div>
       </header>
+
+      <ThemeSettingsDialog
+        open={themeDialogOpen}
+        onOpenChange={setThemeDialogOpen}
+        themeStyle={themeStyle}
+        onThemeStyleChange={setThemeStyle}
+        dark={dark}
+        onToggleDark={toggleTheme}
+      />
 
       <main className="mx-auto max-w-7xl space-y-5 px-4 py-6">
         {error && <p className="text-sm text-destructive">{error}</p>}

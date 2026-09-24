@@ -6,6 +6,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import QRCode from "qrcode"
+import { copyToClipboard } from "@/lib/clipboard"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -109,7 +110,8 @@ function UnlockBadges({
   onTest,
   enabledKeys,
   presets,
-  customItems
+  customItems,
+  showBadges = true,
 }: {
   status?: Record<string, any>
   testing: boolean
@@ -117,10 +119,13 @@ function UnlockBadges({
   enabledKeys?: string[]
   presets?: UnlockPresetItem[]
   customItems?: CustomUnlockItem[]
+  showBadges?: boolean
 }) {
-  const activeKeys = (enabledKeys && enabledKeys.length > 0)
-    ? enabledKeys
-    : ["gemini", "chatgpt", "netflix", "youtube"]
+  if (!showBadges) return null
+  const activeKeys = enabledKeys || []
+  if (activeKeys.length === 0) {
+    return <span className="text-[11px] text-muted-foreground/60 italic select-none">未启用展示项</span>
+  }
 
   const defaultPresetsMap: Record<string, { shortName: string; name: string }> = {
     gemini: { shortName: "Gemini", name: "Google Gemini" },
@@ -251,6 +256,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [testResult, setTestResult] = useState<Record<number, { ok: boolean; msg: string; ms: number }>>({})
   const [unlockStatus, setUnlockStatus] = useState<Record<string, NodeUnlockStatus>>({})
   const [testingUnlockId, setTestingUnlockId] = useState<number | null>(null)
+  const [showUnlockBadges, setShowUnlockBadges] = useState<boolean>(() => {
+    const saved = localStorage.getItem("proxy_show_unlock_badges")
+    return saved !== null ? saved === "true" : true
+  })
+  const [tempShowBadges, setTempShowBadges] = useState<boolean>(true)
   const [unlockConfigOpen, setUnlockConfigOpen] = useState(false)
   const [unlockEnabled, setUnlockEnabled] = useState<string[]>(["gemini", "chatgpt", "netflix", "youtube"])
   const [unlockPresets, setUnlockPresets] = useState<UnlockPresetItem[]>([])
@@ -382,17 +392,25 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         if (data.custom && Array.isArray(data.custom)) {
           setUnlockCustom(data.custom)
         }
+        if (data.show_badges !== undefined) {
+          const val = Boolean(data.show_badges)
+          setShowUnlockBadges(val)
+          localStorage.setItem("proxy_show_unlock_badges", String(val))
+        }
       }
     } catch {}
   }, [])
 
-  const handleSaveUnlockConfig = async (newEnabled: string[], newCustom: CustomUnlockItem[]) => {
+  const handleSaveUnlockConfig = async (newEnabled: string[], newCustom: CustomUnlockItem[], showBadgesVal: boolean) => {
     setSavingUnlockConfig(true)
     try {
+      localStorage.setItem("proxy_show_unlock_badges", String(showBadgesVal))
+      setShowUnlockBadges(showBadgesVal)
+
       const res = await fetch("/api/proxy/unlock/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: newEnabled, custom: newCustom })
+        body: JSON.stringify({ enabled: newEnabled, custom: newCustom, show_badges: showBadgesVal })
       })
       const data = await res.json()
       if (data.ok) {
@@ -411,6 +429,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   }
 
   const openUnlockConfig = () => {
+    setTempShowBadges(showUnlockBadges)
     setTempEnabled(unlockEnabled)
     setTempCustom(unlockCustom)
     setNewCustomName("")
@@ -809,19 +828,27 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     }
   }
 
-  const copyLink = (link: string, id: number) => {
-    navigator.clipboard.writeText(link)
-    setCopiedId(id)
-    toast.success("复制链接成功")
-    setTimeout(() => setCopiedId(null), 2000)
+  const copyLink = async (link: string, id: number) => {
+    const ok = await copyToClipboard(link)
+    if (ok) {
+      setCopiedId(id)
+      toast.success("复制链接成功")
+      setTimeout(() => setCopiedId(null), 2000)
+    } else {
+      toast.error("复制失败，请手动选取复制")
+    }
   }
 
-  const copySub = () => {
+  const copySub = async () => {
     const subUrl = `${location.origin}/api/proxy/sub?token=${subToken}`
-    navigator.clipboard.writeText(subUrl)
-    setSubCopied(true)
-    toast.success("订阅链接已复制")
-    setTimeout(() => setSubCopied(false), 2000)
+    const ok = await copyToClipboard(subUrl)
+    if (ok) {
+      setSubCopied(true)
+      toast.success("订阅链接已复制")
+      setTimeout(() => setSubCopied(false), 2000)
+    } else {
+      toast.error("复制失败，请手动选取复制")
+    }
   }
 
   const handleResetToken = async () => {
@@ -868,6 +895,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   }
 
   const subUrl = `${location.origin}/api/proxy/sub?token=${subToken}`
+  const isUnlockColVisible = showUnlockBadges && unlockEnabled.length > 0
 
   return (
     <div className="space-y-5">
@@ -1074,14 +1102,36 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
             </p>
           </div>
 
-          <Button 
-            size="sm" 
-            onClick={openCreateDialog}
-            className="text-xs h-8 gap-1.5 bg-black hover:bg-neutral-800 text-white dark:bg-white dark:text-black dark:hover:bg-neutral-200 self-start sm:self-auto shrink-0"
-          >
-            <Plus className="size-3.5" />
-            新建节点
-          </Button>
+          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={openUnlockConfig}
+              className="text-xs h-8 gap-1.5 border-dashed hover:border-primary/50"
+              title="自定义流媒体与 AI 解锁检测展示项 (可隐藏或仅选择其中两个)"
+            >
+              <SlidersHorizontal className="size-3.5 text-primary" />
+              <span>AI与流媒体解锁</span>
+              {isUnlockColVisible ? (
+                <Badge variant="secondary" className="text-[10px] h-5 px-1.5 bg-primary/10 text-primary font-mono border-none">
+                  {unlockEnabled.length} 项
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-muted-foreground border-dashed">
+                  已隐藏
+                </Badge>
+              )}
+            </Button>
+
+            <Button 
+              size="sm" 
+              onClick={openCreateDialog}
+              className="text-xs h-8 gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+            >
+              <Plus className="size-3.5" />
+              新建节点
+            </Button>
+          </div>
         </div>
 
         {proxyNodes.length === 0 ? (
@@ -1094,19 +1144,21 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-[150px] text-xs font-medium">所属服务器</TableHead>
                 <TableHead className="w-[150px] text-xs font-medium">节点名称</TableHead>
-                <TableHead className="min-w-[210px] text-xs font-medium">
-                  <div className="flex items-center gap-1.5">
-                    <span>流媒体 / AI</span>
-                    <button
-                      type="button"
-                      onClick={openUnlockConfig}
-                      title="自定义检测项与偏好设置 (Gemini / GPT / 奈飞等)"
-                      className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-                    >
-                      <SlidersHorizontal className="size-3.5" />
-                    </button>
-                  </div>
-                </TableHead>
+                {isUnlockColVisible && (
+                  <TableHead className="min-w-[170px] text-xs font-medium">
+                    <div className="flex items-center gap-1.5">
+                      <span>流媒体 / AI</span>
+                      <button
+                        type="button"
+                        onClick={openUnlockConfig}
+                        title="自定义检测项与偏好设置 (Gemini / GPT / 奈飞等)"
+                        className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                      >
+                        <SlidersHorizontal className="size-3.5" />
+                      </button>
+                    </div>
+                  </TableHead>
+                )}
                 <TableHead className="w-[150px] text-xs font-medium">协议</TableHead>
                 <TableHead className="w-[90px] text-xs font-medium">端口</TableHead>
                 <TableHead className="text-xs font-medium">伪装目标 / SNI</TableHead>
@@ -1151,16 +1203,19 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                     {n.name}
                   </TableCell>
 
-                  <TableCell className="text-xs">
-                    <UnlockBadges
-                      status={unlockStatus[String(n.id)]}
-                      testing={testingUnlockId === n.id}
-                      onTest={() => handleTestUnlock(n.id)}
-                      enabledKeys={unlockEnabled}
-                      presets={unlockPresets}
-                      customItems={unlockCustom}
-                    />
-                  </TableCell>
+                  {isUnlockColVisible && (
+                    <TableCell className="text-xs">
+                      <UnlockBadges
+                        status={unlockStatus[String(n.id)]}
+                        testing={testingUnlockId === n.id}
+                        onTest={() => handleTestUnlock(n.id)}
+                        enabledKeys={unlockEnabled}
+                        presets={unlockPresets}
+                        customItems={unlockCustom}
+                        showBadges={showUnlockBadges}
+                      />
+                    </TableCell>
+                  )}
 
                   <TableCell className="text-xs">
                     <div className="flex flex-wrap items-center gap-1">
@@ -1808,7 +1863,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(false)} className="h-8 text-xs">
                 取消
               </Button>
-              <Button type="submit" size="sm" disabled={submitting} className="h-8 text-xs bg-black text-white hover:bg-neutral-800 dark:bg-white dark:text-black">
+              <Button type="submit" size="sm" disabled={submitting} className="h-8 text-xs bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm">
                 {submitting ? "正在下发..." : "新建节点"}
               </Button>
             </DialogFooter>
@@ -1830,6 +1885,75 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           </DialogHeader>
 
           <div className="space-y-5 py-2">
+            {/* 0. 解锁展示主开关与快捷模式 */}
+            <div className="p-3.5 rounded-xl border border-rose-300/40 dark:border-rose-900/40 bg-gradient-to-r from-rose-500/5 via-card to-card space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-semibold text-foreground flex items-center gap-2">
+                    <SlidersHorizontal className="size-3.5 text-primary" />
+                    <span>在节点列表中展示【流媒体 / AI】检测栏</span>
+                    {tempShowBadges ? (
+                      <Badge className="text-[10px] h-4 bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">已开启</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] h-4 text-muted-foreground border-dashed">已隐藏</Badge>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    若无需查看解锁，关闭此开关即可隐藏整个表格列，保持节点列表极简清爽。
+                  </p>
+                </div>
+                <Switch
+                  checked={tempShowBadges}
+                  onCheckedChange={setTempShowBadges}
+                />
+              </div>
+
+              {tempShowBadges && (
+                <div className="pt-2 border-t border-border/40 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-muted-foreground mr-1">快捷方案：</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setTempEnabled(["gemini", "chatgpt"])}
+                    className="h-6 px-2 text-[11px] rounded-md border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/5 hover:bg-blue-500/10"
+                  >
+                    仅看两大 AI (Gemini + ChatGPT)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setTempEnabled(["netflix", "youtube"])}
+                    className="h-6 px-2 text-[11px] rounded-md border-rose-500/30 text-rose-600 dark:text-rose-400 bg-rose-500/5 hover:bg-rose-500/10"
+                  >
+                    仅看主流流媒体 (Netflix + YouTube)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const allPresetIds = ["gemini", "chatgpt", "claude", "netflix", "youtube", "disney", "tiktok", "spotify"]
+                      setTempEnabled(allPresetIds)
+                    }}
+                    className="h-6 px-2 text-[11px] rounded-md"
+                  >
+                    全选预设
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setTempEnabled([])}
+                    className="h-6 px-2 text-[11px] text-muted-foreground hover:text-rose-500"
+                  >
+                    清空已选 ({tempEnabled.length})
+                  </Button>
+                </div>
+              )}
+            </div>
+
             {/* 预设 AI 大模型 */}
             <div className="space-y-2.5">
               <div className="flex items-center gap-2">
@@ -1994,8 +2118,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               type="button"
               size="sm"
               disabled={savingUnlockConfig}
-              onClick={() => handleSaveUnlockConfig(tempEnabled, tempCustom)}
-              className="h-8 text-xs bg-black text-white hover:bg-neutral-800 dark:bg-white dark:text-black"
+              onClick={() => handleSaveUnlockConfig(tempEnabled, tempCustom, tempShowBadges)}
+              className="h-8 text-xs bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
             >
               {savingUnlockConfig ? "正在保存..." : "保存配置"}
             </Button>
