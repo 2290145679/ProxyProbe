@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from "react"
 import { 
   GitFork, Layers, Plus, RefreshCw, Copy, Check, Trash2, 
-  QrCode, Box, Activity, Download, AlertCircle, ArrowRightLeft
+  QrCode, Box, Activity, Download, AlertCircle, ArrowRightLeft,
+  SlidersHorizontal, Sparkles, Globe
 } from "lucide-react"
 import { toast } from "sonner"
 import QRCode from "qrcode"
@@ -67,6 +68,146 @@ export interface ProxyServer {
   last_seen?: number
 }
 
+export interface UnlockData {
+  ok: boolean
+  msg: string
+  region?: string
+}
+
+export interface UnlockPresetItem {
+  id: string
+  name: string
+  shortName: string
+  category: "ai" | "media" | "custom"
+  color?: string
+  desc?: string
+}
+
+export interface CustomUnlockItem {
+  id: string
+  name: string
+  url: string
+}
+
+export interface NodeUnlockStatus {
+  gemini?: UnlockData
+  chatgpt?: UnlockData
+  claude?: UnlockData
+  netflix?: UnlockData
+  youtube?: UnlockData
+  disney?: UnlockData
+  tiktok?: UnlockData
+  spotify?: UnlockData
+  region?: string
+  updated_at?: number
+  [key: string]: any
+}
+
+function UnlockBadges({
+  status,
+  testing,
+  onTest,
+  enabledKeys,
+  presets,
+  customItems
+}: {
+  status?: Record<string, any>
+  testing: boolean
+  onTest: () => void
+  enabledKeys?: string[]
+  presets?: UnlockPresetItem[]
+  customItems?: CustomUnlockItem[]
+}) {
+  const activeKeys = (enabledKeys && enabledKeys.length > 0)
+    ? enabledKeys
+    : ["gemini", "chatgpt", "netflix", "youtube"]
+
+  const defaultPresetsMap: Record<string, { shortName: string; name: string }> = {
+    gemini: { shortName: "Gemini", name: "Google Gemini" },
+    chatgpt: { shortName: "GPT", name: "OpenAI ChatGPT" },
+    claude: { shortName: "Claude", name: "Anthropic Claude" },
+    netflix: { shortName: "NF", name: "Netflix" },
+    youtube: { shortName: "YT", name: "YouTube" },
+    disney: { shortName: "D+", name: "Disney+" },
+    tiktok: { shortName: "TikTok", name: "TikTok" },
+    spotify: { shortName: "Spotify", name: "Spotify" },
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto no-scrollbar py-0.5 max-w-[230px]">
+      {activeKeys.map((key) => {
+        let label = key
+        let fullName = key
+        const preset = presets?.find((p) => p.id === key)
+        if (preset) {
+          label = preset.shortName || preset.name
+          fullName = preset.name
+        } else if (defaultPresetsMap[key]) {
+          label = defaultPresetsMap[key].shortName
+          fullName = defaultPresetsMap[key].name
+        } else if (customItems) {
+          const cust = customItems.find((c) => c.id === key)
+          if (cust) {
+            label = cust.name
+            fullName = cust.name
+          }
+        }
+
+        const itemRes = status?.[key] as UnlockData | undefined
+        const isTested = itemRes && typeof itemRes.ok === "boolean"
+        const isOk = isTested && itemRes.ok
+        const isFail = isTested && !itemRes.ok
+
+        let displayLabel = label
+        if (key === "chatgpt" && isOk) {
+          const reg = itemRes.region || status?.region
+          if (reg) displayLabel = `GPT · ${reg}`
+        }
+
+        const tooltipMsg = isTested
+          ? `${fullName}: ${itemRes.msg || (isOk ? "支持" : "受限")} (点击重新检测)`
+          : `${fullName}: 未检测 (点击检测)`
+
+        return (
+          <span
+            key={key}
+            onClick={onTest}
+            title={tooltipMsg}
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border cursor-pointer select-none transition-all duration-150 shrink-0 ${
+              isOk
+                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/20"
+                : isFail
+                ? "bg-rose-500/10 text-rose-500 dark:text-rose-400 border-rose-500/25 hover:bg-rose-500/20"
+                : "bg-muted/40 text-muted-foreground border-border/40 hover:bg-muted/70 hover:text-foreground"
+            }`}
+          >
+            <span
+              className={`size-1.5 rounded-full shrink-0 ${
+                isOk
+                  ? "bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.7)]"
+                  : isFail
+                  ? "bg-rose-500/80"
+                  : "bg-muted-foreground/40"
+              }`}
+            />
+            <span>{displayLabel}</span>
+          </span>
+        )
+      })}
+
+      <button
+        type="button"
+        title="刷新该节点流媒体与 AI 解锁检测"
+        onClick={onTest}
+        disabled={testing}
+        className="p-1 rounded text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-colors shrink-0 disabled:opacity-50 cursor-pointer"
+      >
+        <RefreshCw className={`size-3 ${testing ? "animate-spin text-primary" : ""}`} />
+      </button>
+    </div>
+  )
+}
+
 interface CoreStatus {
   installed: boolean
   version: string
@@ -108,6 +249,17 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [selectedTargetNodeId, setSelectedTargetNodeId] = useState<string>("")
   const [testingId, setTestingId] = useState<number | null>(null)
   const [testResult, setTestResult] = useState<Record<number, { ok: boolean; msg: string; ms: number }>>({})
+  const [unlockStatus, setUnlockStatus] = useState<Record<string, NodeUnlockStatus>>({})
+  const [testingUnlockId, setTestingUnlockId] = useState<number | null>(null)
+  const [unlockConfigOpen, setUnlockConfigOpen] = useState(false)
+  const [unlockEnabled, setUnlockEnabled] = useState<string[]>(["gemini", "chatgpt", "netflix", "youtube"])
+  const [unlockPresets, setUnlockPresets] = useState<UnlockPresetItem[]>([])
+  const [unlockCustom, setUnlockCustom] = useState<CustomUnlockItem[]>([])
+  const [tempEnabled, setTempEnabled] = useState<string[]>(["gemini", "chatgpt", "netflix", "youtube"])
+  const [tempCustom, setTempCustom] = useState<CustomUnlockItem[]>([])
+  const [newCustomName, setNewCustomName] = useState("")
+  const [newCustomUrl, setNewCustomUrl] = useState("")
+  const [savingUnlockConfig, setSavingUnlockConfig] = useState(false)
 
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [subCopied, setSubCopied] = useState(false)
@@ -213,8 +365,109 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     }
   }, [])
 
+  const loadUnlockStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/proxy/unlock-status")
+      if (res.ok) {
+        const data = await res.json()
+        if (data.status) {
+          setUnlockStatus(data.status)
+        }
+        if (data.enabled && Array.isArray(data.enabled)) {
+          setUnlockEnabled(data.enabled)
+        }
+        if (data.presets && Array.isArray(data.presets)) {
+          setUnlockPresets(data.presets)
+        }
+        if (data.custom && Array.isArray(data.custom)) {
+          setUnlockCustom(data.custom)
+        }
+      }
+    } catch {}
+  }, [])
+
+  const handleSaveUnlockConfig = async (newEnabled: string[], newCustom: CustomUnlockItem[]) => {
+    setSavingUnlockConfig(true)
+    try {
+      const res = await fetch("/api/proxy/unlock/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newEnabled, custom: newCustom })
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setUnlockEnabled(newEnabled)
+        setUnlockCustom(newCustom)
+        toast.success("流媒体与 AI 检测配置已更新并生效")
+        setUnlockConfigOpen(false)
+      } else {
+        toast.error(data.message || "配置保存失败")
+      }
+    } catch {
+      toast.error("网络请求失败")
+    } finally {
+      setSavingUnlockConfig(false)
+    }
+  }
+
+  const openUnlockConfig = () => {
+    setTempEnabled(unlockEnabled)
+    setTempCustom(unlockCustom)
+    setNewCustomName("")
+    setNewCustomUrl("")
+    setUnlockConfigOpen(true)
+  }
+
+  const togglePreset = (id: string) => {
+    setTempEnabled(prev =>
+      prev.includes(id) ? prev.filter(k => k !== id) : [...prev, id]
+    )
+  }
+
+  const handleAddCustom = () => {
+    if (!newCustomName.trim() || !newCustomUrl.trim()) {
+      toast.error("请填写检测规则名称和目标 URL")
+      return
+    }
+    const newId = `custom_${Date.now()}`
+    const item: CustomUnlockItem = {
+      id: newId,
+      name: newCustomName.trim(),
+      url: newCustomUrl.trim()
+    }
+    setTempCustom(prev => [...prev, item])
+    setTempEnabled(prev => [...prev, newId])
+    setNewCustomName("")
+    setNewCustomUrl("")
+    toast.success(`已添加自定义规则: ${item.name}`)
+  }
+
+  const handleRemoveCustom = (id: string) => {
+    setTempCustom(prev => prev.filter(c => c.id !== id))
+    setTempEnabled(prev => prev.filter(k => k !== id))
+  }
+
+  const handleTestUnlock = async (id: number) => {
+    setTestingUnlockId(id)
+    try {
+      const res = await fetch(`/api/proxy/nodes/${id}/unlock-test`, { method: "POST" })
+      const data = await res.json()
+      if (data.ok && data.result) {
+        setUnlockStatus(prev => ({ ...prev, [String(id)]: data.result }))
+        toast.success(`节点 [${id}] 流媒体与 AI 解锁检测完成`)
+      } else {
+        toast.error(data.message || "解锁检测未完成")
+      }
+    } catch {
+      toast.error("网络请求失败")
+    } finally {
+      setTestingUnlockId(null)
+    }
+  }
+
   const handleTestNode = async (id: number) => {
     setTestingId(id)
+    handleTestUnlock(id)
     try {
       const res = await fetch(`/api/proxy/nodes/${id}/test`)
       const data = await res.json()
@@ -233,6 +486,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
   const loadData = useCallback(async () => {
     setLoading(true)
+    loadUnlockStatus()
     try {
       const res = await fetch("/api/proxy/nodes")
       if (!res.ok) throw new Error("获取节点列表失败")
@@ -838,12 +1092,25 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           <Table>
             <TableHeader className="bg-muted/10">
               <TableRow className="hover:bg-transparent">
-                <TableHead className="w-[160px] text-xs font-medium">所属服务器</TableHead>
-                <TableHead className="w-[180px] text-xs font-medium">节点名称</TableHead>
-                <TableHead className="w-[180px] text-xs font-medium">协议</TableHead>
-                <TableHead className="w-[100px] text-xs font-medium">端口</TableHead>
+                <TableHead className="w-[150px] text-xs font-medium">所属服务器</TableHead>
+                <TableHead className="w-[150px] text-xs font-medium">节点名称</TableHead>
+                <TableHead className="min-w-[210px] text-xs font-medium">
+                  <div className="flex items-center gap-1.5">
+                    <span>流媒体 / AI</span>
+                    <button
+                      type="button"
+                      onClick={openUnlockConfig}
+                      title="自定义检测项与偏好设置 (Gemini / GPT / 奈飞等)"
+                      className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                    >
+                      <SlidersHorizontal className="size-3.5" />
+                    </button>
+                  </div>
+                </TableHead>
+                <TableHead className="w-[150px] text-xs font-medium">协议</TableHead>
+                <TableHead className="w-[90px] text-xs font-medium">端口</TableHead>
                 <TableHead className="text-xs font-medium">伪装目标 / SNI</TableHead>
-                <TableHead className="w-[80px] text-xs font-medium">状态</TableHead>
+                <TableHead className="w-[70px] text-xs font-medium">状态</TableHead>
                 <TableHead className="w-[180px] text-right text-xs font-medium">操作</TableHead>
               </TableRow>
             </TableHeader>
@@ -882,6 +1149,17 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
                   <TableCell className="text-xs font-medium">
                     {n.name}
+                  </TableCell>
+
+                  <TableCell className="text-xs">
+                    <UnlockBadges
+                      status={unlockStatus[String(n.id)]}
+                      testing={testingUnlockId === n.id}
+                      onTest={() => handleTestUnlock(n.id)}
+                      enabledKeys={unlockEnabled}
+                      presets={unlockPresets}
+                      customItems={unlockCustom}
+                    />
                   </TableCell>
 
                   <TableCell className="text-xs">
@@ -1535,6 +1813,193 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* 流媒体与 AI 解锁配置 Dialog */}
+      <Dialog open={unlockConfigOpen} onOpenChange={setUnlockConfigOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+              <SlidersHorizontal className="size-4 text-primary" />
+              <span>流媒体与 AI 解锁检测配置</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              自定义在代理节点列表中实时监控与展示的平台，支持一键开关与添加自定义检测 URL。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            {/* 预设 AI 大模型 */}
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="size-3.5 text-primary" />
+                <span className="text-xs font-semibold text-foreground">AI 大模型服务</span>
+                <span className="text-[11px] text-muted-foreground">（实时检测可用性与地区解锁）</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {[
+                  { id: "gemini", name: "Google Gemini", desc: "Google 多模态大模型 Web & API", color: "border-blue-500/30 bg-blue-500/5" },
+                  { id: "chatgpt", name: "OpenAI ChatGPT", desc: "OpenAI 官方 Web 与 App (含地区识别)", color: "border-emerald-500/30 bg-emerald-500/5" },
+                  { id: "claude", name: "Anthropic Claude", desc: "Claude 对话与 API 地区支持", color: "border-amber-500/30 bg-amber-500/5" },
+                ].map(item => {
+                  const isChecked = tempEnabled.includes(item.id)
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => togglePreset(item.id)}
+                      className={`p-3 rounded-lg border transition-all cursor-pointer select-none flex flex-col justify-between gap-2 ${
+                        isChecked
+                          ? `${item.color} shadow-xs`
+                          : "border-border/50 bg-card hover:border-border"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-foreground">{item.name}</span>
+                        <Switch
+                          checked={isChecked}
+                          onCheckedChange={() => togglePreset(item.id)}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </div>
+                      <p className="text-[11px] text-muted-foreground leading-tight">{item.desc}</p>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 预设主流流媒体 */}
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Activity className="size-3.5 text-rose-500" />
+                <span className="text-xs font-semibold text-foreground">主流流媒体 & 视听服务</span>
+                <span className="text-[11px] text-muted-foreground">（原生全解锁与跨区会员）</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {[
+                  { id: "netflix", name: "Netflix 奈飞", desc: "原生全解锁检测 (非仅自制剧)", color: "border-rose-500/30 bg-rose-500/5" },
+                  { id: "youtube", name: "YouTube Premium", desc: "Premium 跨区会员与免翻广告", color: "border-red-500/30 bg-red-500/5" },
+                  { id: "disney", name: "Disney+ 迪士尼", desc: "跨国流媒体区域验证", color: "border-sky-500/30 bg-sky-500/5" },
+                  { id: "tiktok", name: "TikTok 国际版", desc: "国际短视频地区封锁与免拔卡", color: "border-purple-500/30 bg-purple-500/5" },
+                  { id: "spotify", name: "Spotify 音乐", desc: "全球音乐曲库与注册地区检测", color: "border-green-500/30 bg-green-500/5" },
+                ].map(item => {
+                  const isChecked = tempEnabled.includes(item.id)
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => togglePreset(item.id)}
+                      className={`p-3 rounded-lg border transition-all cursor-pointer select-none flex flex-col justify-between gap-2 ${
+                        isChecked
+                          ? `${item.color} shadow-xs`
+                          : "border-border/50 bg-card hover:border-border"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-foreground">{item.name}</span>
+                        <Switch
+                          checked={isChecked}
+                          onCheckedChange={() => togglePreset(item.id)}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </div>
+                      <p className="text-[11px] text-muted-foreground leading-tight">{item.desc}</p>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 自定义检测目标 (Custom URLs) */}
+            <div className="space-y-2.5 pt-2 border-t">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Globe className="size-3.5 text-primary" />
+                  <span className="text-xs font-semibold text-foreground">自定义检测规则</span>
+                  <span className="text-[11px] text-muted-foreground">（探测任意特定网站或私有 API）</span>
+                </div>
+              </div>
+
+              {/* 添加自定义规则输入框 */}
+              <div className="flex flex-col sm:flex-row items-center gap-2">
+                <Input
+                  className="h-8 text-xs w-full sm:w-1/3"
+                  placeholder="规则名称 (如 Bilibili港澳台)"
+                  value={newCustomName}
+                  onChange={e => setNewCustomName(e.target.value)}
+                />
+                <Input
+                  className="h-8 text-xs font-mono w-full sm:flex-1"
+                  placeholder="https://example.com/api/test"
+                  value={newCustomUrl}
+                  onChange={e => setNewCustomUrl(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleAddCustom}
+                  className="h-8 text-xs shrink-0 w-full sm:w-auto gap-1"
+                >
+                  <Plus className="size-3" />
+                  添加规则
+                </Button>
+              </div>
+
+              {/* 已添加的自定义规则列表 */}
+              {tempCustom.length > 0 && (
+                <div className="space-y-1.5 mt-2">
+                  {tempCustom.map(cust => (
+                    <div
+                      key={cust.id}
+                      className="flex items-center justify-between p-2 rounded-md border bg-muted/20 text-xs"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Switch
+                          checked={tempEnabled.includes(cust.id)}
+                          onCheckedChange={() => togglePreset(cust.id)}
+                        />
+                        <span className="font-medium text-foreground">{cust.name}</span>
+                        <span className="text-[11px] font-mono text-muted-foreground truncate max-w-[280px]" title={cust.url}>
+                          {cust.url}
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveCustom(cust.id)}
+                        className="h-6 w-6 p-0 text-muted-foreground hover:text-rose-500"
+                        title="删除该规则"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="pt-3 border-t">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setUnlockConfigOpen(false)}
+              className="h-8 text-xs"
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={savingUnlockConfig}
+              onClick={() => handleSaveUnlockConfig(tempEnabled, tempCustom)}
+              className="h-8 text-xs bg-black text-white hover:bg-neutral-800 dark:bg-white dark:text-black"
+            >
+              {savingUnlockConfig ? "正在保存..." : "保存配置"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

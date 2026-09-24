@@ -1906,6 +1906,9 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
       </Card>
 
       <ChannelCard title="Telegram" configured={!!s.notify_telegram_token_set && text("notify_telegram_chat") !== ""}>
+        <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground flex items-center gap-2 mb-2">
+          <span>🛡️ <strong>静默无扰守护模式：</strong>保存后后台守护进程将自动常驻监测全部节点。任何节点离线超 75 秒或恢复上线时，自动静默推送信令通知，0 界面负担。</span>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Bot Token" hint={secretHint("notify_telegram_token")}>
             <Input
@@ -1924,7 +1927,7 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
           <textarea rows={3} className={TEXTAREA} value={text("notify_telegram_text")} onChange={(e) => set("notify_telegram_text", e.target.value)} />
         </Field>
         <TemplatePreview template={text("notify_telegram_text")} site={text("site_name") || "HHUB"} />
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             onClick={() =>
@@ -1936,6 +1939,33 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
             }
           >
             保存 Telegram
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={testing || (!s.notify_telegram_token_set && !text("notify_telegram_token"))}
+            onClick={async () => {
+              try {
+                const res = await fetch("/api/proxy/notify/telegram/test", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    token: text("notify_telegram_token"),
+                    chat_id: text("notify_telegram_chat")
+                  })
+                })
+                const data = await res.json()
+                if (data.ok) {
+                  toast.success(data.message || "测试通知已成功送达您的 Telegram！")
+                } else {
+                  toast.error(data.error || "发送测试失败，请检查 Token 与 Chat ID")
+                }
+              } catch (e: any) {
+                toast.error(e.message || "网络请求失败")
+              }
+            }}
+          >
+            <Send className="size-3.5 mr-1" /> 测试发送
           </Button>
           {s.notify_telegram_token_set && (
             <Button size="sm" variant="ghost" onClick={() => save({ notify_telegram_token: "", notify_telegram_chat: "" })}>
