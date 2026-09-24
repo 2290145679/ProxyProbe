@@ -400,7 +400,7 @@ $CADDY_SITE {
     }
 
     # 管理后台前端（React SPA）
-    handle_path /admin* {
+    handle /admin* {
         root * $WEB_DIST
         try_files {path} /index.html
         file_server
