@@ -1,12 +1,17 @@
+import base64
 import gzip
+import ipaddress
 import json
 import os
 import random
 import re
 import secrets
+import shutil
 import socket
 import sqlite3
+import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -27,7 +32,6 @@ SINGBOX_CERT = "/etc/sing-box/cert.pem"
 SINGBOX_KEY = "/etc/sing-box/key.pem"
 REALM_BIN = "/usr/local/bin/realm"
 REALM_CONFIG = "/etc/realm/config.json"
-import sys
 PORT = int(os.environ.get("PROXY_MANAGER_PORT", 28090))
 for _i, _arg in enumerate(sys.argv):
     if _arg == "--port" and _i + 1 < len(sys.argv):
@@ -2154,90 +2158,93 @@ def test_node_connectivity(node):
         return True, f"TCP 端口连通正常 (延迟 ~{tcp_ms}ms)", tcp_ms
 
 def format_node_link(node, user=None, server_country_map=None):
-    proto = node["protocol"]
-    uuid_str = node.get("uuid") or ""
-    pwd_str = node.get("password") or uuid_str
-    if user:
-        u_uuid, u_pwd = ensure_user_credentials(user)
-        uuid_str = u_uuid
-        pwd_str = u_pwd
-
-    host = node.get("server_host") or "189.24.108.25"
-    uri_host = format_host_for_uri(host)
-    port = node.get("port") or 20443
-    name_raw = format_node_display_name(node, server_country_map)
-    name = quote(name_raw, safe=":/[] -_()@➔")
-    
-    if proto == "vless_reality":
-        pbk = node.get("public_key") or ""
-        sid = node.get("short_id") or ""
-        sni = node.get("sni") or "www.apple.com"
-        flow = node.get("flow") or "xtls-rprx-vision"
-        flow_param = f"&flow={flow}" if flow else ""
-        spx = node.get("spider_x") or ""
-        spx_param = f"&spx={quote(spx)}" if (spx and spx != "/") else ""
-        return f"vless://{uuid_str}@{uri_host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=tcp{flow_param}&sni={sni}&sid={sid}#{name}"
-    
-    elif proto == "vless_reality_xhttp":
-        pbk = node.get("public_key") or ""
-        sid = node.get("short_id") or ""
-        sni = node.get("sni") or "www.apple.com"
-        xpath = quote(node.get("ws_path") or "/xhttp")
-        spx = node.get("spider_x") or ""
-        spx_param = f"&spx={quote(spx)}" if (spx and spx != "/") else ""
-        return f"vless://{uuid_str}@{uri_host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=xhttp&sni={sni}&sid={sid}&path={xpath}&mode=auto#{name}"
-
-    elif proto == "vless_ws":
-        ws_path = quote(node.get("ws_path") or "/ws-proxy")
-        return f"vless://{uuid_str}@{uri_host}:{port}?security=none&encryption=none&type=ws&path={ws_path}#{name}"
-
-    elif proto == "vmess_ws":
-        ps_label = name_raw
-        vmess_data = {
-            "v": "2",
-            "ps": ps_label,
-            "add": host,
-            "port": str(port),
-            "id": uuid_str,
-            "aid": "0",
-            "scy": "auto",
-            "net": "ws",
-            "type": "none",
-            "host": node.get("sni") or "",
-            "path": node.get("ws_path") or "/vmess-ws",
-            "tls": ""
-        }
-        b64_json = base64.b64encode(json.dumps(vmess_data, ensure_ascii=False).encode('utf-8')).decode('utf-8')
-        return f"vmess://{b64_json}"
-
-    elif proto == "trojan":
-        return f"trojan://{pwd_str}@{uri_host}:{port}?security=none&headerType=none&type=tcp#{name}"
-
-    elif proto == "ss2022":
-        import base64
-        method = node.get("method") or "2022-blake3-aes-128-gcm"
-        userinfo = base64.b64encode(f"{method}:{pwd_str}".encode('utf-8')).decode('utf-8')
-        return f"ss://{userinfo}@{uri_host}:{port}#{name}"
-
-    elif proto == "socks5":
-        uname = (node.get("username") or "").strip()
+    try:
+        proto = node.get("protocol") or ""
+        uuid_str = node.get("uuid") or ""
+        pwd_str = node.get("password") or uuid_str
         if user:
-            uname = user.get("username", "")
-        if uname:
-            return f"socks5://{quote(uname)}:{quote(pwd_str)}@{uri_host}:{port}#{name}"
-        else:
-            return f"socks5://{uri_host}:{port}#{name}"
+            u_uuid, u_pwd = ensure_user_credentials(user)
+            uuid_str = u_uuid
+            pwd_str = u_pwd
 
-    elif proto == "hysteria2":
-        sni = node.get("sni") or "bing.com"
-        return f"hysteria2://{pwd_str}@{uri_host}:{port}/?sni={sni}&alpn=h3&insecure=1#{name}"
+        host = node.get("server_host") or "189.24.108.25"
+        uri_host = format_host_for_uri(host)
+        port = node.get("port") or 20443
+        name_raw = format_node_display_name(node, server_country_map)
+        name = quote(name_raw, safe=":/[] -_()@➔")
+        
+        if proto == "vless_reality":
+            pbk = node.get("public_key") or ""
+            sid = node.get("short_id") or ""
+            sni = node.get("sni") or "www.apple.com"
+            flow = node.get("flow") or "xtls-rprx-vision"
+            flow_param = f"&flow={flow}" if flow else ""
+            spx = node.get("spider_x") or ""
+            spx_param = f"&spx={quote(spx)}" if (spx and spx != "/") else ""
+            return f"vless://{uuid_str}@{uri_host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=tcp{flow_param}&sni={sni}&sid={sid}#{name}"
+        
+        elif proto == "vless_reality_xhttp":
+            pbk = node.get("public_key") or ""
+            sid = node.get("short_id") or ""
+            sni = node.get("sni") or "www.apple.com"
+            xpath = quote(node.get("ws_path") or "/xhttp")
+            spx = node.get("spider_x") or ""
+            spx_param = f"&spx={quote(spx)}" if (spx and spx != "/") else ""
+            return f"vless://{uuid_str}@{uri_host}:{port}?security=reality&encryption=none&pbk={pbk}&headerType=none&fp=chrome{spx_param}&type=xhttp&sni={sni}&sid={sid}&path={xpath}&mode=auto#{name}"
 
-    elif proto == "tuic":
-        uid_val = uuid_str or gen_random_password(16)
-        sni = node.get("sni") or "bing.com"
-        return f"tuic://{uid_val}:{pwd_str}@{uri_host}:{port}?congestion_control=bbr&alpn=h3&sni={sni}&udp_relay_mode=native&allow_insecure=1#{name}"
+        elif proto == "vless_ws":
+            ws_path = quote(node.get("ws_path") or "/ws-proxy")
+            return f"vless://{uuid_str}@{uri_host}:{port}?security=none&encryption=none&type=ws&path={ws_path}#{name}"
 
-    return ""
+        elif proto == "vmess_ws":
+            ps_label = name_raw
+            vmess_data = {
+                "v": "2",
+                "ps": ps_label,
+                "add": host,
+                "port": str(port),
+                "id": uuid_str,
+                "aid": "0",
+                "scy": "auto",
+                "net": "ws",
+                "type": "none",
+                "host": node.get("sni") or "",
+                "path": node.get("ws_path") or "/vmess-ws",
+                "tls": ""
+            }
+            b64_json = base64.b64encode(json.dumps(vmess_data, ensure_ascii=False).encode('utf-8')).decode('utf-8')
+            return f"vmess://{b64_json}"
+
+        elif proto == "trojan":
+            return f"trojan://{pwd_str}@{uri_host}:{port}?security=none&headerType=none&type=tcp#{name}"
+
+        elif proto == "ss2022":
+            method = node.get("method") or "2022-blake3-aes-128-gcm"
+            userinfo = base64.b64encode(f"{method}:{pwd_str}".encode('utf-8')).decode('utf-8')
+            return f"ss://{userinfo}@{uri_host}:{port}#{name}"
+
+        elif proto == "socks5":
+            uname = (node.get("username") or "").strip()
+            if user:
+                uname = user.get("username", "")
+            if uname:
+                return f"socks5://{quote(uname)}:{quote(pwd_str)}@{uri_host}:{port}#{name}"
+            else:
+                return f"socks5://{uri_host}:{port}#{name}"
+
+        elif proto == "hysteria2":
+            sni = node.get("sni") or "bing.com"
+            return f"hysteria2://{pwd_str}@{uri_host}:{port}/?sni={sni}&alpn=h3&insecure=1#{name}"
+
+        elif proto == "tuic":
+            uid_val = uuid_str or gen_random_password(16)
+            sni = node.get("sni") or "bing.com"
+            return f"tuic://{uid_val}:{pwd_str}@{uri_host}:{port}?congestion_control=bbr&alpn=h3&sni={sni}&udp_relay_mode=native&allow_insecure=1#{name}"
+
+        return ""
+    except Exception as e:
+        print(f"[Error] format_node_link exception for node {node.get('id')}: {e}")
+        return ""
 
 def build_subscription_info_nodes(user):
     """
@@ -2355,7 +2362,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.5"
+CURRENT_VERSION = "v2.5.6"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -4503,19 +4510,25 @@ class ProxyHandler(BaseHTTPRequestHandler):
             node_ip_map = {r["id"]: resolve_server_host(dict(r)) for r in server_rows}
             server_country_map = {r["id"]: (r["country"] or "") for r in server_rows}
             for n in nodes:
-                sid = n.get("server_id")
-                if sid in node_ip_map:
-                    resolved = node_ip_map[sid]
-                    if is_private_ip(n.get("server_host")):
-                        n["server_host"] = resolved
-                        try:
-                            with conn:
-                                conn.execute("UPDATE proxy_node SET server_host = ? WHERE id = ?", (resolved, n["id"]))
-                        except Exception:
-                            pass
-                n["flag"] = resolve_node_flag(n, server_country_map)
-                n["display_name"] = format_node_display_name(n, server_country_map)
-                n["link"] = format_node_link(n, server_country_map=server_country_map)
+                try:
+                    sid = n.get("server_id")
+                    if sid in node_ip_map:
+                        resolved = node_ip_map[sid]
+                        if is_private_ip(n.get("server_host")):
+                            n["server_host"] = resolved
+                            try:
+                                with conn:
+                                    conn.execute("UPDATE proxy_node SET server_host = ? WHERE id = ?", (resolved, n["id"]))
+                            except Exception:
+                                pass
+                    n["flag"] = resolve_node_flag(n, server_country_map)
+                    n["display_name"] = format_node_display_name(n, server_country_map)
+                    n["link"] = format_node_link(n, server_country_map=server_country_map)
+                except Exception as e:
+                    print(f"[Error] Failed processing node {n.get('id')}: {e}")
+                    n["flag"] = "🌐"
+                    n["display_name"] = n.get("name") or "Node"
+                    n["link"] = ""
             conn.close()
             self.send_json({
                 "nodes": nodes,
