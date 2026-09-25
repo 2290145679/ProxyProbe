@@ -4164,10 +4164,24 @@ class ProxyHandler(BaseHTTPRequestHandler):
             })
             return
 
-        if path == "/api/proxy/system/update-check":
+        if path in ("/api/proxy/system/update-check", "/api/proxy/system/update-check/", "/api/proxy/update-check", "/api/system/update-check"):
             force = qs.get("force", ["0"])[0] in ("1", "true")
             res = check_system_update(force=force)
             self.send_json(res)
+            return
+
+        if path in ("/api/proxy/system/upgrade", "/api/proxy/system/upgrade/", "/api/proxy/upgrade", "/api/proxy/upgrade/", "/api/system/upgrade", "/api/system/upgrade/"):
+            if qs.get("action", [""])[0] in ("1", "run", "upgrade"):
+                if not check_auth(self.headers):
+                    self.send_json({"ok": False, "error": "Unauthorized: 请先登录管理员账号"}, 401)
+                    return
+                trigger_background_upgrade()
+                self.send_json({"ok": True, "message": "升级指令已下发，系统正在后台无损热升级..."})
+                return
+            self.send_json({
+                "ok": True,
+                "message": "ProxyProbe 在线无损热升级接口就绪。请在控制面板点击【立即一键在线热升级】，或使用 POST 请求触发。"
+            })
             return
 
         if path == "/api/proxy/probe/public-status":
@@ -5245,9 +5259,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
             res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             apply_xray_config()
             self.send_json({"ok": res.returncode == 0, "output": res.stdout or res.stderr})
-        elif path == "/api/proxy/system/upgrade":
+        elif path in ("/api/proxy/system/update-check", "/api/proxy/system/update-check/", "/api/proxy/update-check", "/api/system/update-check"):
+            force = req.get("force", False)
+            res = check_system_update(force=bool(force))
+            self.send_json(res)
+            return
+
+        elif path in ("/api/proxy/system/upgrade", "/api/proxy/system/upgrade/", "/api/proxy/upgrade", "/api/proxy/upgrade/", "/api/system/upgrade", "/api/system/upgrade/"):
             if not check_auth(self.headers):
-                self.send_json({"error": "Unauthorized"}, 401)
+                self.send_json({"ok": False, "error": "Unauthorized: 请先登录管理员账号"}, 401)
                 return
             trigger_background_upgrade()
             self.send_json({"ok": True, "message": "升级指令已下发，系统正在后台无损热升级..."})

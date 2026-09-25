@@ -59,23 +59,66 @@ export function UpdateDialog({
   const handleCheck = async (force = true, notifyToast = true) => {
     setChecking(true)
     try {
-      const res = await fetch(`/api/proxy/system/update-check${force ? "?force=1" : ""}`)
-      const data: UpdateInfo = await res.json()
-      if (data.ok) {
-        setInfo(data)
-        if (onUpdateInfoChange) onUpdateInfoChange(data)
+      const endpoints = [
+        `/api/proxy/system/update-check${force ? "?force=1" : ""}`,
+        `/api/proxy/update-check${force ? "?force=1" : ""}`,
+        `/api/system/update-check${force ? "?force=1" : ""}`,
+      ]
+      let fetchedData: UpdateInfo | null = null
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(ep)
+          if (res.status === 200) {
+            const data: UpdateInfo = await res.json()
+            if (data?.ok) {
+              fetchedData = data
+              break
+            }
+          }
+        } catch {
+          // ignore and fallback
+        }
+      }
+
+      // 如果后端接口未能成功返回（例如旧版实例未包含该接口），尝试前端直连 GitHub Release version.json
+      if (!fetchedData) {
+        try {
+          const ghRes = await fetch("https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/version.json")
+          if (ghRes.ok) {
+            const vData = await ghRes.json()
+            const cur = info?.current_version || "v2.5.0"
+            const latest = vData.version || cur
+            fetchedData = {
+              ok: true,
+              current_version: cur,
+              latest_version: latest,
+              has_update: latest !== cur,
+              title: vData.title,
+              changelog: vData.changelog,
+              release_date: vData.release_date,
+              release_url: vData.release_url,
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (fetchedData && fetchedData.ok) {
+        setInfo(fetchedData)
+        if (onUpdateInfoChange) onUpdateInfoChange(fetchedData)
         if (notifyToast) {
-          if (data.has_update) {
-            toast.info(`🎉 发现新版本：${data.latest_version}！`)
+          if (fetchedData.has_update) {
+            toast.info(`🎉 发现新版本：${fetchedData.latest_version}！`)
           } else {
-            toast.success(`当前已是最新版本 (${data.current_version})，无需更新。`)
+            toast.success(`当前已是最新版本 (${fetchedData.current_version})，无需更新。`)
           }
         }
       } else {
-        if (notifyToast) toast.error("检查更新失败")
+        if (notifyToast) toast.error("检查更新失败，请确认服务器或浏览器网络是否可访问 GitHub")
       }
     } catch {
-      if (notifyToast) toast.error("检查更新失败，请确认服务器网络是否可访问 GitHub")
+      if (notifyToast) toast.error("检查更新失败，请确认网络连接")
     } finally {
       setChecking(false)
     }
@@ -96,33 +139,68 @@ export function UpdateDialog({
 
     setUpgrading(true)
     setProgressMsg("正在向后台提交热升级指令...")
-    try {
-      const res = await fetch("/api/proxy/system/upgrade", { method: "POST" })
-      const data = await res.json()
-      if (data.ok) {
-        setProgressMsg("正在后台拉取最新二进制与前端资源并重启服务，请稍候约 8 秒...")
-        let countdown = 8
-        const timer = setInterval(() => {
-          countdown -= 1
-          if (countdown > 0) {
-            setProgressMsg(`正在重启服务并同步资源，剩余 ${countdown} 秒即将刷新页面...`)
-          } else {
-            clearInterval(timer)
-            setProgressMsg("升级完成！正在重新载入控制面板...")
-            setTimeout(() => {
-              window.location.reload()
-            }, 1000)
-          }
-        }, 1000)
-      } else {
-        toast.error(data.error || "启动升级失败")
-        setUpgrading(false)
+
+    const upgradeEndpoints = [
+      "/api/proxy/system/upgrade",
+      "/api/proxy/upgrade",
+      "/api/system/upgrade",
+    ]
+
+    let isSuccess = false
+    let is404 = false
+    let is401 = false
+    let lastErrorMsg = ""
+
+    for (const ep of upgradeEndpoints) {
+      try {
+        const res = await fetch(ep, { method: "POST" })
+        if (res.status === 404) {
+          is404 = true
+          continue
+        }
+        if (res.status === 401) {
+          is401 = true
+          break
+        }
+        const data = await res.json()
+        if (data.ok) {
+          isSuccess = true
+          break
+        } else {
+          lastErrorMsg = data.error || ""
+        }
+      } catch (e: any) {
+        lastErrorMsg = e?.message || ""
       }
-    } catch {
-      toast.error("请求失败，正在检测服务是否已重启完成...")
-      setTimeout(() => {
-        window.location.reload()
-      }, 5000)
+    }
+
+    if (isSuccess) {
+      setProgressMsg("正在后台拉取最新二进制与前端资源并重启服务，请稍候约 8 秒...")
+      let countdown = 8
+      const timer = setInterval(() => {
+        countdown -= 1
+        if (countdown > 0) {
+          setProgressMsg(`正在重启服务并同步资源，剩余 ${countdown} 秒即将刷新页面...`)
+        } else {
+          clearInterval(timer)
+          setProgressMsg("升级完成！正在重新载入控制面板...")
+          setTimeout(() => {
+            window.location.reload()
+          }, 1000)
+        }
+      }, 1000)
+    } else {
+      setUpgrading(false)
+      if (is401) {
+        toast.error("未授权：请先登录管理员账号后再执行系统升级")
+      } else if (is404) {
+        toast.error(
+          "当前运行的旧版后端程序尚未集成免终端热升级接口（返回 404 Not Found）。请在 SSH 终端执行一次【hhub upgrade】完成初始化升级！",
+          { duration: 8000 }
+        )
+      } else {
+        toast.error(lastErrorMsg || "启动升级失败，建议在 SSH 终端执行【hhub upgrade】进行升级")
+      }
     }
   }
 

@@ -145,13 +145,35 @@ export default function App() {
   useEffect(() => {
     if (me?.authed && (!userProfile || userProfile.is_admin)) {
       fetch("/api/proxy/system/update-check")
-        .then((r) => r.json())
+        .then((r) => {
+          if (!r.ok) throw new Error("not ok")
+          return r.json()
+        })
         .then((data: UpdateInfo) => {
           if (data?.ok) {
             setUpdateInfo(data)
           }
         })
-        .catch(() => {})
+        .catch(() => {
+          // 后端未提供接口时，降级尝试直连 GitHub Release 获取最新版本
+          fetch("https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/version.json")
+            .then((r) => r.json())
+            .then((vData) => {
+              if (vData?.version) {
+                setUpdateInfo({
+                  ok: true,
+                  current_version: "v2.5.0",
+                  latest_version: vData.version,
+                  has_update: vData.version !== "v2.5.0",
+                  title: vData.title,
+                  changelog: vData.changelog,
+                  release_date: vData.release_date,
+                  release_url: vData.release_url,
+                })
+              }
+            })
+            .catch(() => {})
+        })
     }
   }, [me?.authed, userProfile])
 
