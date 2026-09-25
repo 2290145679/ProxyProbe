@@ -1121,7 +1121,18 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
     setRemoving(true)
     try {
       await api(`/nodes/${deleting.id}`, { method: "DELETE" })
-      toast.success("已删除")
+      try {
+        await fetch(`/api/proxy/servers/${deleting.id}`, {
+          method: "DELETE",
+          headers: {
+            "Authorization": `Bearer ${localStorage.getItem("token") || ""}`,
+            "X-Auth-Token": localStorage.getItem("token") || ""
+          }
+        })
+      } catch (err) {
+        console.warn("Cascade proxy server cleanup notice:", err)
+      }
+      toast.success("已彻底删除服务器及所有关联数据")
       setDeleting(null)
       refresh()
     } catch (e) {

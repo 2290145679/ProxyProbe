@@ -310,8 +310,20 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   })
 
   const getProtocolCleanLabel = (p: string) => {
-    const label = PROTOCOL_OPTIONS.find(o => o.value === p)?.label || p
-    return label.split(" ")[0].replace("+", "").trim()
+    switch (p) {
+      case "vless_reality": return "VLESS Reality"
+      case "vless_reality_xhttp": return "VLESS Reality XHTTP"
+      case "hysteria2": return "Hysteria 2"
+      case "vless_ws": return "VLESS WS"
+      case "vmess_ws": return "VMess WS"
+      case "trojan": return "Trojan"
+      case "ss2022": return "Shadowsocks 2022"
+      case "socks5": return "SOCKS5"
+      default: {
+        const opt = PROTOCOL_OPTIONS.find(o => o.value === p)
+        return opt ? opt.label.replace(/\s*\([^)]*\)/g, "").replace(/\+/g, "").trim() : p
+      }
+    }
   }
 
   const computeNodeName = (
@@ -651,7 +663,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       server_id: sId,
       server_name: sName,
       server_host: sHost,
-      name: "Reality",
+      name: computeNodeName(sName, "vless_reality", "direct", false),
       protocol: "vless_reality",
       port: String(recommendedPort),
       uuid: "",

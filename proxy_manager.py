@@ -101,13 +101,13 @@ INSTALL_SINGBOX=0
 INSTALL_REALM=0
 EXPLICIT_CORES=0
 INSECURE=0
-CURL_OPTS="-fsSL"
+CURL_OPTS="curl -fsSL"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --server) HUB_SERVER="$2"; shift 2 ;;
     --token) HUB_TOKEN="$2"; shift 2 ;;
-    --insecure) INSECURE=1; CURL_OPTS="-fsSLk"; shift ;;
+    --insecure) INSECURE=1; CURL_OPTS="curl -fsSLk"; shift ;;
     --xray) INSTALL_XRAY=1; EXPLICIT_CORES=1; shift ;;
     --skip-xray | --no-xray) INSTALL_XRAY=0; EXPLICIT_CORES=1; shift ;;
     --singbox) INSTALL_SINGBOX=1; EXPLICIT_CORES=1; shift ;;
@@ -175,15 +175,15 @@ if [ "$INSTALL_XRAY" -eq 0 ] && [ "$INSTALL_SINGBOX" -eq 0 ] && [ "$INSTALL_REAL
   exit 0
 fi
 
-# 1. 安装基础依赖 python3, curl, unzip
-if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
-  echo "[+] 正在安装系统基础依赖..."
+# 1. 安装基础依赖 python3, curl, unzip, tar
+if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
+  echo "[+] 正在安装系统基础依赖 (python3, curl, unzip, tar)..."
   if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y && apt-get install -y python3 curl unzip iptables || true
+    apt-get update -y && apt-get install -y python3 curl unzip tar iptables || true
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y python3 curl unzip iptables || true
+    yum install -y python3 curl unzip tar iptables || true
   elif command -v apk >/dev/null 2>&1; then
-    apk add python3 curl unzip iptables || true
+    apk add python3 curl unzip tar iptables || true
   fi
 fi
 
@@ -442,13 +442,36 @@ systemctl restart proxy-agent.service
 
 echo ""
 echo "=================================================="
-echo "  [OK] 代理管理服务部署成功！"
-echo "  已成功连接到主控端: $HUB_SERVER"
-echo "  同步守护进程已启动: proxy-agent.service"
-[ "$INSTALL_XRAY" = "1" ] && echo "  - Xray-Core: 已安装并运行"
-[ "$INSTALL_SINGBOX" = "1" ] && echo "  - Sing-box: 已安装并运行"
-[ "$INSTALL_REALM" = "1" ] && echo "  - Realm: 已安装并运行"
-echo "  后续在管理后台为此服务器创建的所有节点，将自动实时生效！"
+echo "  [OK] 代理管理服务部署完成！"
+echo "  已连接主控端: $HUB_SERVER"
+echo "  组件安装状态核验:"
+if [ "$INSTALL_XRAY" = "1" ]; then
+  if [ -x /usr/local/bin/xray ]; then
+    echo "  - Xray-Core: 已安装并就绪 ($(/usr/local/bin/xray version 2>/dev/null | head -n 1 || echo 'Xray'))"
+  else
+    echo "  - Xray-Core: [警告] 核心文件缺失或网络下载失败！"
+  fi
+fi
+if [ "$INSTALL_SINGBOX" = "1" ]; then
+  if [ -x /usr/local/bin/sing-box ]; then
+    echo "  - Sing-box: 已安装并就绪 ($(/usr/local/bin/sing-box version 2>/dev/null | head -n 1 || echo 'Sing-box'))"
+  else
+    echo "  - Sing-box: [警告] 核心文件缺失或网络下载失败！"
+  fi
+fi
+if [ "$INSTALL_REALM" = "1" ]; then
+  if [ -x /usr/local/bin/realm ]; then
+    echo "  - Realm: 已安装并就绪 ($(/usr/local/bin/realm --version 2>/dev/null || echo 'Realm'))"
+  else
+    echo "  - Realm: [警告] 核心文件缺失或网络下载失败！"
+  fi
+fi
+if [ -f /opt/monitor/proxy_agent.py ]; then
+  echo "  - 守护进程: proxy-agent.service 已就绪并启动"
+else
+  echo "  - 守护进程: [警告] proxy_agent.py 拉取失败，请检查主控连接！"
+fi
+echo "  后续在管理后台为此服务器创建的所有节点，将自动实时下发生效！"
 echo "=================================================="
 """
 
@@ -2821,7 +2844,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.9"
+CURRENT_VERSION = "v2.5.10"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -5188,6 +5211,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/proxy/servers":
             conn = get_db()
+            # 自动级联自愈：彻底清除在 node 表中已被删除的服务器残留的节点与旧状态，杜绝重加服务器时的数据冲突
+            existing_node_ids = {r[0] for r in conn.execute("SELECT id FROM node").fetchall()}
+            with conn:
+                orphaned_nodes = conn.execute("SELECT id, server_id FROM proxy_node WHERE server_id != 0").fetchall()
+                del_node_ids = [on["id"] for on in orphaned_nodes if on["server_id"] not in existing_node_ids]
+                if del_node_ids:
+                    conn.execute(f"DELETE FROM proxy_node WHERE id IN ({','.join('?' for _ in del_node_ids)})", del_node_ids)
+                    conn.execute(f"DELETE FROM proxy_node_latency WHERE node_id IN ({','.join('?' for _ in del_node_ids)})", del_node_ids)
+
+                orphaned_statuses = conn.execute("SELECT node_id FROM node_proxy_status WHERE node_id != 0").fetchall()
+                del_status_ids = [st["node_id"] for st in orphaned_statuses if st["node_id"] not in existing_node_ids]
+                if del_status_ids:
+                    conn.execute(f"DELETE FROM node_proxy_status WHERE node_id IN ({','.join('?' for _ in del_status_ids)})", del_status_ids)
+
             cur = conn.execute("SELECT id, name, ip, ipv4, ipv6, token FROM node ORDER BY sort ASC, id ASC")
             remote_nodes = [dict(r) for r in cur.fetchall()]
             
@@ -6166,6 +6203,23 @@ class ProxyHandler(BaseHTTPRequestHandler):
             conn.close()
             apply_all_configs()
             self.send_json({"ok": True, "message": "用户已删除"})
+            return
+
+        m_server = re.match(r"^/api/proxy/servers/(\d+)$", path)
+        if m_server:
+            server_id = int(m_server.group(1))
+            conn = get_db()
+            with conn:
+                cur_nodes = conn.execute("SELECT id FROM proxy_node WHERE server_id = ?", (server_id,)).fetchall()
+                del_node_ids = [r["id"] for r in cur_nodes]
+                if del_node_ids:
+                    conn.execute(f"DELETE FROM proxy_node WHERE id IN ({','.join('?' for _ in del_node_ids)})", del_node_ids)
+                    conn.execute(f"DELETE FROM proxy_node_latency WHERE node_id IN ({','.join('?' for _ in del_node_ids)})", del_node_ids)
+                conn.execute("DELETE FROM node_proxy_status WHERE node_id = ?", (server_id,))
+                conn.execute("DELETE FROM node WHERE id = ?", (server_id,))
+            conn.close()
+            apply_all_configs()
+            self.send_json({"ok": True, "message": f"服务器及关联的 {len(del_node_ids)} 个节点已彻底清除"})
             return
 
         self.send_json({"error": "Not Found"}, 404)
