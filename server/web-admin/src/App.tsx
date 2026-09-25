@@ -224,22 +224,34 @@ export default function App() {
             管理后台
           </span>
           <div className="flex-1" />
-          {updateInfo?.has_update && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setUpdateDialogOpen(true)}
-              className="h-8 text-xs px-2.5 sm:px-3 gap-1.5 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 shrink-0"
-              title={`发现新版本 ${updateInfo.latest_version}，点击查看并升级`}
-            >
-              <span className="relative flex size-2 shrink-0">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                <span className="relative inline-flex rounded-full size-2 bg-amber-500" />
-              </span>
-              <span className="font-medium hidden sm:inline">发现新版本</span>
-              <span className="font-mono font-bold">{updateInfo.latest_version}</span>
-            </Button>
-          )}
+          {/* 版本与在线升级入口 */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setUpdateDialogOpen(true)}
+            className={`h-8 text-xs px-2 sm:px-2.5 gap-1.5 shrink-0 ${
+              updateInfo?.has_update
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 shadow-xs"
+                : "border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted"
+            }`}
+            title={updateInfo?.has_update ? `发现新版本 ${updateInfo.latest_version}，点击查看并升级` : `当前系统版本 ${updateInfo?.current_version || "v2.5.0"}，点击检查更新`}
+          >
+            {updateInfo?.has_update ? (
+              <>
+                <span className="relative flex size-2 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full size-2 bg-amber-500" />
+                </span>
+                <span className="font-medium hidden sm:inline">新版本</span>
+                <span className="font-mono font-bold">{updateInfo.latest_version}</span>
+              </>
+            ) : (
+              <>
+                <span className="font-mono text-[11px] font-medium">{updateInfo?.current_version || "v2.5.0"}</span>
+                <span className="hidden sm:inline text-[11px] text-muted-foreground">检查更新</span>
+              </>
+            )}
+          </Button>
           <Button variant="ghost" size="sm" asChild className="shrink-0 px-2 sm:px-3 text-xs h-8">
             <a href="/" title="状态面板">
               <ExternalLink className="size-3.5 shrink-0" />

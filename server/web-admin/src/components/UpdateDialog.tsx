@@ -55,8 +55,8 @@ export function UpdateDialog({
     setInfo(initialInfo)
   }, [initialInfo])
 
-  // 手动检查更新
-  const handleCheck = async (force = true) => {
+  // 手动/自动检查更新
+  const handleCheck = async (force = true, notifyToast = true) => {
     setChecking(true)
     try {
       const res = await fetch(`/api/proxy/system/update-check${force ? "?force=1" : ""}`)
@@ -64,20 +64,29 @@ export function UpdateDialog({
       if (data.ok) {
         setInfo(data)
         if (onUpdateInfoChange) onUpdateInfoChange(data)
-        if (data.has_update) {
-          toast.info(`🎉 发现新版本：${data.latest_version}！`)
-        } else {
-          toast.success(`当前已是最新版本 (${data.current_version})，无需更新。`)
+        if (notifyToast) {
+          if (data.has_update) {
+            toast.info(`🎉 发现新版本：${data.latest_version}！`)
+          } else {
+            toast.success(`当前已是最新版本 (${data.current_version})，无需更新。`)
+          }
         }
       } else {
-        toast.error("检查更新失败")
+        if (notifyToast) toast.error("检查更新失败")
       }
     } catch {
-      toast.error("检查更新失败，请确认服务器网络是否可访问 GitHub")
+      if (notifyToast) toast.error("检查更新失败，请确认服务器网络是否可访问 GitHub")
     } finally {
       setChecking(false)
     }
   }
+
+  // 弹窗打开时自动核验最新版本
+  useEffect(() => {
+    if (open) {
+      handleCheck(true, false)
+    }
+  }, [open])
 
   // 触发在线无损热升级
   const handleUpgrade = async () => {
@@ -123,7 +132,7 @@ export function UpdateDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md sm:max-w-lg p-5 sm:p-6 space-y-4">
+      <DialogContent className="w-[94vw] max-w-md sm:max-w-lg p-4 sm:p-6 space-y-4 max-h-[88vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="text-base sm:text-lg font-bold flex items-center justify-between">
             <span className="flex items-center gap-2">
