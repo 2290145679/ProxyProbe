@@ -70,7 +70,6 @@ def format_host_for_uri(host):
 
 
 PROXY_AGENT_SH = """#!/usr/bin/env bash
-set -e
 
 # ==============================================================================
 # Monitor 探针节点一键代理服务部署脚本 (Xray-Core + Sing-box + Realm + Proxy Agent)
@@ -82,11 +81,14 @@ INSTALL_XRAY=0
 INSTALL_SINGBOX=0
 INSTALL_REALM=0
 EXPLICIT_CORES=0
+INSECURE=0
+CURL_OPTS="-fsSL"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --server) HUB_SERVER="$2"; shift 2 ;;
     --token) HUB_TOKEN="$2"; shift 2 ;;
+    --insecure) INSECURE=1; CURL_OPTS="-fsSLk"; shift ;;
     --xray) INSTALL_XRAY=1; EXPLICIT_CORES=1; shift ;;
     --skip-xray | --no-xray) INSTALL_XRAY=0; EXPLICIT_CORES=1; shift ;;
     --singbox) INSTALL_SINGBOX=1; EXPLICIT_CORES=1; shift ;;
@@ -176,27 +178,33 @@ if [ "$INSTALL_XRAY" = "1" ]; then
     XRAY_ARCH="arm64-v8a"
   fi
 
-  TMP_DIR="/tmp/xray_install"
-  rm -rf "$TMP_DIR"
-  mkdir -p "$TMP_DIR"
-  TMP_ZIP="/tmp/xray.zip"
-
-  echo "[+] 正在下载并配置最新版 Xray-core..."
-  curl -fsSL "$HUB_SERVER/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" 2>/dev/null || \
-  curl -fsSL "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" || \
-  curl -fsSL "https://ghproxy.net/https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP"
-
-  if command -v unzip >/dev/null 2>&1; then
-    unzip -o "$TMP_ZIP" -d "$TMP_DIR/"
+  if [ -x /usr/local/bin/xray ]; then
+    echo "[+] 检测到已存在 Xray-core 可执行文件: $(/usr/local/bin/xray version 2>/dev/null | head -n 1 || echo 'Xray')"
   else
-    python3 -c "import zipfile; zipfile.ZipFile('$TMP_ZIP').extractall('$TMP_DIR/')"
-  fi
+    TMP_DIR="/tmp/xray_install"
+    rm -rf "$TMP_DIR"
+    mkdir -p "$TMP_DIR"
+    TMP_ZIP="/tmp/xray.zip"
 
-  install -m 0755 "$TMP_DIR/xray" /usr/local/bin/xray
-  [ -f "$TMP_DIR/geoip.dat" ] && cp -f "$TMP_DIR/geoip.dat" /usr/local/share/xray/
-  [ -f "$TMP_DIR/geosite.dat" ] && cp -f "$TMP_DIR/geosite.dat" /usr/local/share/xray/
-  rm -rf "$TMP_DIR" "$TMP_ZIP"
-  echo "[+] Xray 核心已就绪: $(/usr/local/bin/xray version | head -n 1)"
+    echo "[+] 正在下载并配置最新版 Xray-core..."
+    $CURL_OPTS "$HUB_SERVER/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" 2>/dev/null || \
+    $CURL_OPTS "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" 2>/dev/null || \
+    $CURL_OPTS "https://ghproxy.net/https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o "$TMP_ZIP" 2>/dev/null || true
+
+    if [ -f "$TMP_ZIP" ]; then
+      if command -v unzip >/dev/null 2>&1; then
+        unzip -o "$TMP_ZIP" -d "$TMP_DIR/" >/dev/null 2>&1 || true
+      else
+        python3 -c "import zipfile; zipfile.ZipFile('$TMP_ZIP').extractall('$TMP_DIR/')" 2>/dev/null || true
+      fi
+
+      [ -f "$TMP_DIR/xray" ] && install -m 0755 "$TMP_DIR/xray" /usr/local/bin/xray
+      [ -f "$TMP_DIR/geoip.dat" ] && cp -f "$TMP_DIR/geoip.dat" /usr/local/share/xray/ 2>/dev/null || true
+      [ -f "$TMP_DIR/geosite.dat" ] && cp -f "$TMP_DIR/geosite.dat" /usr/local/share/xray/ 2>/dev/null || true
+      rm -rf "$TMP_DIR" "$TMP_ZIP"
+      [ -x /usr/local/bin/xray ] && echo "[+] Xray 核心已就绪: $(/usr/local/bin/xray version | head -n 1)"
+    fi
+  fi
 
   # 规范化 Xray 系统服务单元
   cat > /etc/systemd/system/xray.service << 'EOF'
@@ -231,7 +239,7 @@ EOF
 }
 EOF
   fi
-  ln -sf /etc/xray/config.json /usr/local/etc/xray/config.json
+  ln -sf /etc/xray/config.json /usr/local/etc/xray/config.json 2>/dev/null || true
 
   systemctl daemon-reload
   systemctl enable xray
@@ -247,28 +255,33 @@ if [ "$INSTALL_SINGBOX" = "1" ]; then
   if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     SARCH="arm64"
   fi
-  TMP_SB_DIR="/tmp/singbox_install"
-  rm -rf "$TMP_SB_DIR"
-  mkdir -p "$TMP_SB_DIR"
-  TMP_SB_TAR="$TMP_SB_DIR/sing-box.tar.gz"
-  echo "[+] 正在下载并配置最新版 Sing-box 核心..."
-  LATEST_SB_TAG=$(curl -sSL "https://api.github.com/repos/SagerNet/sing-box/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n 1 | cut -d'"' -f4 || echo "v1.14.1")
-  SB_VER="${LATEST_SB_TAG#v}"
-  [ -z "$SB_VER" ] && SB_VER="1.14.1"
 
-  curl -fsSL "$HUB_SERVER/sing-box-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" 2>/dev/null || \
-  curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || \
-  curl -fsSL "https://ghproxy.net/https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" || true
+  if [ -x /usr/local/bin/sing-box ]; then
+    echo "[+] 检测到已存在 Sing-box 核心: $(/usr/local/bin/sing-box version 2>/dev/null | head -n 1 || echo 'Sing-box')"
+  else
+    TMP_SB_DIR="/tmp/singbox_install"
+    rm -rf "$TMP_SB_DIR"
+    mkdir -p "$TMP_SB_DIR"
+    TMP_SB_TAR="$TMP_SB_DIR/sing-box.tar.gz"
+    echo "[+] 正在下载并配置最新版 Sing-box 核心..."
+    LATEST_SB_TAG=$($CURL_OPTS "https://api.github.com/repos/SagerNet/sing-box/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n 1 | cut -d'"' -f4 || echo "v1.14.1")
+    SB_VER="${LATEST_SB_TAG#v}"
+    [ -z "$SB_VER" ] && SB_VER="1.14.1"
 
-  if [ -f "$TMP_SB_TAR" ]; then
-    tar -xzf "$TMP_SB_TAR" -C "$TMP_SB_DIR/"
-    SB_BIN=$(find "$TMP_SB_DIR" -name "sing-box" -type f | head -n 1)
-    if [ -n "$SB_BIN" ]; then
-      install -m 0755 "$SB_BIN" /usr/local/bin/sing-box
-      echo "[+] Sing-box 核心已就绪: $(/usr/local/bin/sing-box version | head -n 1)"
+    $CURL_OPTS "$HUB_SERVER/sing-box-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" 2>/dev/null || \
+    $CURL_OPTS "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" 2>/dev/null || \
+    $CURL_OPTS "https://ghproxy.net/https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SARCH}.tar.gz" -o "$TMP_SB_TAR" 2>/dev/null || true
+
+    if [ -f "$TMP_SB_TAR" ]; then
+      tar -xzf "$TMP_SB_TAR" -C "$TMP_SB_DIR/" >/dev/null 2>&1 || true
+      SB_BIN=$(find "$TMP_SB_DIR" -name "sing-box" -type f | head -n 1)
+      if [ -n "$SB_BIN" ]; then
+        install -m 0755 "$SB_BIN" /usr/local/bin/sing-box
+        echo "[+] Sing-box 核心已就绪: $(/usr/local/bin/sing-box version | head -n 1)"
+      fi
     fi
+    rm -rf "$TMP_SB_DIR"
   fi
-  rm -rf "$TMP_SB_DIR"
 
   if [ ! -f /etc/sing-box/cert.pem ] || [ ! -f /etc/sing-box/key.pem ]; then
     openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
@@ -321,25 +334,30 @@ if [ "$INSTALL_REALM" = "1" ]; then
   if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     R_ARCH="aarch64"
   fi
-  TMP_REALM_DIR="/tmp/realm_inst"
-  rm -rf "$TMP_REALM_DIR"
-  mkdir -p "$TMP_REALM_DIR"
-  TMP_REALM_TAR="/tmp/realm.tar.gz"
 
-  echo "[+] 正在下载并配置最新版 Realm 端口转发核心..."
-  curl -fsSL "$HUB_SERVER/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" 2>/dev/null || \
-  curl -fsSL "https://github.com/zhboner/realm/releases/latest/download/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" || \
-  curl -fsSL "https://ghproxy.net/https://github.com/zhboner/realm/releases/latest/download/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" || true
+  if [ -x /usr/local/bin/realm ]; then
+    echo "[+] 检测到已存在 Realm 核心: $(/usr/local/bin/realm --version 2>/dev/null || echo 'Realm')"
+  else
+    TMP_REALM_DIR="/tmp/realm_inst"
+    rm -rf "$TMP_REALM_DIR"
+    mkdir -p "$TMP_REALM_DIR"
+    TMP_REALM_TAR="/tmp/realm.tar.gz"
 
-  if [ -f "$TMP_REALM_TAR" ]; then
-    tar -xzf "$TMP_REALM_TAR" -C "$TMP_REALM_DIR/" || true
-    REALM_BIN_F=$(find "$TMP_REALM_DIR" -name "realm" -type f | head -n 1)
-    if [ -n "$REALM_BIN_F" ]; then
-      install -m 0755 "$REALM_BIN_F" /usr/local/bin/realm
-      echo "[+] Realm 核心已就绪: $(/usr/local/bin/realm --version 2>/dev/null || echo 'Realm')"
+    echo "[+] 正在下载并配置最新版 Realm 端口转发核心..."
+    $CURL_OPTS "$HUB_SERVER/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" 2>/dev/null || \
+    $CURL_OPTS "https://github.com/zhboner/realm/releases/latest/download/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" 2>/dev/null || \
+    $CURL_OPTS "https://ghproxy.net/https://github.com/zhboner/realm/releases/latest/download/realm-${R_ARCH}-unknown-linux-musl.tar.gz" -o "$TMP_REALM_TAR" 2>/dev/null || true
+
+    if [ -f "$TMP_REALM_TAR" ]; then
+      tar -xzf "$TMP_REALM_TAR" -C "$TMP_REALM_DIR/" >/dev/null 2>&1 || true
+      REALM_BIN_F=$(find "$TMP_REALM_DIR" -name "realm" -type f | head -n 1)
+      if [ -n "$REALM_BIN_F" ]; then
+        install -m 0755 "$REALM_BIN_F" /usr/local/bin/realm
+        echo "[+] Realm 核心已就绪: $(/usr/local/bin/realm --version 2>/dev/null || echo 'Realm')"
+      fi
     fi
+    rm -rf "$TMP_REALM_DIR" "$TMP_REALM_TAR"
   fi
-  rm -rf "$TMP_REALM_DIR" "$TMP_REALM_TAR"
 
   if [ ! -f /etc/realm/config.json ]; then
     cat > /etc/realm/config.json << 'EOF'
@@ -379,8 +397,8 @@ fi
 
 # 5. 下载远端代理守护进程脚本
 echo "[+] 正在拉取代理同步守护程序..."
-curl -fsSL "$HUB_SERVER/api/proxy/agent-client-script" -o /opt/monitor/proxy_agent.py
-chmod +x /opt/monitor/proxy_agent.py
+$CURL_OPTS "$HUB_SERVER/api/proxy/agent-client-script" -o /opt/monitor/proxy_agent.py 2>/dev/null || true
+chmod +x /opt/monitor/proxy_agent.py 2>/dev/null || true
 
 # 6. 配置 proxy-agent.service
 cat > /etc/systemd/system/proxy-agent.service << EOF
@@ -391,6 +409,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
+EnvironmentFile=-/opt/monitor/agent.env
 ExecStart=/usr/bin/python3 -u /opt/monitor/proxy_agent.py --server $HUB_SERVER --token $HUB_TOKEN
 Restart=always
 RestartSec=5
@@ -420,6 +439,7 @@ import json
 import os
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -433,6 +453,22 @@ SINGBOX_CONFIG = "/etc/sing-box/config.json"
 REALM_BIN = "/usr/local/bin/realm"
 REALM_CONFIG = "/etc/realm/config.json"
 
+def read_env_file():
+    srv, tok = "", ""
+    env_file = "/opt/monitor/agent.env"
+    if os.path.exists(env_file):
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("MONITOR_SERVER="):
+                        srv = line.split("=", 1)[1].strip("'\"")
+                    elif line.startswith("MONITOR_TOKEN="):
+                        tok = line.split("=", 1)[1].strip("'\"")
+        except Exception:
+            pass
+    return srv.rstrip("/"), tok
+
 def get_params():
     server = os.environ.get("HUB_SERVER", "")
     token = os.environ.get("HUB_TOKEN", "")
@@ -441,6 +477,11 @@ def get_params():
             server = sys.argv[i + 1]
         elif sys.argv[i] == "--token" and i + 1 < len(sys.argv):
             token = sys.argv[i + 1]
+    env_srv, env_tok = read_env_file()
+    if env_srv:
+        server = env_srv
+    if env_tok:
+        token = env_tok
     return server.rstrip("/"), token
 
 def allow_ports(ports):
@@ -472,6 +513,82 @@ def check_port_listening(port):
     except Exception:
         return False
 
+def ensure_xray_installed(server):
+    if os.path.exists(XRAY_BIN):
+        return True
+    try:
+        print("[+] 探针节点检测到 Xray 规则但未安装核心，正在自动下载安装 Xray-core...", flush=True)
+        import platform
+        import zipfile
+        arch = platform.machine().lower()
+        xarch = "arm64-v8a" if arch in ("aarch64", "arm64") else "64"
+        tmp_dir = "/tmp/xray_agent_dl"
+        os.makedirs(tmp_dir, exist_ok=True)
+        zip_file = os.path.join(tmp_dir, "xray.zip")
+        urls = [
+            f"{server}/Xray-linux-{xarch}.zip",
+            f"https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-{xarch}.zip",
+            f"https://ghproxy.net/https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-{xarch}.zip"
+        ]
+        downloaded = False
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        for u in urls:
+            try:
+                req = urllib.request.Request(u, headers={"User-Agent": "curl/7.68.0"})
+                with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+                    with open(zip_file, "wb") as f:
+                        f.write(resp.read())
+                downloaded = True
+                break
+            except Exception:
+                pass
+        if not downloaded or not os.path.exists(zip_file):
+            return False
+
+        with zipfile.ZipFile(zip_file, "r") as zf:
+            zf.extractall(tmp_dir)
+
+        xr_bin = os.path.join(tmp_dir, "xray")
+        if os.path.exists(xr_bin):
+            shutil.copy(xr_bin, XRAY_BIN)
+            os.chmod(XRAY_BIN, 0o755)
+        for dat in ("geoip.dat", "geosite.dat"):
+            dp = os.path.join(tmp_dir, dat)
+            if os.path.exists(dp):
+                os.makedirs("/usr/local/share/xray", exist_ok=True)
+                shutil.copy(dp, os.path.join("/usr/local/share/xray", dat))
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        svc = "\\n".join([
+            "[Unit]",
+            "Description=Xray Service",
+            "After=network.target nss-lookup.target",
+            "",
+            "[Service]",
+            "Type=simple",
+            "User=root",
+            "ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json",
+            "Restart=always",
+            "RestartSec=3",
+            "LimitNPROC=10000",
+            "LimitNOFILE=1000000",
+            "",
+            "[Install]",
+            "WantedBy=multi-user.target",
+            ""
+        ])
+        with open("/etc/systemd/system/xray.service", "w") as f:
+            f.write(svc)
+        subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
+        subprocess.run(["systemctl", "enable", "xray"], capture_output=True)
+        print("[+] 探针节点 Xray-core 核心自动部署就绪", flush=True)
+        return True
+    except Exception as e:
+        print(f"[-] 自动安装 Xray 失败: {e}", flush=True)
+        return False
+
 def ensure_singbox_installed(server):
     if os.path.exists(SINGBOX_BIN):
         return True
@@ -489,10 +606,13 @@ def ensure_singbox_installed(server):
             f"https://ghproxy.net/https://github.com/SagerNet/sing-box/releases/download/v1.14.1/sing-box-1.14.1-linux-{sarch}.tar.gz"
         ]
         downloaded = False
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
         for u in urls:
             try:
                 req = urllib.request.Request(u, headers={"User-Agent": "curl/7.68.0"})
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
                     with open(tar_file, "wb") as f:
                         f.write(resp.read())
                 downloaded = True
@@ -555,10 +675,14 @@ def ensure_singbox_installed(server):
         return False
 
 def sync_step(server, token, last_hash):
-    # 1. 拉取节点配置
+    # 1. 拉取节点配置 (忽略 SSL 证书校验，保障自签或反代证书正常同步)
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
     url = f"{server}/api/proxy/agent-sync?token={urllib.parse.quote(token)}"
     req = urllib.request.Request(url, headers={"User-Agent": "ProxyAgent/1.0"})
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
         data = json.loads(resp.read().decode("utf-8"))
 
     if not data.get("ok"):
@@ -580,6 +704,9 @@ def sync_step(server, token, last_hash):
         else:
             ports = [inb.get("port") for inb in applied_inbounds if inb.get("port")]
             allow_ports(ports)
+
+        if inbounds and not os.path.exists(XRAY_BIN):
+            ensure_xray_installed(server)
 
         os.makedirs("/var/log/xray", exist_ok=True)
         full_config = {
@@ -625,28 +752,32 @@ def sync_step(server, token, last_hash):
         with open(tmp_cfg, "w", encoding="utf-8") as f:
             json.dump(full_config, f, indent=2)
 
-        test_res = subprocess.run([XRAY_BIN, "run", "-test", "-config", tmp_cfg, "-format", "json"], capture_output=True, text=True)
-        if test_res.returncode == 0:
-            os.replace(tmp_cfg, XRAY_CONFIG)
-            try:
-                os.makedirs("/usr/local/etc/xray", exist_ok=True)
-                shutil.copyfile(XRAY_CONFIG, "/usr/local/etc/xray/config.json")
-            except Exception:
-                pass
-            subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
-            subprocess.run(["systemctl", "restart", "xray"], capture_output=True)
-            time.sleep(1)
-            print(f"[{time.strftime('%X')}] Xray 配置生效并重启成功", flush=True)
-        else:
-            err_msg = (test_res.stdout + " " + test_res.stderr).strip()
-            print(f"[{time.strftime('%X')}] Xray 配置校验失败: {err_msg}", flush=True)
+        xray_ok = True
+        if os.path.exists(XRAY_BIN):
+            test_res = subprocess.run([XRAY_BIN, "run", "-test", "-config", tmp_cfg, "-format", "json"], capture_output=True, text=True)
+            if test_res.returncode == 0:
+                os.replace(tmp_cfg, XRAY_CONFIG)
+                try:
+                    os.makedirs("/usr/local/etc/xray", exist_ok=True)
+                    shutil.copyfile(XRAY_CONFIG, "/usr/local/etc/xray/config.json")
+                except Exception:
+                    pass
+                subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
+                subprocess.run(["systemctl", "restart", "xray"], capture_output=True)
+                time.sleep(1)
+                print(f"[{time.strftime('%X')}] Xray 配置生效并重启成功", flush=True)
+            else:
+                xray_ok = False
+                err_msg = (test_res.stdout + " " + test_res.stderr).strip()
+                print(f"[{time.strftime('%X')}] Xray 配置校验失败: {err_msg}", flush=True)
 
         if singbox_inbounds and not os.path.exists(SINGBOX_BIN):
             ensure_singbox_installed(server)
 
-        if os.path.exists(SINGBOX_BIN) and singbox_inbounds:
+        if os.path.exists(SINGBOX_BIN):
             sb_ports = [inb.get("listen_port") for inb in singbox_inbounds if inb.get("listen_port")]
-            allow_ports(sb_ports)
+            if sb_ports:
+                allow_ports(sb_ports)
             os.makedirs("/var/log/sing-box", exist_ok=True)
             sb_config = {
                 "log": { "level": "warn", "output": "/var/log/sing-box/access.log" },
@@ -665,7 +796,8 @@ def sync_step(server, token, last_hash):
             else:
                 print(f"[{time.strftime('%X')}] Sing-box 配置校验失败: {sb_chk.stderr}", flush=True)
 
-        last_hash = curr_hash
+        if xray_ok:
+            last_hash = curr_hash
 
     # 2. 状态检测与端口监听真实检测
     is_active = subprocess.run(["systemctl", "is-active", "--quiet", "xray"]).returncode == 0
@@ -699,7 +831,7 @@ def sync_step(server, token, last_hash):
     try:
         remote_sc_url = f"{server}/api/proxy/agent-client-script"
         req_sc = urllib.request.Request(remote_sc_url, headers={"User-Agent": "ProxyAgent/1.0"})
-        with urllib.request.urlopen(req_sc, timeout=5) as sc_resp:
+        with urllib.request.urlopen(req_sc, timeout=5, context=ctx) as sc_resp:
             new_code = sc_resp.read().decode("utf-8")
         current_file = os.path.abspath(__file__)
         with open(current_file, "r", encoding="utf-8") as f:
@@ -821,7 +953,7 @@ def sync_step(server, token, last_hash):
         data=payload,
         headers={"Content-Type": "application/json", "User-Agent": "ProxyAgent/1.0"}
     )
-    with urllib.request.urlopen(post_req, timeout=10) as resp:
+    with urllib.request.urlopen(post_req, timeout=10, context=ctx) as resp:
         pass
 
     return last_hash
@@ -836,6 +968,13 @@ def main():
     last_hash = None
     while True:
         try:
+            # 动态检测 /opt/monitor/agent.env 是否切换了面板（例如从面板A重新对接到面板B）
+            cur_srv, cur_tok = read_env_file()
+            if cur_srv and cur_tok and (cur_srv != server or cur_tok != token):
+                print(f"[!] 检测到主控端环境发生变更: {server} -> {cur_srv}，立即重绑新主控端并重新拉取生效节点！", flush=True)
+                server, token = cur_srv, cur_tok
+                last_hash = None  # 强制刷新配置并推送到新面板
+
             last_hash = sync_step(server, token, last_hash)
         except Exception as e:
             print(f"[{time.strftime('%X')}] 代理同步异常: {e}", flush=True)
@@ -2216,7 +2355,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.0"
+CURRENT_VERSION = "v2.5.4"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"

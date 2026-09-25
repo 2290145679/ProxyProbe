@@ -69,11 +69,17 @@ if [ -n "$UNINSTALL" ]; then
 	rc-service monitor-agent stop 2>/dev/null || true
 	rc-update del monitor-agent default >/dev/null 2>&1 || true
 	systemctl disable --now monitor-agent 2>/dev/null || true
+	systemctl disable --now proxy-agent 2>/dev/null || true
+	systemctl disable --now xray 2>/dev/null || true
+	systemctl disable --now sing-box 2>/dev/null || true
+	systemctl disable --now realm 2>/dev/null || true
 	rm -f "$UNIT_FILE" "$RC_FILE" "$LOG_FILE" "$BIN" "$ENV_FILE"
+	rm -f /etc/systemd/system/proxy-agent.service /etc/systemd/system/xray.service /etc/systemd/system/sing-box.service /etc/systemd/system/realm.service
+	rm -f /opt/monitor/proxy_agent.py
 	systemctl daemon-reload 2>/dev/null || true
 	userdel monitor-agent 2>/dev/null || true
 	rmdir "$ROOT" 2>/dev/null || true
-	echo "monitor-agent uninstalled"
+	echo "monitor-agent and proxy services uninstalled"
 	exit 0
 fi
 
@@ -278,6 +284,7 @@ if [ "$INIT" = openrc ]; then
 	rc-service monitor-agent stop 2>/dev/null || true
 else
 	systemctl stop monitor-agent 2>/dev/null || true
+	systemctl stop proxy-agent 2>/dev/null || true
 fi
 install -d -m 0755 "$ROOT"
 install -m 0755 "$TMP" "$BIN"
@@ -395,10 +402,16 @@ else
 	[ "$INSTALL_SINGBOX" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-singbox"
 	[ "$INSTALL_REALM" = "1" ] && PROXY_ARGS="$PROXY_ARGS --realm"
 	[ "$INSTALL_REALM" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-realm"
+	[ -n "${INSECURE:-}" ] && PROXY_ARGS="$PROXY_ARGS --insecure"
+
+	CURL_FETCH="curl -fsSL"
+	[ -n "${INSECURE:-}" ] && CURL_FETCH="curl -fsSLk"
 
 	echo ""
 	echo "=================================================="
 	echo "[+] 正在联动安装代理节点管理服务与所选核心组件..."
 	echo "=================================================="
-	curl -fsSL "${SERVER%/}/proxy-agent.sh" | bash -s -- --server "$SERVER" --token "$TOKEN" $PROXY_ARGS || true
+	$CURL_FETCH "${SERVER%/}/proxy-agent.sh" | bash -s -- --server "$SERVER" --token "$TOKEN" $PROXY_ARGS || true
+	systemctl daemon-reload 2>/dev/null || true
+	systemctl restart proxy-agent 2>/dev/null || true
 fi

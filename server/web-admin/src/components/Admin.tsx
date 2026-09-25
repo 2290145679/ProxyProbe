@@ -95,7 +95,7 @@ function NodeSearch({ value, onChange, className = "" }: { value: string; onChan
   return (
     <div className={`relative ${className}`}>
       <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-      <Input className="pl-8" placeholder="名称/地址/地区" aria-label="搜索节点" value={value} onChange={(e) => onChange(e.target.value)} />
+      <Input className="pl-8" placeholder="名称/地址/地区" aria-label="搜索服务器" value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   )
 }
@@ -138,7 +138,7 @@ function NodePicker({ nodes, chosen, onPick, disabled = false }: {
           </label>
         ))}
         {!visible.length && (
-          <p className="col-span-full p-2 text-xs text-muted-foreground">{nodes.length ? "没有匹配的节点" : "先添加节点"}</p>
+          <p className="col-span-full p-2 text-xs text-muted-foreground">{nodes.length ? "没有匹配的服务器" : "先添加服务器"}</p>
         )}
       </div>
     </div>
@@ -475,7 +475,7 @@ function NodeForm({ node, onClose, onSaved }: {
     addresses({ ...node, ipv4_pin: "", ipv6_pin: "" }).find((a) => a.address.includes(":") === v6)?.address ?? "无"
 
   async function save() {
-    if (!form.name.trim()) return toast.error("请填写节点名称")
+    if (!form.name.trim()) return toast.error("请填写服务器名称")
     const patch = changes(node, {
       name: form.name.trim(),
       public: form.public,
@@ -505,7 +505,7 @@ function NodeForm({ node, onClose, onSaved }: {
           body: JSON.stringify(correction),
         })
       }
-      toast.success("节点设置已保存")
+      toast.success("服务器设置已保存")
       onClose()
       onSaved()
     } catch (e) {
@@ -1022,7 +1022,7 @@ function ServerDisplaySettingsDialog({
                 💰 展示服务器续费价格
               </span>
               <p className="text-[11px] text-muted-foreground leading-snug">
-                开启后，公开状态页节点详情中将显示购买价格与周期；关闭后对未登录访客完全隐藏。
+                开启后，公开状态页服务器详情中将显示购买价格与周期；关闭后对未登录访客完全隐藏。
               </p>
             </div>
             <Switch
@@ -1336,13 +1336,13 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
                   <Button variant="ghost" size="icon" disabled={!!refusal} onClick={() => setInstalling(n)} title="安装 Agent" aria-label="安装 Agent">
                     <Download />
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={() => setEditing(n)} title="编辑节点" aria-label="编辑节点">
+                  <Button variant="ghost" size="icon" onClick={() => setEditing(n)} title="编辑服务器" aria-label="编辑服务器">
                     <Pencil />
                   </Button>
                   <Button variant="ghost" size="icon" onClick={() => setBilling(n)} title="续费设置" aria-label="续费设置">
                     <CalendarClock />
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={() => setDeleting(n)} title="删除节点" aria-label="删除节点">
+                  <Button variant="ghost" size="icon" onClick={() => setDeleting(n)} title="删除服务器" aria-label="删除服务器">
                     <Trash2 className="text-destructive" />
                   </Button>
                 </TableCell>
@@ -1351,14 +1351,14 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
             {nodes.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
-                  还没有节点，右上角添加
+                  还没有服务器，右上角添加
                 </TableCell>
               </TableRow>
             )}
             {searching && nodes.length > 0 && !visible.length && (
               <TableRow>
                 <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
-                  没有匹配的节点
+                  没有匹配的服务器
                 </TableCell>
               </TableRow>
             )}
@@ -1395,9 +1395,9 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
       )}
       {deleting && (
         <ConfirmDialog
-          title={`删除节点「${deleting.name}」？`}
+          title={`删除服务器「${deleting.name}」？`}
           description="历史指标、流量记录和凭证一并删除，不可恢复。"
-          confirmLabel="删除节点"
+          confirmLabel="删除服务器"
           busy={removing}
           onClose={() => setDeleting(null)}
           onConfirm={remove}
@@ -1507,11 +1507,11 @@ function PingForm({ task, nodes, onClose, onSaved }: {
           </section>
           <section className="space-y-3 border-t pt-5">
             <div className="flex items-baseline justify-between gap-2">
-              <h3 className="text-sm font-medium">运行节点</h3>
+              <h3 className="text-sm font-medium">运行服务器</h3>
               <span className="tnum text-xs text-muted-foreground">已选 {chosenCount} / {nodes.length}</span>
             </div>
             <NodePicker nodes={nodes} chosen={chosen} onPick={pick} />
-            <OptionRow title="新节点自动加入" hint="以后添加的节点自动运行此监控" toggle>
+            <OptionRow title="新服务器自动加入" hint="以后添加的服务器自动运行此监控" toggle>
               <Switch checked={!!form.auto_join} onCheckedChange={(v) => setForm({ ...form, auto_join: v })} />
             </OptionRow>
           </section>
@@ -1566,7 +1566,7 @@ function Ping({ nodes }: { nodes: Node[] }) {
               <TableHead className="w-[22%]">名称</TableHead>
               <TableHead className="w-[34%]">目标</TableHead>
               <TableHead className="w-[10%]">间隔</TableHead>
-              <TableHead className="w-[22%]">节点</TableHead>
+              <TableHead className="w-[22%]">服务器</TableHead>
               <TableHead className="text-right">操作</TableHead>
             </TableRow>
           </TableHeader>
@@ -1591,7 +1591,7 @@ function Ping({ nodes }: { nodes: Node[] }) {
             {tasks.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
-                  还没有延迟监控。每个节点独立 TCP 连接目标端口并上报耗时。
+                  还没有延迟监控。每台服务器独立 TCP 连接目标端口并上报耗时。
                 </TableCell>
               </TableRow>
             )}
@@ -2066,7 +2066,7 @@ function OfflineNodes({ nodes, refresh }: { nodes: Node[]; refresh: () => void }
     <Card className="gap-4 p-5">
       <div>
         <h3 className="text-sm font-medium">离线通知</h3>
-        <p className="mt-1 text-xs text-muted-foreground">按节点打开，默认关。已打开 {enabled.size} / {nodes.length} 台</p>
+        <p className="mt-1 text-xs text-muted-foreground">按服务器打开，默认关。已打开 {enabled.size} / {nodes.length} 台</p>
       </div>
       <NodePicker nodes={nodes} chosen={enabled} onPick={apply} disabled={busy} />
     </Card>
@@ -2103,7 +2103,7 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-medium">通知渠道</h3>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Telegram 和 Webhook 配了哪个就发哪个，也可以同时用。离线通知在下方按节点打开；流量和到期提醒对填了额度、到期日的节点生效。
+              Telegram 和 Webhook 配了哪个就发哪个，也可以同时用。离线通知在下方按服务器打开；流量和到期提醒对填了额度、到期日的服务器生效。
             </p>
           </div>
           <Button size="sm" variant="secondary" disabled={testing} onClick={test}>
@@ -2114,7 +2114,7 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
 
       <ChannelCard title="Telegram" configured={!!s.notify_telegram_token_set && text("notify_telegram_chat") !== ""}>
         <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground flex items-center gap-2 mb-2">
-          <span>🛡️ <strong>静默无扰守护模式：</strong>保存后后台守护进程将自动常驻监测全部节点。任何节点离线超 75 秒或恢复上线时，自动静默推送信令通知，0 界面负担。</span>
+          <span>🛡️ <strong>静默无扰守护模式：</strong>保存后后台守护进程将自动常驻监测全部服务器。任何服务器离线超 75 秒或恢复上线时，自动静默推送信令通知，0 界面负担。</span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Bot Token" hint={secretHint("notify_telegram_token")}>
@@ -2236,7 +2236,7 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
           <Field label="流量提醒（%）" hint="本期用量达到该比例和 100% 时各提醒一次，0 关闭">
             <Input type="number" min={0} max={100} value={text("notify_traffic")} onChange={(e) => set("notify_traffic", e.target.value)} />
           </Field>
-          <Field label="到期提醒（天）" hint="每天 9 点汇总这么多天内到期的节点，自动续期时也提醒，0 关闭">
+          <Field label="到期提醒（天）" hint="每天 9 点汇总这么多天内到期的服务器，自动续期时也提醒，0 关闭">
             <Input type="number" min={0} max={365} value={text("notify_expiry")} onChange={(e) => set("notify_expiry", e.target.value)} />
           </Field>
         </div>
@@ -2735,7 +2735,7 @@ function Data({ go }: { go?: (to: string) => void }) {
           <h3 className="text-sm font-medium">备份</h3>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             导出的是整个数据库，含节点凭证与登录密码哈希，请当作密钥保管。恢复会用备份文件整体覆盖当前数据，
-            当前节点、设置、历史全部作废，所有设备需要重新登录。
+            当前服务器、设置、历史全部作废，所有设备需要重新登录。
             <br />
             请用这里导出的文件恢复：直接复制 <code>monitor.db</code> 会丢掉预写日志里还没落盘的那部分。
           </p>
@@ -2779,7 +2779,7 @@ function Data({ go }: { go?: (to: string) => void }) {
       {pending && (
         <ConfirmDialog
           title="用备份覆盖当前数据？"
-          description={`将用 ${pending.name}（${bytes(pending.size)}）整体替换当前数据库。当前的节点、设置和历史全部丢失，且无法撤销。${
+          description={`将用 ${pending.name}（${bytes(pending.size)}）整体替换当前数据库。当前的服务器、设置和历史全部丢失，且无法撤销。${
             pending.name.endsWith(".gz") || pending.name.endsWith(".gzip")
               ? "（已识别为 Telegram 自动备份压缩包，系统将自动解压还原）"
               : ""
@@ -2797,7 +2797,7 @@ function Data({ go }: { go?: (to: string) => void }) {
 // Each area is its own route rather than a tab, so a page can be linked to and a
 // reload returns to the same section.
 const ADMIN_SECTIONS = [
-  { path: "/admin/nodes", label: "节点", icon: Server },
+  { path: "/admin/nodes", label: "服务器", icon: Server },
   { path: "/admin/proxy", label: "代理协议", icon: Globe },
   { path: "/admin/users", label: "用户管理", icon: Users },
   { path: "/admin/rules", label: "规则配置", icon: SlidersHorizontal },
@@ -2852,7 +2852,7 @@ export function Admin({
           <div className="flex items-center justify-between">
             <span>ProxyProbe</span>
             <span className="font-mono text-primary/70 font-medium">
-              {updateInfo?.current_version || "v2.5.3"}
+              {updateInfo?.current_version || "v2.5.4"}
             </span>
           </div>
 

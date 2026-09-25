@@ -204,7 +204,7 @@ export function UpdateDialog({
     }
   }
 
-  const curVer = info?.current_version || "v2.5.3"
+  const curVer = info?.current_version || "v2.5.4"
   const latestVer = info?.latest_version || curVer
   const hasUpdate = !!info?.has_update
 
