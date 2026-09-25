@@ -2355,7 +2355,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.4"
+CURRENT_VERSION = "v2.5.5"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -2453,7 +2453,7 @@ def trigger_background_upgrade():
     t.start()
 
 def get_node_latest_latencies():
-    """Query the latest ping latency and recent history/loss rate for all assigned probes across all nodes."""
+    """Query the latest ping latency for all assigned probes across all nodes."""
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -2470,47 +2470,23 @@ def get_node_latest_latencies():
                 SELECT node_id, task_id, latency, ts,
                        ROW_NUMBER() OVER (PARTITION BY node_id, task_id ORDER BY ts DESC) as rn
                 FROM ping_record
-            ) pr ON pr.node_id = pn.node_id AND pr.task_id = pt.id AND pr.rn <= 20
-            ORDER BY pn.node_id, pt.id, pr.ts ASC
+            ) pr ON pr.node_id = pn.node_id AND pr.task_id = pt.id AND pr.rn = 1
+            ORDER BY pn.node_id, pt.id
         """)
         rows = cur.fetchall()
         conn.close()
 
-        grouped = {}
+        result = {}
         for r in rows:
             nid = str(r["node_id"])
-            tid = r["task_id"]
-            if nid not in grouped:
-                grouped[nid] = {}
-            if tid not in grouped[nid]:
-                grouped[nid][tid] = {
-                    "task_id": tid,
-                    "name": r["name"],
-                    "history": [],
-                    "latest_ts": None,
-                }
-            if r["latency"] is not None:
-                grouped[nid][tid]["history"].append(r["latency"])
-                grouped[nid][tid]["latest_ts"] = r["ts"]
-
-        result = {}
-        for nid, tasks in grouped.items():
-            result[nid] = []
-            for tid, tinfo in tasks.items():
-                history = tinfo["history"]
-                total = len(history)
-                loss_count = sum(1 for x in history if x < 0)
-                loss_rate = round(loss_count / total * 100, 1) if total > 0 else 0.0
-                latest_lat = history[-1] if total > 0 else None
-
-                result[nid].append({
-                    "task_id": tinfo["task_id"],
-                    "name": tinfo["name"],
-                    "latency": latest_lat,
-                    "loss_rate": loss_rate,
-                    "history": history,
-                    "ts": tinfo["latest_ts"]
-                })
+            if nid not in result:
+                result[nid] = []
+            result[nid].append({
+                "task_id": r["task_id"],
+                "name": r["name"],
+                "latency": r["latency"],
+                "ts": r["ts"]
+            })
         return result
     except Exception as e:
         print(f"[Error] get_node_latest_latencies: {e}")
