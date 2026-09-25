@@ -1,0 +1,284 @@
+import { useEffect, useState } from "react"
+import {
+  ArrowRight,
+  Check,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  Flame,
+  RefreshCw,
+  Rocket,
+  Sparkles,
+  Terminal,
+} from "lucide-react"
+import { toast } from "sonner"
+import { copyToClipboard } from "@/lib/clipboard"
+
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+
+export type UpdateInfo = {
+  ok: boolean
+  current_version: string
+  latest_version: string
+  has_update: boolean
+  title?: string
+  changelog?: string[]
+  release_date?: string
+  release_url?: string
+}
+
+export function UpdateDialog({
+  open,
+  onOpenChange,
+  updateInfo: initialInfo,
+  onUpdateInfoChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  updateInfo: UpdateInfo | null
+  onUpdateInfoChange?: (info: UpdateInfo) => void
+}) {
+  const [info, setInfo] = useState<UpdateInfo | null>(initialInfo)
+  const [checking, setChecking] = useState(false)
+  const [upgrading, setUpgrading] = useState(false)
+  const [progressMsg, setProgressMsg] = useState("")
+
+  useEffect(() => {
+    setInfo(initialInfo)
+  }, [initialInfo])
+
+  // 手动检查更新
+  const handleCheck = async (force = true) => {
+    setChecking(true)
+    try {
+      const res = await fetch(`/api/proxy/system/update-check${force ? "?force=1" : ""}`)
+      const data: UpdateInfo = await res.json()
+      if (data.ok) {
+        setInfo(data)
+        if (onUpdateInfoChange) onUpdateInfoChange(data)
+        if (data.has_update) {
+          toast.info(`🎉 发现新版本：${data.latest_version}！`)
+        } else {
+          toast.success(`当前已是最新版本 (${data.current_version})，无需更新。`)
+        }
+      } else {
+        toast.error("检查更新失败")
+      }
+    } catch {
+      toast.error("检查更新失败，请确认服务器网络是否可访问 GitHub")
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  // 触发在线无损热升级
+  const handleUpgrade = async () => {
+    if (!confirm(`确定要立即将 ProxyProbe 升级到最新版本【${info?.latest_version}】吗？升级过程全自动无损，不会丢失任何配置和数据。`)) {
+      return
+    }
+
+    setUpgrading(true)
+    setProgressMsg("正在向后台提交热升级指令...")
+    try {
+      const res = await fetch("/api/proxy/system/upgrade", { method: "POST" })
+      const data = await res.json()
+      if (data.ok) {
+        setProgressMsg("正在后台拉取最新二进制与前端资源并重启服务，请稍候约 8 秒...")
+        let countdown = 8
+        const timer = setInterval(() => {
+          countdown -= 1
+          if (countdown > 0) {
+            setProgressMsg(`正在重启服务并同步资源，剩余 ${countdown} 秒即将刷新页面...`)
+          } else {
+            clearInterval(timer)
+            setProgressMsg("升级完成！正在重新载入控制面板...")
+            setTimeout(() => {
+              window.location.reload()
+            }, 1000)
+          }
+        }, 1000)
+      } else {
+        toast.error(data.error || "启动升级失败")
+        setUpgrading(false)
+      }
+    } catch {
+      toast.error("请求失败，正在检测服务是否已重启完成...")
+      setTimeout(() => {
+        window.location.reload()
+      }, 5000)
+    }
+  }
+
+  const curVer = info?.current_version || "v2.5.0"
+  const latestVer = info?.latest_version || curVer
+  const hasUpdate = !!info?.has_update
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md sm:max-w-lg p-5 sm:p-6 space-y-4">
+        <DialogHeader>
+          <DialogTitle className="text-base sm:text-lg font-bold flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <Sparkles className="size-5 text-amber-500" />
+              <span>系统版本与更新检测</span>
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => handleCheck(true)}
+              disabled={checking || upgrading}
+              className="size-8"
+              title="强制重新检查更新"
+            >
+              <RefreshCw className={`size-3.5 ${checking ? "animate-spin text-primary" : ""}`} />
+            </Button>
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            自动比对 GitHub 官方发行仓库，支持一键无损热升级或通过终端快速升级。
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* 版本对比展示卡片 */}
+        <div className="rounded-xl border bg-muted/20 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <span className="text-[11px] text-muted-foreground">当前运行版本</span>
+              <p className="font-mono text-sm font-semibold">{curVer}</p>
+            </div>
+
+            <ArrowRight className="size-4 text-muted-foreground shrink-0" />
+
+            <div className="space-y-0.5 text-right">
+              <div className="flex items-center justify-end gap-1.5">
+                <span className="text-[11px] text-muted-foreground">最新可用版本</span>
+                {hasUpdate ? (
+                  <Badge className="bg-amber-500 hover:bg-amber-600 text-white text-[10px] px-1.5 py-0 font-medium">
+                    有更新
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-emerald-600 border-emerald-500/30">
+                    已是最新
+                  </Badge>
+                )}
+              </div>
+              <p className="font-mono text-sm font-semibold text-primary">{latestVer}</p>
+            </div>
+          </div>
+
+          {info?.release_date && (
+            <div className="text-[11px] text-muted-foreground border-t border-border/50 pt-2 flex items-center justify-between">
+              <span>发行日期：{info.release_date}</span>
+              {info.release_url && (
+                <a
+                  href={info.release_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary hover:underline flex items-center gap-1"
+                >
+                  <span>查看 Release 仓库</span>
+                  <ExternalLink className="size-3" />
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 更新日志详情 */}
+        {hasUpdate && info?.changelog && info.changelog.length > 0 && (
+          <div className="rounded-lg border bg-card p-3 space-y-2">
+            <span className="text-xs font-semibold flex items-center gap-1.5 text-foreground">
+              <Flame className="size-3.5 text-amber-500" />
+              <span>新版本核心特性：</span>
+            </span>
+            <ul className="space-y-1.5 text-xs text-muted-foreground">
+              {info.changelog.map((item, idx) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                  <span className="leading-relaxed">{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* 正在升级进度状态提示 */}
+        {upgrading && (
+          <div className="rounded-lg border border-primary/30 bg-primary/10 p-3 text-xs text-primary space-y-2">
+            <div className="flex items-center gap-2 font-semibold">
+              <RefreshCw className="size-4 animate-spin shrink-0" />
+              <span>正在执行平滑热升级…</span>
+            </div>
+            <p className="text-muted-foreground text-[11px]">{progressMsg}</p>
+          </div>
+        )}
+
+        {/* 操作区 */}
+        <div className="space-y-2.5 pt-1">
+          {hasUpdate ? (
+            <div className="space-y-2">
+              <Button
+                onClick={handleUpgrade}
+                disabled={upgrading}
+                className="w-full h-9 text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+              >
+                {upgrading ? (
+                  <RefreshCw className="size-3.5 animate-spin" />
+                ) : (
+                  <Rocket className="size-3.5" />
+                )}
+                <span>立即一键在线热升级 (免命令行)</span>
+              </Button>
+
+              <div className="rounded-md border bg-muted/40 p-2.5 text-[11px] space-y-1">
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span className="flex items-center gap-1 font-mono">
+                    <Terminal className="size-3" />
+                    <span>亦可在 SSH 终端执行命令升级：</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const ok = await copyToClipboard("hhub upgrade")
+                      if (ok) toast.success("已复制升级命令")
+                    }}
+                    className="text-primary hover:underline flex items-center gap-0.5"
+                  >
+                    <Copy className="size-3" /> 复制
+                  </button>
+                </div>
+                <code className="block font-mono bg-background/80 px-2 py-1 rounded text-foreground">
+                  hhub upgrade
+                </code>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1">
+              <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                <Check className="size-4" />
+                <span>恭喜，您的系统已是最新版本！无需升级。</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleCheck(true)}
+                disabled={checking}
+                className="h-8 text-xs gap-1 self-stretch sm:self-auto"
+              >
+                <RefreshCw className={`size-3 ${checking ? "animate-spin" : ""}`} />
+                <span>立即重新核验</span>
+              </Button>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}

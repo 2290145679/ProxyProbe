@@ -599,6 +599,9 @@ upgrade_system() {
         info "monitor-hub 核心已更新"
     } || warn "monitor-hub 下载跳过或已是最新"
 
+    # 6. 更新版本标识文件
+    curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || true
+
     # 确保 Caddyfile 路由配置正确
     if [ -f /etc/caddy/Caddyfile ]; then
         if grep -q "handle /admin\*" /etc/caddy/Caddyfile; then

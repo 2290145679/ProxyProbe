@@ -5,6 +5,7 @@ import { Toaster } from "sonner"
 import { Admin } from "@/components/Admin"
 import { Login } from "@/components/Login"
 import { ThemeSettingsDialog } from "@/components/ThemeSettingsDialog"
+import { UpdateDialog, type UpdateInfo } from "@/components/UpdateDialog"
 import { UserDashboard, type UserProfile } from "@/components/UserDashboard"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -137,6 +138,23 @@ export default function App() {
     }
   }, [me?.authed, userProfile, setThemeStyle])
 
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
+
+  // 自动检测系统更新 (仅管理员鉴权后执行)
+  useEffect(() => {
+    if (me?.authed && (!userProfile || userProfile.is_admin)) {
+      fetch("/api/proxy/system/update-check")
+        .then((r) => r.json())
+        .then((data: UpdateInfo) => {
+          if (data?.ok) {
+            setUpdateInfo(data)
+          }
+        })
+        .catch(() => {})
+    }
+  }, [me?.authed, userProfile])
+
   // Every frame declares its audience. The hub closes the stream when the session
   // behind it is revoked -- signed out from another device, a password change, a
   // restore -- and the reconnect returns as anonymous: the public list, with
@@ -206,6 +224,22 @@ export default function App() {
             管理后台
           </span>
           <div className="flex-1" />
+          {updateInfo?.has_update && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setUpdateDialogOpen(true)}
+              className="h-8 text-xs px-2.5 sm:px-3 gap-1.5 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 shrink-0"
+              title={`发现新版本 ${updateInfo.latest_version}，点击查看并升级`}
+            >
+              <span className="relative flex size-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                <span className="relative inline-flex rounded-full size-2 bg-amber-500" />
+              </span>
+              <span className="font-medium hidden sm:inline">发现新版本</span>
+              <span className="font-mono font-bold">{updateInfo.latest_version}</span>
+            </Button>
+          )}
           <Button variant="ghost" size="sm" asChild className="shrink-0 px-2 sm:px-3 text-xs h-8">
             <a href="/" title="状态面板">
               <ExternalLink className="size-3.5 shrink-0" />
@@ -255,6 +289,13 @@ export default function App() {
         onToggleDark={toggleTheme}
       />
 
+      <UpdateDialog
+        open={updateDialogOpen}
+        onOpenChange={setUpdateDialogOpen}
+        updateInfo={updateInfo}
+        onUpdateInfoChange={setUpdateInfo}
+      />
+
       <main className="mx-auto max-w-7xl space-y-5 px-4 py-6">
         {error && <p className="text-sm text-destructive">{error}</p>}
         {!nodes ? (
@@ -272,6 +313,8 @@ export default function App() {
             // Why this page cannot add nodes, measured by the rule the hub applies
             // to the `Origin` it receives; empty when it can.
             refusal={provisionRefusal(location.origin, me.site)}
+            updateInfo={updateInfo}
+            onOpenUpdateDialog={() => setUpdateDialogOpen(true)}
           />
         )}
       </main>

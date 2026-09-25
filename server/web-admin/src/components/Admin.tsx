@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { Bell, CalendarClock, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Palette, Pencil, Plus, Radio, RefreshCw, Search, Send, Server, Settings, Shield, Trash2, Upload, Users } from "lucide-react"
+import { Bell, CalendarClock, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
 import { ProxyNodes } from "./ProxyNodes"
 import { ProxyUsers } from "./ProxyUsers"
+import { ProxyRules } from "./ProxyRules"
 import { LicenseManager } from "./LicenseManager"
+import type { UpdateInfo } from "./UpdateDialog"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -1712,12 +1714,62 @@ function useSettings() {
   }
 }
 
-function SettingsTab() {
+function SettingsTab({
+  updateInfo,
+  onOpenUpdateDialog,
+}: {
+  updateInfo?: UpdateInfo | null
+  onOpenUpdateDialog?: () => void
+}) {
   const { s, set, save } = useSettings()
   if (!s) return null
 
   return (
     <div className="space-y-4">
+      {/* 系统版本与在线更新卡片 */}
+      <Card className="gap-4 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-bold flex items-center gap-2">
+              <Sparkles className="size-4 text-amber-500" /> 系统版本与在线更新
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              当前版本：<code className="text-primary font-mono font-semibold">{updateInfo?.current_version || "v2.5.0"}</code>
+              {updateInfo?.has_update ? (
+                <span className="ml-2 text-amber-600 dark:text-amber-400 font-semibold">
+                  (🔥 发现最新版本 {updateInfo.latest_version})
+                </span>
+              ) : (
+                <span className="ml-2 text-emerald-600 dark:text-emerald-400">
+                  (已是最新版)
+                </span>
+              )}
+            </p>
+          </div>
+          {onOpenUpdateDialog && (
+            <Button
+              size="sm"
+              variant={updateInfo?.has_update ? "default" : "outline"}
+              onClick={onOpenUpdateDialog}
+              className="text-xs gap-1.5 h-8 shrink-0 self-start sm:self-auto"
+            >
+              {updateInfo?.has_update ? (
+                <>
+                  <Rocket className="size-3.5" /> 立即升级系统
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="size-3.5" /> 检查更新
+                </>
+              )}
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          系统支持全自动在线无损热升级（零停机、历史配置与数据库完全保留），亦可在 SSH 终端输入 <code>hhub upgrade</code> 快速完成更新。
+        </p>
+      </Card>
+
       <Card className="gap-4 p-5">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="站点名称">
@@ -2596,6 +2648,7 @@ const ADMIN_SECTIONS = [
   { path: "/admin/nodes", label: "节点", icon: Server },
   { path: "/admin/proxy", label: "代理协议", icon: Globe },
   { path: "/admin/users", label: "用户管理", icon: Users },
+  { path: "/admin/rules", label: "规则配置", icon: SlidersHorizontal },
   { path: "/admin/license", label: "商业授权", icon: KeyRound },
   { path: "/admin/ping", label: "延迟", icon: Radio },
   { path: "/admin/notify", label: "通知", icon: Bell },
@@ -2612,6 +2665,8 @@ export function Admin({
   refresh,
   site,
   refusal,
+  updateInfo,
+  onOpenUpdateDialog,
 }: {
   path: string
   go: (to: string) => void
@@ -2619,6 +2674,8 @@ export function Admin({
   refresh: () => void
   site: string
   refusal: string
+  updateInfo?: UpdateInfo | null
+  onOpenUpdateDialog?: () => void
 }) {
   return (
     <div className="flex flex-col gap-6 md:flex-row">
@@ -2639,8 +2696,34 @@ export function Admin({
             </button>
           )
         })}
-        <div className="mt-4 hidden pt-3 md:block border-t border-border/40 text-[11px] text-muted-foreground/60 px-3">
-          ProxyProbe <span className="font-mono text-primary/70 font-medium">v2.0.0</span>
+        <div className="mt-4 hidden pt-3 md:block border-t border-border/40 text-[11px] text-muted-foreground/60 px-3 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span>ProxyProbe</span>
+            <span className="font-mono text-primary/70 font-medium">
+              {updateInfo?.current_version || "v2.5.0"}
+            </span>
+          </div>
+
+          {updateInfo?.has_update ? (
+            <button
+              onClick={onOpenUpdateDialog}
+              className="w-full text-left rounded-md p-1.5 bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-all flex items-center gap-1.5 font-medium"
+            >
+              <span className="relative flex size-1.5 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                <span className="relative inline-flex rounded-full size-1.5 bg-amber-500" />
+              </span>
+              <span className="truncate">可升级至 {updateInfo.latest_version}</span>
+            </button>
+          ) : (
+            <button
+              onClick={onOpenUpdateDialog}
+              className="w-full text-left text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+            >
+              <RefreshCw className="size-2.5" />
+              <span>检查系统更新</span>
+            </button>
+          )}
         </div>
       </nav>
 
@@ -2649,6 +2732,8 @@ export function Admin({
           <ProxyNodes nodes={nodes} />
         ) : path === "/admin/users" ? (
           <ProxyUsers />
+        ) : path === "/admin/rules" ? (
+          <ProxyRules />
         ) : path === "/admin/license" ? (
           <LicenseManager />
         ) : path === "/admin/ping" ? (
@@ -2662,7 +2747,7 @@ export function Admin({
         ) : path === "/admin/security" ? (
           <Security site={site} />
         ) : path === "/admin/settings" ? (
-          <SettingsTab />
+          <SettingsTab updateInfo={updateInfo} onOpenUpdateDialog={onOpenUpdateDialog} />
         ) : (
           <Nodes nodes={nodes} refresh={refresh} site={site} refusal={refusal} />
         )}

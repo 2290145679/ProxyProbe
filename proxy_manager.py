@@ -1592,7 +1592,23 @@ def get_current_user(headers):
                 session_token = item.split("=", 1)[1].strip()
                 break
         if not session_token:
-            return None
+            auth_header = headers.get("Authorization", "").strip()
+            if auth_header.startswith("Bearer "):
+                b_tok = auth_header.split(" ", 1)[1].strip()
+                token_hash = sha256(b_tok.encode()).hexdigest()
+                now = int(time.time())
+                conn = get_db()
+                row = conn.execute("SELECT 1 FROM session WHERE token_hash = ? AND expires_at > ?", (token_hash, now)).fetchone()
+                if row:
+                    session_token = b_tok
+                    conn.close()
+                else:
+                    u_row = conn.execute("SELECT * FROM proxy_user WHERE sub_token = ? AND is_admin = 1", (b_tok,)).fetchone()
+                    conn.close()
+                    if u_row:
+                        return dict(u_row)
+            if not session_token:
+                return None
         
         token_hash = sha256(session_token.encode()).hexdigest()
         now = int(time.time())
@@ -2191,6 +2207,276 @@ def format_node_display_name(node, server_country_map=None) -> str:
         return f"{flag} {raw_name}"
     return raw_name
 
+def get_server_country_map():
+    try:
+        conn = get_db()
+        server_rows = conn.execute("SELECT id, country FROM node").fetchall()
+        conn.close()
+        return {r["id"]: (r["country"] or "") for r in server_rows}
+    except Exception:
+        return {}
+
+CURRENT_VERSION = "v2.5.0"
+
+def get_local_version() -> str:
+    ver_file = "/opt/monitor/VERSION"
+    if os.path.exists(ver_file):
+        try:
+            with open(ver_file, "r", encoding="utf-8") as f:
+                v = f.read().strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+    return CURRENT_VERSION
+
+_update_cache = {
+    "checked_at": 0,
+    "data": None
+}
+
+def parse_semver(v_str: str):
+    import re
+    v_str = v_str.lstrip("vV").strip()
+    parts = re.split(r'[-.]', v_str)
+    nums = []
+    for p in parts:
+        try:
+            nums.append(int(p))
+        except ValueError:
+            break
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums[:3])
+
+def check_system_update(force=False):
+    global _update_cache
+    now = time.time()
+    if not force and (now - _update_cache["checked_at"] < 300) and _update_cache["data"]:
+        return _update_cache["data"]
+
+    cur_ver = get_local_version()
+    latest_ver = cur_ver
+    changelog = []
+    release_date = ""
+    title = ""
+
+    v_json_url = "https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/version.json"
+    req = urllib.request.Request(v_json_url, headers={"User-Agent": f"ProxyProbe/{cur_ver}"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            v_data = json.loads(resp.read().decode("utf-8"))
+            latest_ver = (v_data.get("version") or cur_ver).strip()
+            changelog = v_data.get("changelog") or []
+            release_date = v_data.get("release_date") or ""
+            title = v_data.get("title") or ""
+    except Exception:
+        try:
+            v_raw_url = "https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/VERSION"
+            req2 = urllib.request.Request(v_raw_url, headers={"User-Agent": f"ProxyProbe/{cur_ver}"})
+            with urllib.request.urlopen(req2, timeout=5) as resp2:
+                latest_ver = resp2.read().decode("utf-8").strip() or cur_ver
+        except Exception:
+            pass
+
+    has_update = False
+    try:
+        has_update = parse_semver(latest_ver) > parse_semver(cur_ver)
+    except Exception:
+        has_update = (latest_ver != cur_ver and latest_ver != "")
+
+    result = {
+        "ok": True,
+        "current_version": cur_ver,
+        "latest_version": latest_ver,
+        "has_update": has_update,
+        "title": title or f"ProxyProbe {latest_ver} 最新版本",
+        "changelog": changelog,
+        "release_date": release_date,
+        "release_url": "https://github.com/2290145679/ProxyProbe-Release"
+    }
+
+    _update_cache["checked_at"] = now
+    _update_cache["data"] = result
+    return result
+
+def trigger_background_upgrade():
+    def _run():
+        time.sleep(1.0)
+        hhub_bin = "/usr/local/bin/hhub"
+        if os.path.exists(hhub_bin) and os.access(hhub_bin, os.X_OK):
+            subprocess.Popen([hhub_bin, "upgrade"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            script_path = "/opt/monitor/scripts/hhub.sh"
+            if os.path.exists(script_path):
+                subprocess.Popen(["bash", script_path, "upgrade"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+DEFAULT_CLASH_SMART_RULES = """# --- 局域网与私有网络直连 ---
+- GEOIP,LAN,DIRECT
+- DOMAIN-SUFFIX,local,DIRECT
+- DOMAIN-SUFFIX,localhost,DIRECT
+- IP-CIDR,127.0.0.0/8,DIRECT
+- IP-CIDR,172.16.0.0/12,DIRECT
+- IP-CIDR,192.168.0.0/16,DIRECT
+- IP-CIDR,10.0.0.0/8,DIRECT
+- IP-CIDR,100.64.0.0/10,DIRECT
+# --- 常用 AI 智能助手走代理 ---
+- DOMAIN-SUFFIX,openai.com,节点选择
+- DOMAIN-SUFFIX,chatgpt.com,节点选择
+- DOMAIN-SUFFIX,anthropic.com,节点选择
+- DOMAIN-SUFFIX,claude.ai,节点选择
+- DOMAIN-SUFFIX,oaistatic.com,节点选择
+- DOMAIN-SUFFIX,oaiusercontent.com,节点选择
+- DOMAIN-KEYWORD,gemini,节点选择
+- DOMAIN-KEYWORD,openai,节点选择
+# --- 常用海外社交与影音走代理 ---
+- DOMAIN-SUFFIX,google.com,节点选择
+- DOMAIN-SUFFIX,youtube.com,节点选择
+- DOMAIN-SUFFIX,github.com,节点选择
+- DOMAIN-SUFFIX,githubusercontent.com,节点选择
+- DOMAIN-SUFFIX,twitter.com,节点选择
+- DOMAIN-SUFFIX,x.com,节点选择
+- DOMAIN-SUFFIX,telegram.org,节点选择
+- DOMAIN-SUFFIX,t.me,节点选择
+- DOMAIN-SUFFIX,netflix.com,节点选择
+- DOMAIN-SUFFIX,spotify.com,节点选择
+# --- 国内常见服务与域名直连 ---
+- DOMAIN-SUFFIX,cn,DIRECT
+- DOMAIN-SUFFIX,baidu.com,DIRECT
+- DOMAIN-SUFFIX,qq.com,DIRECT
+- DOMAIN-SUFFIX,weixin.com,DIRECT
+- DOMAIN-SUFFIX,alipay.com,DIRECT
+- DOMAIN-SUFFIX,taobao.com,DIRECT
+- DOMAIN-SUFFIX,jd.com,DIRECT
+- DOMAIN-SUFFIX,bilibili.com,DIRECT
+- DOMAIN-SUFFIX,163.com,DIRECT
+- DOMAIN-SUFFIX,zhihu.com,DIRECT
+- GEOIP,CN,DIRECT
+# --- 最终兜底规则 ---
+- MATCH,节点选择"""
+
+DEFAULT_CLASH_MINIMAL_RULES = """- GEOIP,LAN,DIRECT
+- GEOIP,CN,DIRECT
+- MATCH,节点选择"""
+
+DEFAULT_CLASH_GLOBAL_RULES = """- GEOIP,LAN,DIRECT
+- MATCH,节点选择"""
+
+DEFAULT_SINGBOX_SMART_RULES = json.dumps([
+    {"protocol": "dns", "outbound": "dns-out"},
+    {"ip_is_private": True, "outbound": "DIRECT"},
+    {"clash_mode": "Direct", "outbound": "DIRECT"},
+    {"clash_mode": "Global", "outbound": "PROXY"},
+    {"domain_suffix": [".cn", "baidu.com", "qq.com", "weixin.com", "taobao.com", "bilibili.com", "jd.com", "163.com", "zhihu.com"], "outbound": "DIRECT"},
+    {"geoip": ["cn", "private"], "outbound": "DIRECT"},
+    {"domain_suffix": ["openai.com", "chatgpt.com", "anthropic.com", "claude.ai", "google.com", "youtube.com", "github.com", "twitter.com", "x.com", "telegram.org", "netflix.com"], "outbound": "PROXY"},
+    {"outbound": "PROXY"}
+], indent=2, ensure_ascii=False)
+
+DEFAULT_SINGBOX_MINIMAL_RULES = json.dumps([
+    {"protocol": "dns", "outbound": "dns-out"},
+    {"ip_is_private": True, "outbound": "DIRECT"},
+    {"clash_mode": "Direct", "outbound": "DIRECT"},
+    {"clash_mode": "Global", "outbound": "PROXY"},
+    {"geoip": ["cn", "private"], "outbound": "DIRECT"},
+    {"outbound": "PROXY"}
+], indent=2, ensure_ascii=False)
+
+DEFAULT_SINGBOX_GLOBAL_RULES = json.dumps([
+    {"protocol": "dns", "outbound": "dns-out"},
+    {"ip_is_private": True, "outbound": "DIRECT"},
+    {"clash_mode": "Direct", "outbound": "DIRECT"},
+    {"outbound": "PROXY"}
+], indent=2, ensure_ascii=False)
+
+def get_rule_presets():
+    return [
+        {
+            "id": "smart",
+            "name": "国内外智能分流",
+            "desc": "推荐日常使用。局域网与国内 IP/常见域名直连，常用国外站点、AI 矩阵及主流媒体走节点代理，自动兼顾速度与隐私。",
+            "badge": "默认推荐",
+            "clash_rules": DEFAULT_CLASH_SMART_RULES,
+            "singbox_rules": DEFAULT_SINGBOX_SMART_RULES
+        },
+        {
+            "id": "minimal",
+            "name": "极简轻量分流",
+            "desc": "仅局域网与中国大陆 IP (GEOIP,CN) 直连，其余全部流量无感走代理节点。",
+            "badge": "轻量高速",
+            "clash_rules": DEFAULT_CLASH_MINIMAL_RULES,
+            "singbox_rules": DEFAULT_SINGBOX_MINIMAL_RULES
+        },
+        {
+            "id": "global",
+            "name": "全局代理模式",
+            "desc": "除局域网私有地址外，全部网络请求统一通过代理节点转发。",
+            "badge": "全部代理",
+            "clash_rules": DEFAULT_CLASH_GLOBAL_RULES,
+            "singbox_rules": DEFAULT_SINGBOX_GLOBAL_RULES
+        },
+        {
+            "id": "custom",
+            "name": "自定义专家规则",
+            "desc": "自由编写定制 Clash Rules 及 Sing-box 路由规则，完全由管理员自主掌控分流逻辑。",
+            "badge": "自由定制",
+            "clash_rules": DEFAULT_CLASH_SMART_RULES,
+            "singbox_rules": DEFAULT_SINGBOX_SMART_RULES
+        }
+    ]
+
+def get_active_clash_rules():
+    mode = get_setting("sub_rule_mode", "smart")
+    if mode == "custom":
+        raw = get_setting("sub_clash_rules", "").strip()
+        if raw:
+            rules = []
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("- "):
+                    line = line[2:].strip()
+                rules.append(line)
+            if rules:
+                return rules
+    elif mode == "minimal":
+        raw = DEFAULT_CLASH_MINIMAL_RULES
+    elif mode == "global":
+        raw = DEFAULT_CLASH_GLOBAL_RULES
+    else:
+        raw = DEFAULT_CLASH_SMART_RULES
+    
+    rules = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("- "):
+            line = line[2:].strip()
+        rules.append(line)
+    return rules
+
+def get_active_singbox_rules():
+    mode = get_setting("sub_rule_mode", "smart")
+    if mode == "custom":
+        raw = get_setting("sub_singbox_rules", "").strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return parsed
+            except Exception:
+                pass
+    elif mode == "minimal":
+        return json.loads(DEFAULT_SINGBOX_MINIMAL_RULES)
+    elif mode == "global":
+        return json.loads(DEFAULT_SINGBOX_GLOBAL_RULES)
+    
+    return json.loads(DEFAULT_SINGBOX_SMART_RULES)
+
 def generate_clash_yaml(nodes, user=None, warning_msg=None, server_country_map=None):
     if warning_msg:
         cfg = {
@@ -2429,10 +2715,7 @@ rules:
                 "proxies": list(names)
             }
         ],
-        "rules": [
-            "GEOIP,LAN,DIRECT",
-            "MATCH,节点选择"
-        ]
+        "rules": get_active_clash_rules()
     }
 
     try:
@@ -2495,8 +2778,8 @@ rules:
         for n in names:
             lines.append(f"      - \"{n}\"")
         lines.append("rules:")
-        lines.append("  - GEOIP,LAN,DIRECT")
-        lines.append("  - MATCH,节点选择")
+        for r in clash_cfg["rules"]:
+            lines.append(f"  - {r}")
         return "\n".join(lines)
 
 
@@ -2698,20 +2981,7 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
             }
         ],
         "route": {
-            "rules": [
-                {
-                    "protocol": "dns",
-                    "outbound": "dns-out"
-                },
-                {
-                    "clash_mode": "Direct",
-                    "outbound": "DIRECT"
-                },
-                {
-                    "clash_mode": "Global",
-                    "outbound": "PROXY"
-                }
-            ],
+            "rules": get_active_singbox_rules(),
             "auto_detect_interface": True
         }
     }
@@ -3854,6 +4124,50 @@ class ProxyHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/proxy/system/update-check":
+            force = qs.get("force", ["0"])[0] in ("1", "true")
+            res = check_system_update(force=force)
+            self.send_json(res)
+            return
+
+        if path == "/api/proxy/rules/config":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            mode = get_setting("sub_rule_mode", "smart")
+            clash_rules = get_setting("sub_clash_rules", "")
+            singbox_rules = get_setting("sub_singbox_rules", "")
+            presets = get_rule_presets()
+            matched_preset = next((p for p in presets if p["id"] == mode), presets[0])
+            effective_clash = clash_rules if clash_rules else matched_preset["clash_rules"]
+            effective_singbox = singbox_rules if singbox_rules else matched_preset["singbox_rules"]
+            self.send_json({
+                "ok": True,
+                "mode": mode,
+                "clash_rules": effective_clash,
+                "singbox_rules": effective_singbox,
+                "presets": presets
+            })
+            return
+
+        if path == "/api/proxy/rules/preview":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            conn = get_db()
+            cur = conn.execute("SELECT * FROM proxy_node WHERE enabled = 1")
+            nodes = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            sc_map = get_server_country_map()
+            clash_yaml = generate_clash_yaml(nodes, None, None, sc_map)
+            singbox_json = generate_singbox_client_config(nodes, None, None, sc_map)
+            self.send_json({
+                "ok": True,
+                "clash_yaml": clash_yaml,
+                "singbox_json": singbox_json
+            })
+            return
+
         # 4. Admin-only endpoints
         if not check_auth(self.headers):
             self.send_json({"error": "Unauthorized"}, 401)
@@ -4464,6 +4778,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 })
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, 500)
+        if path == "/api/proxy/rules/config":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            mode = req.get("mode", "smart")
+            clash_rules = req.get("clash_rules", "")
+            singbox_rules = req.get("singbox_rules", "")
+            set_setting("sub_rule_mode", mode)
+            set_setting("sub_clash_rules", clash_rules)
+            set_setting("sub_singbox_rules", singbox_rules)
+            self.send_json({"ok": True, "message": "分流规则配置已成功保存"})
             return
 
         if path == "/api/proxy/users":

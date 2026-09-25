@@ -1,32 +1,38 @@
 # 🚀 ProxyProbe - 分布式服务器监控与 Xray / Sing-box / Realm 代理拓扑管理系统
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v2.4.0-blue.svg" alt="Release">
+  <img src="https://img.shields.io/badge/Release-v2.5.0-blue.svg" alt="Release">
+  <img src="https://img.shields.io/badge/Routing-Smart_Rules_Center-brightgreen.svg" alt="Smart Routing Rules">
+  <img src="https://img.shields.io/badge/Update-One--Click_Upgrade-orange.svg" alt="One-Click Upgrade">
   <img src="https://img.shields.io/badge/Dual_Core-Xray_%2B_Sing--box_%2B_Realm-success.svg" alt="Cores">
-  <img src="https://img.shields.io/badge/Subscription-Smart_UA_Adaptive-orange.svg" alt="Smart UA Subscription">
+  <img src="https://img.shields.io/badge/Subscription-Smart_UA_Adaptive-blue.svg" alt="Smart UA Subscription">
   <img src="https://img.shields.io/badge/GeoIP-Auto_Flag_Emoji-purple.svg" alt="Auto Flag Emoji">
   <img src="https://img.shields.io/badge/Theme-Sakura_%2B_Classic-pink.svg" alt="Sakura Theme">
-  <img src="https://img.shields.io/badge/Responsive-Mobile_Optimized-brightgreen.svg" alt="Mobile Optimized">
-  <img src="https://img.shields.io/badge/Backup-Telegram_Automated-blue.svg" alt="Telegram Backup">
   <img src="https://img.shields.io/badge/Backend-Rust_%2B_Python-red.svg" alt="Backend">
 </p>
 
-**ProxyProbe** 是一套现代化、高颜值、轻量且强大的**分布式服务器状态监控、代理节点拓扑调度与聚合订阅分发平台**。系统在高性能 Rust 分布式探针的基础上，深度融合了 **Xray-Core、Sing-box 与 Realm 多核心协同调度矩阵**，支持全主流代理协议拓扑、全平台客户端自适应万能订阅、节点国旗 Emoji 智能解析、AI 与流媒体自选检测、移动端精细适配与双主题自由切换。详细版本更新内容请参阅 [版本更新日志 (CHANGELOG.md)](CHANGELOG.md)。
+**ProxyProbe** 是一套现代化、高颜值、轻量且强大的**分布式服务器状态监控、代理节点拓扑调度、聚合订阅分发与客户端智能分流规则管理平台**。系统在高性能 Rust 分布式探针的基础上，深度融合了 **Xray-Core、Sing-box 与 Realm 多核心协同调度矩阵**，支持全主流代理协议拓扑、全平台客户端自适应订阅、Clash 与 Sing-box 客户端分流规则中心、面板免终端一键无损热升级、节点国旗 Emoji 智能解析、AI 与流媒体自选检测、移动端精细适配与双主题自由切换。详细版本更新内容请参阅 [版本更新日志 (CHANGELOG.md)](CHANGELOG.md)。
 
 ---
 
 ## 🌟 核心特性
 
+- 🔀 **客户端分流规则可视化中心 (Client Routing Rules Center)**：
+  - 后台新增 `/admin/rules` 规则中心，内置「国内外智能分流 (默认推荐)」、「极简轻量」、「全局代理」、「自定义专家」四大经典预设。
+  - 支持对 Clash YAML 规则组与 Sing-box JSON 路由规则进行实时语法高亮、快捷标签注入、格式化校验与完整客户端配置在线预览，新手即开即用，专家随心定制。
+- 🔄 **新版本全自动检测与面板一键无损热升级 (Auto Update & One-Click Upgrade)**：
+  - 管理后台启动自动静默比对最新版本，新版本发布时顶部与导航栏跳动徽章智能提醒。
+  - 管理员可在面板内直接查看详细更新日志，点击「一键无损热升级」即可自动拉取最新二进制与前端静态资源并平滑重启，免登 SSH 终端，零配置丢失。
 - ⚡ **超低资源极速探针**：
   - 主控端与探针核心采用 Rust 编写，探针客户端内存占用极低（< 15MB），CPU 常态占用接近 0%。
 - 🔄 **Xray-Core + Sing-box + Realm 三核心协同调度**：
   - **Xray-Core**：负责承载 VLESS + Reality (Vision / XHTTP)、Trojan、VMess-WS、Shadowsocks 2022、SOCKS5 等 TCP/TLS 极致伪装协议。
   - **Sing-box**：原生驱动 Hysteria 2 (Hy2)、TUIC v5 等基于 QUIC / UDP 的极速网络协议。
   - **Realm**：高效低延迟端口中转转发调度，轻松组建多级中继拓扑。
-- ⚡ **万能自适应智能订阅 (Universal Smart UA Subscription)**：
+- ⚡ **自适应智能订阅 (Adaptive Smart Subscription)**：
   - 单一订阅链接全客户端自适应：后端依据客户端 `User-Agent` 智能感知客户端类型，自动分发最优订阅配置（Clash/Mihomo -> Clash YAML 规则组；Sing-box -> Sing-box JSON 核心配置；Shadowrocket/v2rayN -> 标准 Base64 聚合节点链）。
   - 支持手动强制覆盖参数（`?clash=1`、`?singbox=1`、`?b64=1`）。
-  - 用户面板化繁为简，突出醒目的「⚡ 复制万能智能订阅」核心按钮，搭配小火箭/Clash/Sing-box 一键唤醒导入与手机扫码导入，体验极致丝滑。
+  - 用户面板化繁为简，突出醒目的「⚡ 复制订阅」核心按钮，搭配小火箭/Clash/Sing-box 一键唤醒导入与手机扫码导入，体验极致丝滑。
 - 🌍 **节点自动识别国家地区国旗 Emoji (Auto GeoIP Flag)**：
   - 探针及节点管理自动根据被控端地理位置信息（`node.country`）或地区关键字（HK/JP/US/SG/TW/DE 等）智能解析并前置对应国家地区国旗 Emoji（🇭🇰/🇯🇵/🇺🇸/🇸🇬/🇨🇳/🇩🇪/🇬🇧 等）。
   - 全订阅协议（Clash YAML、Sing-box JSON、Base64）以及管理后台、用户自服务面板的节点展示名均自动携带国旗图标，节点归属一目了然。

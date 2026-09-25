@@ -445,14 +445,14 @@ export function UserDashboard({
                 <Input
                   readOnly
                   value={effectiveSubUrl}
-                  className="font-mono text-xs h-10 bg-muted/40 pr-36 select-all"
+                  className="font-mono text-xs h-10 bg-muted/40 pr-28 select-all"
                 />
                 <Button
                   onClick={copySubUrl}
                   size="sm"
                   className="absolute right-1 top-1 h-8 px-3 text-xs gap-1.5 shadow-sm font-medium"
                 >
-                  <Copy className="size-3.5" /> 复制万能智能订阅
+                  <Copy className="size-3.5" /> 复制订阅
                 </Button>
               </div>
 
