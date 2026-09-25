@@ -8,6 +8,8 @@ node_modules/
 dist/
 !web-admin/dist/
 !web-admin/dist/**
+!web-theme/dist/
+!web-theme/dist/**
 .vite/
 *.local
 

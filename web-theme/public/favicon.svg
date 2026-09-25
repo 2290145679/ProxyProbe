@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- Greyscale like the rest of the theme, and one mid tone rather than a
+       light/dark pair: a favicon sits on browser chrome this page does not
+       pick, so it has to read on both. -->
+  <g fill="#8a8a8a">
+    <rect x="2" y="9" width="3" height="5" rx="1"/>
+    <rect x="6.5" y="5" width="3" height="9" rx="1"/>
+    <rect x="11" y="2" width="3" height="12" rx="1"/>
+  </g>
+</svg>

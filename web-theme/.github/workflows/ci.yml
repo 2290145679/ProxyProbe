@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    # Prose changes nothing a compiler or linter can check.
+    paths-ignore: ["**.md", "LICENSE"]
+  pull_request:
+    paths-ignore: ["**.md", "LICENSE"]
+
+# A new push supersedes any run still in progress for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The hub embeds a released archive, never this repository's source: release.yml
+  # builds a tag here and publishes theme.tar.gz, while the hub's web-theme.pin
+  # names the tag and its sha256. A break on main therefore cannot break a hub
+  # build, but this is the only gate a tag receives, since by the time the hub sees
+  # it the build has already happened here. Shipping to a hub is two steps: tag
+  # here, then move that pin there.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # The hub offers a release as an update for as long as its tag differs from
+      # the installed theme.json version, so the three files carrying the version
+      # must agree; release.yml then holds the tag to the same value.
+      - run: |
+          V=$(node -p 'require("./theme.json").version')
+          for f in package.json package-lock.json; do
+            [ "$(node -p "require('./$f').version")" = "$V" ] || { echo "::error file=$f::version differs from theme.json $V"; exit 1; }
+          done
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

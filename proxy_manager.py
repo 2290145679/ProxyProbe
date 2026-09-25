@@ -2313,6 +2313,46 @@ def trigger_background_upgrade():
     t = threading.Thread(target=_run, daemon=True)
     t.start()
 
+def get_node_latest_latencies():
+    """Query the latest ping latency for all assigned probes across all nodes."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                pn.node_id,
+                pt.id AS task_id,
+                pt.name,
+                pr.latency,
+                pr.ts
+            FROM ping_node pn
+            JOIN ping_task pt ON pt.id = pn.task_id
+            LEFT JOIN (
+                SELECT node_id, task_id, latency, ts,
+                       ROW_NUMBER() OVER (PARTITION BY node_id, task_id ORDER BY ts DESC) as rn
+                FROM ping_record
+            ) pr ON pr.node_id = pn.node_id AND pr.task_id = pt.id AND pr.rn = 1
+            ORDER BY pn.node_id, pt.id
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        result = {}
+        for r in rows:
+            nid = str(r["node_id"])
+            if nid not in result:
+                result[nid] = []
+            result[nid].append({
+                "task_id": r["task_id"],
+                "name": r["name"],
+                "latency": r["latency"],
+                "ts": r["ts"]
+            })
+        return result
+    except Exception as e:
+        print(f"[Error] get_node_latest_latencies: {e}")
+        return {}
+
+
 DEFAULT_CLASH_SMART_RULES = """# --- 局域网与私有网络直连 ---
 - GEOIP,LAN,DIRECT
 - DOMAIN-SUFFIX,local,DIRECT
@@ -4130,6 +4170,31 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json(res)
             return
 
+        if path == "/api/proxy/probe/public-status":
+            latencies = get_node_latest_latencies()
+            self.send_json({
+                "ok": True,
+                "settings": {
+                    "public_show_price": get_setting("public_show_price", "0") == "1",
+                    "public_show_expiry": get_setting("public_show_expiry", "0") == "1",
+                    "public_show_traffic_limit": get_setting("public_show_traffic_limit", "0") == "1"
+                },
+                "latencies": latencies
+            })
+            return
+
+        if path == "/api/proxy/settings/display":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            self.send_json({
+                "ok": True,
+                "public_show_price": get_setting("public_show_price", "0") == "1",
+                "public_show_expiry": get_setting("public_show_expiry", "0") == "1",
+                "public_show_traffic_limit": get_setting("public_show_traffic_limit", "0") == "1"
+            })
+            return
+
         if path == "/api/proxy/rules/config":
             if not check_auth(self.headers):
                 self.send_json({"error": "Unauthorized"}, 401)
@@ -5180,6 +5245,25 @@ class ProxyHandler(BaseHTTPRequestHandler):
             res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             apply_xray_config()
             self.send_json({"ok": res.returncode == 0, "output": res.stdout or res.stderr})
+        elif path == "/api/proxy/system/upgrade":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            trigger_background_upgrade()
+            self.send_json({"ok": True, "message": "升级指令已下发，系统正在后台无损热升级..."})
+            return
+
+        elif path == "/api/proxy/settings/display":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            show_price = "1" if req.get("public_show_price") else "0"
+            show_expiry = "1" if req.get("public_show_expiry") else "0"
+            show_traffic = "1" if req.get("public_show_traffic_limit") else "0"
+            set_setting("public_show_price", show_price)
+            set_setting("public_show_expiry", show_expiry)
+            set_setting("public_show_traffic_limit", show_traffic)
+            self.send_json({"ok": True, "message": "服务器公开信息展示权限已更新"})
             return
 
         self.send_json({"error": "Not Found"}, 404)
