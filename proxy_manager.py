@@ -919,6 +919,7 @@ def sync_step(server, token, last_hash):
                 st_data = json.loads(res.stdout)
                 raw_stats = st_data.get("stat") or []
                 user_traffic = {}
+                node_traffic = {}
                 for item in raw_stats:
                     name = item.get("name", "")
                     val = int(item.get("value", 0))
@@ -943,8 +944,25 @@ def sync_step(server, token, last_hash):
                                 user_traffic[uid]["upload"] += val
                             elif direction == "downlink":
                                 user_traffic[uid]["download"] += val
+                    elif len(parts) >= 4 and parts[0] == "inbound" and parts[2] == "traffic":
+                        tag = parts[1]
+                        direction = parts[3]
+                        nid = None
+                        if tag.startswith("inbound-"):
+                            try:
+                                nid = int(tag.split("-")[1])
+                            except ValueError:
+                                pass
+                        if nid is not None:
+                            if nid not in node_traffic:
+                                node_traffic[nid] = {"node_id": nid, "upload": 0, "download": 0}
+                            if direction == "uplink":
+                                node_traffic[nid]["upload"] += val
+                            elif direction == "downlink":
+                                node_traffic[nid]["download"] += val
                 if user_traffic:
                     user_stats = list(user_traffic.values())
+                node_stats = list(node_traffic.values()) if node_traffic else []
         except Exception:
             pass
 
@@ -964,7 +982,8 @@ def sync_step(server, token, last_hash):
         "realm_running": 1 if realm_running else 0,
         "realm_version": "Realm 2.9.6" if realm_installed else "",
         "log": xray_log,
-        "user_stats": user_stats
+        "user_stats": user_stats,
+        "node_stats": node_stats
     }).encode("utf-8")
     
     post_req = urllib.request.Request(
@@ -1063,12 +1082,26 @@ def init_db():
             ("relay_port", "INTEGER DEFAULT 0"),
             ("remote_host", "TEXT DEFAULT ''"),
             ("remote_port", "INTEGER DEFAULT 0"),
-            ("target_node_id", "INTEGER DEFAULT 0")
+            ("target_node_id", "INTEGER DEFAULT 0"),
+            ("upload_bytes", "INTEGER DEFAULT 0"),
+            ("download_bytes", "INTEGER DEFAULT 0"),
+            ("last_check_status", "TEXT DEFAULT ''"),
+            ("last_check_latency", "INTEGER DEFAULT 0"),
+            ("last_check_time", "INTEGER DEFAULT 0"),
+            ("last_check_error", "TEXT DEFAULT ''")
         ]:
             try:
                 conn.execute(f"ALTER TABLE proxy_node ADD COLUMN {col_name} {col_type}")
             except Exception:
                 pass
+
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS proxy_traffic_hourly (
+            time_bucket INTEGER NOT NULL PRIMARY KEY,
+            upload_bytes INTEGER DEFAULT 0,
+            download_bytes INTEGER DEFAULT 0
+        )
+        """)
 
         # Multi-core tracking columns for node_proxy_status
         for col_name, col_type in [
@@ -1951,6 +1984,9 @@ def traffic_collector_loop():
                         data = json.loads(res.stdout)
                         stats = data.get("stat") or []
                         user_traffic = {}
+                        node_traffic = {}
+                        tot_up = 0
+                        tot_down = 0
                         for item in stats:
                             name = item.get("name", "")
                             val = int(item.get("value", 0))
@@ -1974,10 +2010,28 @@ def traffic_collector_loop():
                                         user_traffic[uid] = {"up": 0, "down": 0}
                                     if direction == "uplink":
                                         user_traffic[uid]["up"] += val
+                                        tot_up += val
                                     elif direction == "downlink":
                                         user_traffic[uid]["down"] += val
+                                        tot_down += val
+                            elif len(parts) >= 4 and parts[0] == "inbound" and parts[2] == "traffic":
+                                tag = parts[1]
+                                direction = parts[3]
+                                nid = None
+                                if tag.startswith("inbound-"):
+                                    try:
+                                        nid = int(tag.split("-")[1])
+                                    except ValueError:
+                                        pass
+                                if nid is not None:
+                                    if nid not in node_traffic:
+                                        node_traffic[nid] = {"up": 0, "down": 0}
+                                    if direction == "uplink":
+                                        node_traffic[nid]["up"] += val
+                                    elif direction == "downlink":
+                                        node_traffic[nid]["down"] += val
                         
-                        if user_traffic:
+                        if user_traffic or node_traffic:
                             conn = get_db()
                             with conn:
                                 for uid, tf in user_traffic.items():
@@ -1986,6 +2040,21 @@ def traffic_collector_loop():
                                         SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
                                         WHERE id = ?
                                     """, (tf["up"], tf["down"], uid))
+                                for nid, tf in node_traffic.items():
+                                    conn.execute("""
+                                        UPDATE proxy_node
+                                        SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                                        WHERE id = ?
+                                    """, (tf["up"], tf["down"], nid))
+                                if tot_up > 0 or tot_down > 0:
+                                    tb = (int(time.time()) // 3600) * 3600
+                                    conn.execute("""
+                                        INSERT INTO proxy_traffic_hourly (time_bucket, upload_bytes, download_bytes)
+                                        VALUES (?, ?, ?)
+                                        ON CONFLICT(time_bucket) DO UPDATE SET
+                                            upload_bytes = upload_bytes + excluded.upload_bytes,
+                                            download_bytes = download_bytes + excluded.download_bytes
+                                    """, (tb, tot_up, tot_down))
                             conn.close()
                     except Exception as e:
                         pass
@@ -2316,6 +2385,234 @@ def test_node_connectivity(node):
 
     return True, f"TCP 端口连通正常 (延迟 ~{tcp_ms}ms)", tcp_ms
 
+def check_all_nodes_health_parallel():
+    """并发执行所有启用节点的真实端到端连通性握手测试，并将状态写回 SQLite"""
+    conn = get_db()
+    cur = conn.execute("SELECT * FROM proxy_node WHERE enabled = 1")
+    nodes = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    
+    if not nodes:
+        return []
+
+    import concurrent.futures
+    results = []
+    def check_single(n):
+        try:
+            ok, msg, ms = test_node_connectivity(n)
+            return {
+                "id": n["id"],
+                "name": n["name"],
+                "protocol": n["protocol"],
+                "port": n["port"],
+                "server_name": n.get("server_name") or "本机",
+                "ok": ok,
+                "latency_ms": ms if ok else 0,
+                "error": msg if not ok else "",
+                "time": int(time.time())
+            }
+        except Exception as e:
+            return {
+                "id": n["id"],
+                "name": n["name"],
+                "protocol": n["protocol"],
+                "port": n["port"],
+                "server_name": n.get("server_name") or "本机",
+                "ok": False,
+                "latency_ms": 0,
+                "error": str(e),
+                "time": int(time.time())
+            }
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(nodes), 8)) as executor:
+        futures = [executor.submit(check_single, n) for n in nodes]
+        for f in concurrent.futures.as_completed(futures):
+            try:
+                results.append(f.result())
+            except Exception:
+                pass
+
+    conn = get_db()
+    with conn:
+        for res in results:
+            conn.execute("""
+                UPDATE proxy_node
+                SET last_check_status = ?, last_check_latency = ?, last_check_time = ?, last_check_error = ?
+                WHERE id = ?
+            """, (
+                "ok" if res["ok"] else "fail",
+                res["latency_ms"],
+                res["time"],
+                res["error"],
+                res["id"]
+            ))
+    conn.close()
+    return results
+
+def node_health_checker_loop():
+    """后台轻量静默巡检所有代理节点连通性 (每 10 分钟一次)"""
+    time.sleep(15)
+    while True:
+        try:
+            check_all_nodes_health_parallel()
+        except Exception:
+            pass
+        time.sleep(600)
+
+def telegram_bot_command_loop():
+    """Telegram Bot 双向交互式运维指令处理器 (长轮询 getUpdates)"""
+    time.sleep(10)
+    last_update_id = 0
+    while True:
+        try:
+            token = get_setting("notify_telegram_token", "").strip()
+            admin_chat_id = (get_setting("notify_telegram_chat", "") or get_setting("backup_tg_chat", "")).strip()
+            if not token or not admin_chat_id:
+                time.sleep(30)
+                continue
+
+            url = f"https://api.telegram.org/bot{token}/getUpdates"
+            params = {"timeout": 20, "offset": last_update_id + 1}
+            req = urllib.request.Request(
+                f"{url}?{urllib.parse.urlencode(params)}",
+                headers={"User-Agent": "ProxyProbe-Bot/2.5"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            
+            if not data.get("ok"):
+                time.sleep(10)
+                continue
+
+            updates = data.get("result", [])
+            for upd in updates:
+                uid = upd.get("update_id", 0)
+                if uid > last_update_id:
+                    last_update_id = uid
+
+                msg = upd.get("message") or upd.get("edited_message")
+                if not msg:
+                    continue
+
+                chat = msg.get("chat", {})
+                chat_id = str(chat.get("id", ""))
+                text = (msg.get("text") or "").strip()
+                if not text:
+                    continue
+
+                # 鉴权：严格校验发送者必须是后台配置的管理员 Chat ID
+                if str(chat_id) != str(admin_chat_id):
+                    continue
+
+                # 指令路由解析
+                cmd = text.split()[0].lower()
+                if cmd in ("/start", "/help", "帮助", "menu"):
+                    reply = (
+                        "🤖 <b>ProxyProbe 智能运维机器人已就绪</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        "💡 <b>支持的交互式运维指令：</b>\n"
+                        "• <code>/status</code> 或 <code>状态</code> - 全网大盘与服务器概览\n"
+                        "• <code>/test</code> 或 <code>测试</code> - 触发全节点真实握手巡检\n"
+                        "• <code>/backup</code> 或 <code>备份</code> - 立即备份数据库并发回文件\n"
+                        "• <code>/nodes</code> 或 <code>节点</code> - 查看当前所有节点延迟\n"
+                        "• <code>/help</code> 或 <code>帮助</code> - 查看本指令菜单\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        "🔒 <i>管理员权限已验证，随时听候调度。</i>"
+                    )
+                    send_telegram_msg(token, chat_id, reply)
+
+                elif cmd in ("/status", "状态", "/info"):
+                    conn = get_db()
+                    cur_srv = conn.execute("SELECT COUNT(*) FROM node")
+                    total_srv = cur_srv.fetchone()[0]
+                    cur_online_srv = conn.execute("SELECT COUNT(*) FROM node WHERE last_seen > ?", (int(time.time()) - 75,))
+                    online_srv = cur_online_srv.fetchone()[0]
+                    cur_node = conn.execute("SELECT COUNT(*), SUM(upload_bytes), SUM(download_bytes) FROM proxy_node WHERE enabled = 1")
+                    row_node = cur_node.fetchone()
+                    total_nodes = row_node[0] or 0
+                    total_up = row_node[1] or 0
+                    total_down = row_node[2] or 0
+                    cur_healthy = conn.execute("SELECT COUNT(*) FROM proxy_node WHERE enabled = 1 AND last_check_status = 'ok'")
+                    healthy_nodes = cur_healthy.fetchone()[0]
+                    cur_users = conn.execute("SELECT COUNT(*) FROM proxy_user WHERE enabled = 1")
+                    active_users = cur_users.fetchone()[0]
+                    conn.close()
+
+                    def fmt(b):
+                        if b >= 1073741824: return f"{b/1073741824:.2f} GB"
+                        if b >= 1048576: return f"{b/1048576:.2f} MB"
+                        return f"{b/1024:.1f} KB"
+
+                    health_rate = (healthy_nodes / total_nodes * 100) if total_nodes > 0 else 100
+                    now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                    reply = (
+                        f"📊 <b>[ProxyProbe 实时全网大盘]</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🖥️ <b>服务器在线:</b> <code>{online_srv} / {total_srv}</code> 台\n"
+                        f"🌐 <b>节点连通率:</b> <code>{healthy_nodes} / {total_nodes}</code> ({health_rate:.1f}%)\n"
+                        f"👥 <b>有效用户数:</b> <code>{active_users}</code> 人\n"
+                        f"📈 <b>全网总上行:</b> <code>{fmt(total_up)}</code>\n"
+                        f"📉 <b>全网总下行:</b> <code>{fmt(total_down)}</code>\n"
+                        f"📦 <b>总消耗吞吐:</b> <code>{fmt(total_up + total_down)}</code>\n"
+                        f"📅 <b>报送时间:</b> {now_str}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"💡 <i>发送 <code>/test</code> 可立即复测所有节点连通性</i>"
+                    )
+                    send_telegram_msg(token, chat_id, reply)
+
+                elif cmd in ("/test", "测试", "/check"):
+                    send_telegram_msg(token, chat_id, "⚡ <b>正在对全网代理节点发起端到端真实握手巡检，请稍候...</b>")
+                    results = check_all_nodes_health_parallel()
+                    passed = [r for r in results if r["ok"]]
+                    failed = [r for r in results if not r["ok"]]
+                    avg_lat = int(sum(r["latency_ms"] for r in passed) / len(passed)) if passed else 0
+                    
+                    rep_lines = [
+                        f"🏁 <b>[全网巡检完成] 连通率: {len(passed)}/{len(results)} (均延: {avg_lat}ms)</b>",
+                        "━━━━━━━━━━━━━━━━━━━━"
+                    ]
+                    if failed:
+                        rep_lines.append("🔴 <b>异常节点列表:</b>")
+                        for f in failed:
+                            rep_lines.append(f"• <b>{f['name']}</b> ({f['protocol']}:{f['port']}) ➜ <i>{f['error']}</i>")
+                        rep_lines.append("")
+                    if passed:
+                        rep_lines.append("🟢 <b>正常节点排布 (RTT):</b>")
+                        for p in passed[:10]:
+                            rep_lines.append(f"• {p['name']} ➜ <code>{p['latency_ms']} ms</code>")
+                        if len(passed) > 10:
+                            rep_lines.append(f"• <i>...等其余 {len(passed) - 10} 个节点均正常</i>")
+                    rep_lines.append("━━━━━━━━━━━━━━━━━━━━")
+                    send_telegram_msg(token, chat_id, "\n".join(rep_lines))
+
+                elif cmd in ("/backup", "备份"):
+                    send_telegram_msg(token, chat_id, "📦 <b>正在打包当前 SQLite 核心数据库快照并上传...</b>")
+                    try:
+                        ok, msg, sz = perform_telegram_backup(custom_chat_id=chat_id)
+                        if not ok:
+                            send_telegram_msg(token, chat_id, f"❌ 备份执行失败: {msg}")
+                    except Exception as e:
+                        send_telegram_msg(token, chat_id, f"❌ 备份异常: {str(e)}")
+
+                elif cmd in ("/nodes", "节点"):
+                    conn = get_db()
+                    cur = conn.execute("SELECT name, protocol, port, server_name, last_check_status, last_check_latency FROM proxy_node WHERE enabled = 1")
+                    rows = cur.fetchall()
+                    conn.close()
+                    if not rows:
+                        send_telegram_msg(token, chat_id, "暂无活跃代理节点。")
+                    else:
+                        lines = ["📋 <b>全网活跃节点清单与感知状态:</b>", "━━━━━━━━━━━━━━━━━━━━"]
+                        for r in rows:
+                            st_icon = "🟢" if r[4] == "ok" else ("🔴" if r[4] == "fail" else "⚪")
+                            lat = f"<code>{r[5]}ms</code>" if r[4] == "ok" else "异常/未测"
+                            lines.append(f"{st_icon} <b>{r[0]}</b> [{r[1]}] 端口:<code>{r[2]}</code> ({r[3]}) ➜ {lat}")
+                        lines.append("━━━━━━━━━━━━━━━━━━━━")
+                        send_telegram_msg(token, chat_id, "\n".join(lines))
+
+        except Exception:
+            time.sleep(5)
+
 def format_node_link(node, user=None, server_country_map=None):
     try:
         proto = node.get("protocol") or ""
@@ -2523,7 +2820,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.7"
+CURRENT_VERSION = "v2.5.8"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -4427,6 +4724,157 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": ok, "message": msg, "latency_ms": ms})
             return
 
+        if path == "/api/proxy/dashboard/overview":
+            if not check_auth(self.headers):
+                self.send_json({"ok": False, "error": "Unauthorized"}, 401)
+                return
+            conn = get_db()
+            conn.row_factory = sqlite3.Row
+            # 1. Server counts
+            cur_srv = conn.execute("SELECT id, name, ip, last_seen FROM node")
+            servers = [dict(r) for r in cur_srv.fetchall()]
+            now = int(time.time())
+            online_servers = sum(1 for s in servers if s.get("last_seen", 0) > (now - 75))
+            
+            # 2. Nodes
+            cur_node = conn.execute("""
+                SELECT id, server_id, server_name, name, protocol, port, enabled,
+                       upload_bytes, download_bytes, last_check_status, last_check_latency,
+                       last_check_time, last_check_error
+                FROM proxy_node
+            """)
+            nodes = [dict(r) for r in cur_node.fetchall()]
+            active_nodes = [n for n in nodes if n.get("enabled", 1) == 1]
+            healthy_nodes = sum(1 for n in active_nodes if n.get("last_check_status") == "ok")
+            unhealthy_nodes = sum(1 for n in active_nodes if n.get("last_check_status") == "fail")
+            
+            # Calculate node ranking
+            node_ranking = []
+            total_node_traffic = 0
+            for n in active_nodes:
+                up = n.get("upload_bytes") or 0
+                down = n.get("download_bytes") or 0
+                tot = up + down
+                total_node_traffic += tot
+                node_ranking.append({
+                    "id": n["id"],
+                    "name": n["name"],
+                    "server_name": n.get("server_name") or "本机",
+                    "protocol": n["protocol"],
+                    "port": n["port"],
+                    "upload_bytes": up,
+                    "download_bytes": down,
+                    "total_bytes": tot,
+                    "last_check_status": n.get("last_check_status") or "",
+                    "last_check_latency": n.get("last_check_latency") or 0,
+                    "last_check_time": n.get("last_check_time") or 0,
+                    "last_check_error": n.get("last_check_error") or ""
+                })
+            node_ranking.sort(key=lambda x: x["total_bytes"], reverse=True)
+            for nr in node_ranking:
+                nr["percentage"] = round((nr["total_bytes"] / total_node_traffic * 100), 1) if total_node_traffic > 0 else 0.0
+
+            # 3. Protocol distribution
+            proto_map = {}
+            for n in active_nodes:
+                p = n.get("protocol") or "other"
+                proto_map[p] = proto_map.get(p, 0) + 1
+            proto_dist = []
+            for p, cnt in proto_map.items():
+                proto_dist.append({
+                    "protocol": p,
+                    "count": cnt,
+                    "percentage": round(cnt / len(active_nodes) * 100, 1) if active_nodes else 0.0
+                })
+            proto_dist.sort(key=lambda x: x["count"], reverse=True)
+
+            # 4. User ranking
+            cur_users = conn.execute("""
+                SELECT id, username, upload_bytes, download_bytes, traffic_limit_bytes, expires_at, enabled
+                FROM proxy_user
+            """)
+            users = [dict(r) for r in cur_users.fetchall()]
+            user_ranking = []
+            total_user_traffic = 0
+            for u in users:
+                up = u.get("upload_bytes") or 0
+                down = u.get("download_bytes") or 0
+                tot = up + down
+                total_user_traffic += tot
+                limit = u.get("traffic_limit_bytes") or 0
+                pct = round(tot / limit * 100, 1) if limit > 0 else 0.0
+                user_ranking.append({
+                    "id": u["id"],
+                    "username": u["username"],
+                    "upload_bytes": up,
+                    "download_bytes": down,
+                    "total_bytes": tot,
+                    "traffic_limit_bytes": limit,
+                    "percentage": pct,
+                    "expires_at": u.get("expires_at") or 0,
+                    "enabled": u.get("enabled", 1)
+                })
+            user_ranking.sort(key=lambda x: x["total_bytes"], reverse=True)
+
+            # 5. Average latency
+            tested = [n for n in active_nodes if n.get("last_check_status") == "ok" and (n.get("last_check_latency") or 0) > 0]
+            avg_lat = round(sum(n["last_check_latency"] for n in tested) / len(tested), 1) if tested else 0
+            best_node = min(tested, key=lambda x: x["last_check_latency"]) if tested else None
+
+            # 6. Hourly traffic for last 24h
+            cur_hourly = conn.execute("""
+                SELECT time_bucket, upload_bytes, download_bytes
+                FROM proxy_traffic_hourly
+                WHERE time_bucket >= ?
+                ORDER BY time_bucket ASC
+            """, (now - 86400,))
+            hourly_map = {r["time_bucket"]: (r["upload_bytes"], r["download_bytes"]) for r in cur_hourly.fetchall()}
+            
+            hourly_traffic = []
+            cur_slot = (now // 3600) * 3600
+            for i in range(23, -1, -1):
+                slot_time = cur_slot - i * 3600
+                up, down = hourly_map.get(slot_time, (0, 0))
+                time_label = time.strftime("%H:00", time.localtime(slot_time))
+                hourly_traffic.append({
+                    "timestamp": slot_time,
+                    "time": time_label,
+                    "upload": up,
+                    "download": down,
+                    "total": up + down
+                })
+
+            tg_token = get_setting("notify_telegram_token", "").strip()
+            tg_chat = (get_setting("notify_telegram_chat", "") or get_setting("backup_tg_chat", "")).strip()
+            tg_ready = bool(tg_token and tg_chat)
+
+            conn.close()
+
+            self.send_json({
+                "ok": True,
+                "summary": {
+                    "total_servers": len(servers),
+                    "online_servers": online_servers,
+                    "total_nodes": len(active_nodes),
+                    "healthy_nodes": healthy_nodes,
+                    "unhealthy_nodes": unhealthy_nodes,
+                    "total_users": len(users),
+                    "active_users": sum(1 for u in users if u.get("enabled", 1) == 1),
+                    "total_upload_bytes": sum(n.get("upload_bytes") or 0 for n in active_nodes),
+                    "total_download_bytes": sum(n.get("download_bytes") or 0 for n in active_nodes),
+                    "total_traffic_bytes": total_node_traffic,
+                    "avg_latency_ms": avg_lat,
+                    "best_node": best_node["name"] if best_node else None,
+                    "best_latency_ms": best_node["last_check_latency"] if best_node else 0,
+                    "tg_bot_active": tg_ready
+                },
+                "node_ranking": node_ranking,
+                "user_ranking": user_ranking[:8],
+                "protocol_distribution": proto_dist,
+                "hourly_traffic": hourly_traffic
+            })
+            return
+
         if path == "/api/proxy/unlock/config":
             enabled, custom = get_unlock_config()
             show_badges = get_setting("unlock_show_badges", "1") == "1"
@@ -4997,6 +5445,32 @@ class ProxyHandler(BaseHTTPRequestHandler):
                                 SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
                                 WHERE id = ?
                             """, (up, down, uid))
+            node_stats = req.get("node_stats", [])
+            if node_stats:
+                with conn:
+                    tb = (int(time.time()) // 3600) * 3600
+                    tot_up = 0
+                    tot_down = 0
+                    for st in node_stats:
+                        nid = st.get("node_id")
+                        up = int(st.get("upload") or 0)
+                        down = int(st.get("download") or 0)
+                        if nid and (up > 0 or down > 0):
+                            conn.execute("""
+                                UPDATE proxy_node
+                                SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                                WHERE id = ?
+                            """, (up, down, nid))
+                            tot_up += up
+                            tot_down += down
+                    if tot_up > 0 or tot_down > 0:
+                        conn.execute("""
+                            INSERT INTO proxy_traffic_hourly (time_bucket, upload_bytes, download_bytes)
+                            VALUES (?, ?, ?)
+                            ON CONFLICT(time_bucket) DO UPDATE SET
+                                upload_bytes = upload_bytes + excluded.upload_bytes,
+                                download_bytes = download_bytes + excluded.download_bytes
+                        """, (tb, tot_up, tot_down))
             conn.close()
             self.send_json({"ok": True})
             return
@@ -5340,6 +5814,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             conn.close()
             apply_all_configs()
             self.send_json({"ok": True, "message": "用户信息已更新"})
+            return
+
+        if path == "/api/proxy/dashboard/check-health":
+            if not check_auth(self.headers):
+                self.send_json({"ok": False, "error": "Unauthorized"}, 401)
+                return
+            results = check_all_nodes_health_parallel()
+            self.send_json({"ok": True, "results": results})
             return
 
         if path.startswith("/api/proxy/core/"):
@@ -5693,6 +6175,10 @@ if __name__ == "__main__":
     t_backup.start()
     t_alert = threading.Thread(target=telegram_node_alert_loop, daemon=True)
     t_alert.start()
+    t_health = threading.Thread(target=node_health_checker_loop, daemon=True)
+    t_health.start()
+    t_tg_cmd = threading.Thread(target=telegram_bot_command_loop, daemon=True)
+    t_tg_cmd.start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), ProxyHandler)
     print(f"ProxyManager daemon listening on 127.0.0.1:{PORT}")
     server.serve_forever()

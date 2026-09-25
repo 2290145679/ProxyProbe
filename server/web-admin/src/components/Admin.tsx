@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { Bell, CalendarClock, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users } from "lucide-react"
+import { BarChart3, Bell, CalendarClock, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
+import { ProxyDashboard } from "./ProxyDashboard"
 import { ProxyNodes } from "./ProxyNodes"
 import { ProxyUsers } from "./ProxyUsers"
 import { ProxyRules } from "./ProxyRules"
@@ -2797,6 +2798,7 @@ function Data({ go }: { go?: (to: string) => void }) {
 // Each area is its own route rather than a tab, so a page can be linked to and a
 // reload returns to the same section.
 const ADMIN_SECTIONS = [
+  { path: "/admin/overview", label: "监控大盘", icon: BarChart3 },
   { path: "/admin/nodes", label: "服务器", icon: Server },
   { path: "/admin/proxy", label: "代理协议", icon: Globe },
   { path: "/admin/users", label: "用户管理", icon: Users },
@@ -2852,7 +2854,7 @@ export function Admin({
           <div className="flex items-center justify-between">
             <span>ProxyProbe</span>
             <span className="font-mono text-primary/70 font-medium">
-              {updateInfo?.current_version || "v2.5.4"}
+              {updateInfo?.current_version || "v2.5.7"}
             </span>
           </div>
 
@@ -2880,7 +2882,9 @@ export function Admin({
       </nav>
 
       <div className="min-w-0 flex-1">
-        {path === "/admin/proxy" ? (
+        {path === "/admin/overview" ? (
+          <ProxyDashboard onNavigate={go} />
+        ) : path === "/admin/proxy" ? (
           <ProxyNodes nodes={nodes} />
         ) : path === "/admin/users" ? (
           <ProxyUsers />
