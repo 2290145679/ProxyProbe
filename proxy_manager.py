@@ -32,6 +32,21 @@ SINGBOX_CERT = "/etc/sing-box/cert.pem"
 SINGBOX_KEY = "/etc/sing-box/key.pem"
 REALM_BIN = "/usr/local/bin/realm"
 REALM_CONFIG = "/etc/realm/config.json"
+
+def ensure_server_cert():
+    if not os.path.exists(SINGBOX_CERT) or not os.path.exists(SINGBOX_KEY):
+        try:
+            os.makedirs(os.path.dirname(SINGBOX_CERT), exist_ok=True)
+            subprocess.run([
+                "openssl", "req", "-x509", "-nodes", "-newkey", "ec",
+                "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                "-keyout", SINGBOX_KEY, "-out", SINGBOX_CERT,
+                "-subj", "/CN=bing.com", "-days", "36500",
+                "-addext", "subjectAltName=DNS:bing.com"
+            ], capture_output=True)
+        except Exception:
+            pass
+
 PORT = int(os.environ.get("PROXY_MANAGER_PORT", 28090))
 for _i, _arg in enumerate(sys.argv):
     if _arg == "--port" and _i + 1 < len(sys.argv):
@@ -2080,7 +2095,7 @@ def test_node_connectivity(node):
             except Exception as e:
                 return False, f"UDP 连接异常: {e}", 0
 
-    # 1. TCP 端口连通性检测
+    # 1. TCP 端口快速连通性检测
     t0 = time.time()
     try:
         s = socket.socket(sock_family, socket.SOCK_STREAM)
@@ -2092,12 +2107,181 @@ def test_node_connectivity(node):
         return False, f"TCP 连接异常: {e}", 0
 
     if res != 0:
-        return False, f"TCP 端口 {port} 无法连通 (超时或拒绝连接)。若是 NAT 服务器请确认端口是否在服务商映射范围内；若是常规 VPS 请确认云服务商安全组已放行入站", 0
+        return False, f"TCP 端口 {port} 无法连通 (超时或拒绝连接)。若是 NAT 服务器请确认端口映射；若是常规 VPS 请确认安全组已放行入站", 0
 
-    # 2. VLESS Reality 握手与真实流量测试
+    # 2. 真实协议握手与代理隧道流量测试
+    # 2.1 SOCKS5 直接由 curl 测试握手认证
+    if proto == "socks5":
+        uname = (node.get("username") or "").strip()
+        pwd = (node.get("password") or "").strip()
+        proxy_url = f"socks5h://{quote(uname)}:{quote(pwd)}@{host}:{port}" if uname else f"socks5h://{host}:{port}"
+        t0 = time.time()
+        try:
+            curl_res = subprocess.run([
+                "curl", "-x", proxy_url,
+                "https://www.cloudflare.com", "-I", "-m", "4"
+            ], capture_output=True, text=True)
+            ms = max(1, int((time.time() - t0) * 1000))
+            if "HTTP/" in curl_res.stdout:
+                return True, f"连通正常，SOCKS5 握手成功 (延迟 ~{ms}ms)", ms
+            else:
+                err = curl_res.stderr.strip() or "代理响应异常"
+                return False, f"TCP 端口已通，但 SOCKS5 握手认证失败: {err}", tcp_ms
+        except Exception as e:
+            return False, f"SOCKS5 测试执行异常: {e}", tcp_ms
+
+    # 2.2 Xray 真实客户端握手测试 (vless_reality, vless_reality_xhttp, trojan, ss2022, vmess_ws, vless_ws)
+    if not os.path.exists(XRAY_BIN):
+        return True, f"TCP 端口连通正常 (延迟 ~{tcp_ms}ms)", tcp_ms
+
+    test_port = random.randint(18200, 19999)
+    outbound = None
+
     if proto == "vless_reality":
-        test_port = random.randint(18000, 19999)
-        test_client_cfg = {
+        pbk = node.get("public_key") or ""
+        sid = node.get("short_id") or ""
+        sni = node.get("sni") or "www.apple.com"
+        flow = node.get("flow") or "xtls-rprx-vision"
+        outbound = {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": host,
+                    "port": port,
+                    "users": [{
+                        "id": node.get("uuid"),
+                        "flow": flow,
+                        "encryption": "none"
+                    }]
+                }]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": False,
+                    "fingerprint": "chrome",
+                    "serverName": sni,
+                    "publicKey": pbk,
+                    "shortId": sid,
+                    "spiderX": "/"
+                }
+            }
+        }
+    elif proto == "vless_reality_xhttp":
+        pbk = node.get("public_key") or ""
+        sid = node.get("short_id") or ""
+        sni = node.get("sni") or "www.apple.com"
+        xpath = node.get("ws_path") or "/xhttp"
+        outbound = {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": host,
+                    "port": port,
+                    "users": [{
+                        "id": node.get("uuid"),
+                        "encryption": "none"
+                    }]
+                }]
+            },
+            "streamSettings": {
+                "network": "xhttp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": False,
+                    "fingerprint": "chrome",
+                    "serverName": sni,
+                    "publicKey": pbk,
+                    "shortId": sid,
+                    "spiderX": "/"
+                },
+                "xhttpSettings": {
+                    "path": xpath,
+                    "mode": "auto"
+                }
+            }
+        }
+    elif proto == "trojan":
+        pwd = node.get("password") or ""
+        sni = node.get("sni") or "bing.com"
+        tls_settings = { "serverName": sni }
+        if os.path.exists(SINGBOX_CERT):
+            tls_settings["certificates"] = [{
+                "certificateFile": SINGBOX_CERT,
+                "usage": "verify"
+            }]
+        outbound = {
+            "protocol": "trojan",
+            "settings": {
+                "servers": [{
+                    "address": host,
+                    "port": port,
+                    "password": pwd
+                }]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": tls_settings
+            }
+        }
+    elif proto == "ss2022":
+        method = node.get("method") or "2022-blake3-aes-128-gcm"
+        pwd = node.get("password") or ""
+        outbound = {
+            "protocol": "shadowsocks",
+            "settings": {
+                "servers": [{
+                    "address": host,
+                    "port": port,
+                    "method": method,
+                    "password": pwd
+                }]
+            }
+        }
+    elif proto == "vmess_ws":
+        ws_path = node.get("ws_path") or "/vmess-ws"
+        outbound = {
+            "protocol": "vmess",
+            "settings": {
+                "vnext": [{
+                    "address": host,
+                    "port": port,
+                    "users": [{
+                        "id": node.get("uuid"),
+                        "alterId": 0,
+                        "security": "auto"
+                    }]
+                }]
+            },
+            "streamSettings": {
+                "network": "ws",
+                "wsSettings": { "path": ws_path }
+            }
+        }
+    elif proto == "vless_ws":
+        ws_path = node.get("ws_path") or "/ws-proxy"
+        outbound = {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": host,
+                    "port": port,
+                    "users": [{
+                        "id": node.get("uuid"),
+                        "encryption": "none"
+                    }]
+                }]
+            },
+            "streamSettings": {
+                "network": "ws",
+                "wsSettings": { "path": ws_path }
+            }
+        }
+
+    if outbound:
+        cfg = {
             "log": { "loglevel": "warning" },
             "inbounds": [{
                 "port": test_port,
@@ -2105,57 +2289,32 @@ def test_node_connectivity(node):
                 "protocol": "socks",
                 "settings": { "auth": "noauth" }
             }],
-            "outbounds": [{
-                "protocol": "vless",
-                "settings": {
-                    "vnext": [{
-                        "address": host,
-                        "port": port,
-                        "users": [{
-                            "id": node.get("uuid"),
-                            "flow": node.get("flow") or "xtls-rprx-vision",
-                            "encryption": "none"
-                        }]
-                    }]
-                },
-                "streamSettings": {
-                    "network": "tcp",
-                    "security": "reality",
-                    "realitySettings": {
-                        "show": False,
-                        "fingerprint": "chrome",
-                        "serverName": node.get("sni") or "www.apple.com",
-                        "publicKey": node.get("public_key"),
-                        "shortId": node.get("short_id") or "",
-                        "spiderX": "/"
-                    }
-                }
-            }]
+            "outbounds": [outbound]
         }
         cfg_path = f"/tmp/test_client_{node_id}_{int(time.time())}.json"
         try:
             with open(cfg_path, "w") as f:
-                json.dump(test_client_cfg, f)
+                json.dump(cfg, f)
             p = subprocess.Popen([XRAY_BIN, "run", "-config", cfg_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             time.sleep(1.0)
-
+            t0 = time.time()
             curl_res = subprocess.run([
                 "curl", "-x", f"socks5h://127.0.0.1:{test_port}",
-                "https://www.cloudflare.com", "-I", "-m", "5"
+                "https://www.cloudflare.com", "-I", "-m", "4"
             ], capture_output=True, text=True)
+            ms = max(1, int((time.time() - t0) * 1000))
             p.kill()
             if os.path.exists(cfg_path):
                 os.remove(cfg_path)
-
-            if "HTTP/" in curl_res.stdout or "200" in curl_res.stdout:
-                return True, f"连通正常，Reality 握手成功 (延迟 ~{tcp_ms}ms)", tcp_ms
+            if "HTTP/" in curl_res.stdout:
+                return True, f"连通正常，{proto} 握手成功 (延迟 ~{ms}ms)", ms
             else:
-                err = curl_res.stderr.strip() or "握手超时"
-                return False, f"TCP 端口已通，但 Reality 握手未完成: {err}", tcp_ms
+                err = curl_res.stderr.strip() or "代理握手超时"
+                return False, f"TCP 端口已通，但 {proto} 代理握手失败: {err}", tcp_ms
         except Exception as e:
             return False, f"握手测试执行异常: {e}", tcp_ms
-    else:
-        return True, f"TCP 端口连通正常 (延迟 ~{tcp_ms}ms)", tcp_ms
+
+    return True, f"TCP 端口连通正常 (延迟 ~{tcp_ms}ms)", tcp_ms
 
 def format_node_link(node, user=None, server_country_map=None):
     try:
@@ -2165,7 +2324,8 @@ def format_node_link(node, user=None, server_country_map=None):
         if user:
             u_uuid, u_pwd = ensure_user_credentials(user)
             uuid_str = u_uuid
-            pwd_str = u_pwd
+            if proto != "ss2022":
+                pwd_str = u_pwd
 
         host = node.get("server_host") or "189.24.108.25"
         uri_host = format_host_for_uri(host)
@@ -2216,7 +2376,8 @@ def format_node_link(node, user=None, server_country_map=None):
             return f"vmess://{b64_json}"
 
         elif proto == "trojan":
-            return f"trojan://{pwd_str}@{uri_host}:{port}?security=none&headerType=none&type=tcp#{name}"
+            sni = node.get("sni") or "bing.com"
+            return f"trojan://{pwd_str}@{uri_host}:{port}?security=tls&headerType=none&type=tcp&sni={sni}&allowInsecure=1#{name}"
 
         elif proto == "ss2022":
             method = node.get("method") or "2022-blake3-aes-128-gcm"
@@ -2362,7 +2523,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.6"
+CURRENT_VERSION = "v2.5.7"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -2735,7 +2896,8 @@ rules:
         if user:
             u_uuid, u_pwd = ensure_user_credentials(user)
             uuid_str = u_uuid
-            pwd_str = u_pwd
+            if proto != "ss2022":
+                pwd_str = u_pwd
 
         name = format_node_display_name(n, server_country_map)
         base_name = name
@@ -2836,7 +2998,7 @@ rules:
                 "skip-cert-verify": True
             }
         elif proto == "trojan":
-            sni = n.get("sni") or host
+            sni = n.get("sni") or "bing.com"
             proxy_item = {
                 "name": name,
                 "type": "trojan",
@@ -3008,7 +3170,8 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
         if user:
             u_uuid, u_pwd = ensure_user_credentials(user)
             uuid_str = u_uuid
-            pwd_str = u_pwd
+            if proto != "ss2022":
+                pwd_str = u_pwd
 
         tag = format_node_display_name(n, server_country_map)
         base_tag = tag
@@ -3078,7 +3241,7 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
                 }
             }
         elif proto == "trojan":
-            sni = n.get("sni") or host
+            sni = n.get("sni") or "bing.com"
             node_item = {
                 "type": "trojan",
                 "tag": tag,
@@ -3087,7 +3250,8 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
                 "password": pwd_str,
                 "tls": {
                     "enabled": True,
-                    "server_name": sni
+                    "server_name": sni,
+                    "insecure": True
                 }
             }
         elif proto == "ss2022":
@@ -3100,6 +3264,20 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
                 "method": method,
                 "password": pwd_str
             }
+        elif proto == "socks5":
+            uname = (n.get("username") or "").strip()
+            if user:
+                uname = user.get("username", "")
+            s_item = {
+                "type": "socks",
+                "tag": tag,
+                "server": host,
+                "server_port": port
+            }
+            if uname:
+                s_item["username"] = uname
+                s_item["password"] = pwd_str
+            node_item = s_item
         elif proto == "vless_ws":
             ws_path = n.get("ws_path") or "/ws-proxy"
             node_item = {
@@ -3338,6 +3516,7 @@ def build_inbounds_for_nodes(nodes, active_users=None):
                 "sniffing": { "enabled": True, "destOverride": ["http", "tls", "quic"] }
             })
         elif proto == "trojan":
+            ensure_server_cert()
             trojan_clients = []
             seen_pwds = set()
             if pwd and pwd not in seen_pwds:
@@ -3349,6 +3528,18 @@ def build_inbounds_for_nodes(nodes, active_users=None):
                     seen_pwds.add(u_pwd)
                     trojan_clients.append({ "password": u_pwd, "email": f"user_{u['id']}" })
 
+            stream_settings = {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "certificates": [
+                        {
+                            "certificateFile": SINGBOX_CERT,
+                            "keyFile": SINGBOX_KEY
+                        }
+                    ]
+                }
+            }
             inbounds.append({
                 "tag": tag,
                 "listen": "::",
@@ -3357,7 +3548,7 @@ def build_inbounds_for_nodes(nodes, active_users=None):
                 "settings": {
                     "clients": trojan_clients
                 },
-                "streamSettings": { "network": "tcp", "security": "none" }
+                "streamSettings": stream_settings
             })
         elif proto == "ss2022":
             method = n.get("method") or "2022-blake3-aes-128-gcm"
@@ -3374,12 +3565,21 @@ def build_inbounds_for_nodes(nodes, active_users=None):
             })
         elif proto == "socks5":
             uname = (n.get("username") or "").strip()
+            accounts = []
+            if uname:
+                accounts.append({ "user": uname, "pass": pwd })
+            for u in active_users:
+                _, u_pwd = ensure_user_credentials(u)
+                u_name = (u.get("username") or "").strip()
+                if u_name and not any(a["user"] == u_name for a in accounts):
+                    accounts.append({ "user": u_name, "pass": u_pwd })
+
             settings = {
-                "auth": "password" if uname else "noauth",
+                "auth": "password" if accounts else "noauth",
                 "udp": True
             }
-            if uname:
-                settings["accounts"] = [{ "user": uname, "pass": pwd }]
+            if accounts:
+                settings["accounts"] = accounts
             inbounds.append({
                 "tag": tag,
                 "listen": "::",
@@ -4709,7 +4909,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             elif proto == "trojan":
                 pwd = gen_random_password(16)
                 res.update({
-                    "password": pwd
+                    "password": pwd,
+                    "sni": "bing.com"
                 })
             elif proto in ("hysteria2", "tuic"):
                 pwd = gen_random_password(16)
@@ -5298,7 +5499,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             
             uuid = req.get("uuid") or gen_uuid()
             flow = req.get("flow", "xtls-rprx-vision")
-            sni = req.get("sni", "www.apple.com")
+            sni = req.get("sni") or ("bing.com" if protocol in ("trojan", "hysteria2", "tuic") else "www.apple.com")
             dest = req.get("dest", f"{sni}:443")
             priv_key = req.get("private_key", "")
             pub_key = req.get("public_key", "")
@@ -5359,6 +5560,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "sni": sni,
                 "public_key": pub_key,
                 "short_id": short_id,
+                "ws_path": ws_path,
+                "method": method,
+                "password": password,
+                "username": username,
                 "is_relay": is_relay,
                 "remote_host": remote_host,
                 "remote_port": remote_port
