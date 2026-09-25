@@ -1084,7 +1084,13 @@ function ServerDisplaySettingsDialog({
 
 function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () => void; site: string; refusal: string }) {
   const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false)
-  const [licenseStatus, setLicenseStatus] = useState<any>(null)
+  const [licenseStatus, setLicenseStatus] = useState<any>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("proxyprobe_license_status") || "null")
+    } catch {
+      return null
+    }
+  })
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Node | null>(null)
   const [billing, setBilling] = useState<Node | null>(null)
@@ -1101,7 +1107,10 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
   useEffect(() => {
     fetch("/api/proxy/license/status")
       .then(r => r.json())
-      .then(d => setLicenseStatus(d))
+      .then(d => {
+        setLicenseStatus(d)
+        try { localStorage.setItem("proxyprobe_license_status", JSON.stringify(d)) } catch {}
+      })
       .catch(() => {})
   }, [])
   const byId = new Map(nodes.map((node) => [node.id, node]))
@@ -1215,11 +1224,13 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
               toast.error("当前商业许可证已被授权中心吊销冻结，禁止添加服务器！")
               return
             }
-            const maxServers = licenseStatus?.max_servers || licenseStatus?.limits?.max_servers || (licenseStatus?.active ? 5 : 1)
-            if (nodes.length >= maxServers) {
-              const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
-              toast.error(`当前【${planName}】配额已满（上限 ${maxServers} 台服务器，当前已建 ${nodes.length} 台），添加更多服务器请升级商业套餐！`)
-              return
+            if (licenseStatus) {
+              const maxServers = licenseStatus?.max_servers || licenseStatus?.limits?.max_servers || (licenseStatus?.active ? 5 : 1)
+              if (nodes.length >= maxServers) {
+                const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
+                toast.error(`当前【${planName}】配额已满（上限 ${maxServers} 台服务器，当前已建 ${nodes.length} 台），添加更多服务器请升级商业套餐！`)
+                return
+              }
             }
             setRegistering(true)
           }}
@@ -1233,11 +1244,13 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
               toast.error("当前商业许可证已被授权中心吊销冻结，禁止添加服务器！")
               return
             }
-            const maxServers = licenseStatus?.max_servers || licenseStatus?.limits?.max_servers || (licenseStatus?.active ? 5 : 1)
-            if (nodes.length >= maxServers) {
-              const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
-              toast.error(`当前【${planName}】配额已满（上限 ${maxServers} 台服务器，当前已建 ${nodes.length} 台），添加更多服务器请前往左侧【商业授权】升级商业套餐！`)
-              return
+            if (licenseStatus) {
+              const maxServers = licenseStatus?.max_servers || licenseStatus?.limits?.max_servers || (licenseStatus?.active ? 5 : 1)
+              if (nodes.length >= maxServers) {
+                const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
+                toast.error(`当前【${planName}】配额已满（上限 ${maxServers} 台服务器，当前已建 ${nodes.length} 台），添加更多服务器请前往左侧【商业授权】升级商业套餐！`)
+                return
+              }
             }
             setCreating(true)
           }}

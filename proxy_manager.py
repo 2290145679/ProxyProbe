@@ -2844,7 +2844,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.10"
+CURRENT_VERSION = "v2.5.11"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -4379,19 +4379,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_text(PROXY_AGENT_PY, 200, "text/x-python; charset=utf-8")
             return
 
-        # License status API
+        # License status API (极速零阻塞本地读取，消除前端套餐加载延迟与误判)
         if path == "/api/proxy/license/status":
-            # 若距离上次在线同步超过 20 秒，或带有 ?sync=1，立即进行一次快速在线心跳打卡与黑名单同步
             sync_param = qs.get("sync", ["0"])[0]
-            conn_chk = get_db()
-            cur = conn_chk.cursor()
-            cur.execute("SELECT value FROM setting WHERE key='license_last_sync_ts'")
-            row = cur.fetchone()
-            last_sync_ts = int(row[0]) if row and row[0] and row[0].isdigit() else 0
-            conn_chk.close()
-
-            if sync_param == "1" or (time.time() - last_sync_ts) > 20:
-                license_guard.ping_auth_server(DB_PATH)
+            # 仅当显式传入 ?sync=1 时在后台异步线程中触发一次远程心跳打卡，绝不在主 HTTP 响应线程中同步阻塞网络
+            if sync_param == "1":
+                threading.Thread(target=license_guard.ping_auth_server, args=(DB_PATH,), daemon=True).start()
 
             conn = get_db()
             lic_status = license_guard.get_current_license_status(conn)

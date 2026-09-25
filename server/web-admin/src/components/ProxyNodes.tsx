@@ -281,7 +281,13 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [qrDataUrl, setQrDataUrl] = useState<string>("")
 
   // Create Modal State
-  const [licenseStatus, setLicenseStatus] = useState<any>(null)
+  const [licenseStatus, setLicenseStatus] = useState<any>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("proxyprobe_license_status") || "null")
+    } catch {
+      return null
+    }
+  })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [includeServerPrefix, setIncludeServerPrefix] = useState<boolean>(false)
@@ -543,6 +549,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         if (licRes.ok) {
           const licData = await licRes.json()
           setLicenseStatus(licData)
+          try { localStorage.setItem("proxyprobe_license_status", JSON.stringify(licData)) } catch {}
         }
       } catch {}
     } catch (e: any) {
@@ -637,11 +644,13 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       return
     }
 
-    const maxNodes = licenseStatus?.max_nodes || licenseStatus?.limits?.max_nodes || (licenseStatus?.active ? 12 : 1)
-    if (proxyNodes.length >= maxNodes) {
-      const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
-      toast.error(`当前【${planName}】配额已满（上限 ${maxNodes} 个节点，当前已建 ${proxyNodes.length} 个），添加更多节点请升级商业套餐！`)
-      return
+    if (licenseStatus) {
+      const maxNodes = licenseStatus?.max_nodes || licenseStatus?.limits?.max_nodes || (licenseStatus?.active ? 12 : 1)
+      if (proxyNodes.length >= maxNodes) {
+        const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
+        toast.error(`当前【${planName}】配额已满（上限 ${maxNodes} 个节点，当前已建 ${proxyNodes.length} 个），添加更多节点请升级商业套餐！`)
+        return
+      }
     }
 
     if (serverOptions.length === 0) {

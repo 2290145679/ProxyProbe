@@ -65,7 +65,13 @@ export function ProxyUsers() {
   const [loading, setLoading] = useState(false)
 
   // 新建用户弹窗状态
-  const [licenseStatus, setLicenseStatus] = useState<any>(null)
+  const [licenseStatus, setLicenseStatus] = useState<any>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("proxyprobe_license_status") || "null")
+    } catch {
+      return null
+    }
+  })
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState({
     username: "",
@@ -100,6 +106,7 @@ export function ProxyUsers() {
         if (licRes.ok) {
           const licData = await licRes.json()
           setLicenseStatus(licData)
+          try { localStorage.setItem("proxyprobe_license_status", JSON.stringify(licData)) } catch {}
         }
       } catch {}
     } catch {
@@ -298,12 +305,14 @@ export function ProxyUsers() {
                 toast.error("当前商业许可证已被授权中心吊销冻结，禁止创建新用户！")
                 return
               }
-              const nonAdminCount = users.filter(u => !u.is_admin).length
-              const maxUsers = licenseStatus?.max_users || licenseStatus?.limits?.max_users || (licenseStatus?.active ? 12 : 1)
-              if (nonAdminCount >= maxUsers) {
-                const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
-                toast.error(`当前【${planName}】配额已满（上限 ${maxUsers} 个用户，当前已建 ${nonAdminCount} 个），添加更多用户请升级商业套餐！`)
-                return
+              if (licenseStatus) {
+                const nonAdminCount = users.filter(u => !u.is_admin).length
+                const maxUsers = licenseStatus?.max_users || licenseStatus?.limits?.max_users || (licenseStatus?.active ? 12 : 1)
+                if (nonAdminCount >= maxUsers) {
+                  const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
+                  toast.error(`当前【${planName}】配额已满（上限 ${maxUsers} 个用户，当前已建 ${nonAdminCount} 个），添加更多用户请升级商业套餐！`)
+                  return
+                }
               }
               setCreateOpen(true)
             }} 

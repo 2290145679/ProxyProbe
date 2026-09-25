@@ -47,19 +47,25 @@ const PLAN_BADGES: Record<string, { label: string; color: string }> = {
 }
 
 export function LicenseManager() {
-  const [status, setStatus] = useState<LicenseStatus | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [status, setStatus] = useState<LicenseStatus | null>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("proxyprobe_license_status") || "null")
+    } catch {
+      return null
+    }
+  })
+  const [loading, setLoading] = useState(false)
   const [activating, setActivating] = useState(false)
   const [licenseInput, setLicenseInput] = useState("")
   const [copied, setCopied] = useState(false)
 
   const fetchStatus = async () => {
     try {
-      setLoading(true)
       const res = await fetch("/api/proxy/license/status")
       if (res.ok) {
         const data = await res.json()
         setStatus(data)
+        try { localStorage.setItem("proxyprobe_license_status", JSON.stringify(data)) } catch {}
       } else {
         toast.error("获取许可证状态失败")
       }

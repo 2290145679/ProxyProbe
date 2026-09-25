@@ -273,37 +273,48 @@ export function NodeCard({
 
           {/* 探针卡片直观展示已配置的网络延迟 */}
           {latencies && latencies.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-2.5 text-xs">
-              <span className="text-[11px] font-medium text-muted-foreground inline-flex items-center gap-1 shrink-0">
-                <svg className="size-3 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                延迟:
-              </span>
-              {latencies.map((p) => {
-                const isTimeout = p.latency === null || p.latency === undefined || p.latency < 0
-                const lat = p.latency ?? 0
-                const tone = isTimeout
-                  ? "text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/30"
-                  : lat <= 80
-                    ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
-                    : lat <= 180
-                      ? "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30"
-                      : "text-orange-600 dark:text-orange-400 bg-orange-500/10 border-orange-500/30"
-                return (
-                  <span
-                    key={p.task_id}
-                    className={cn(
-                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-mono leading-none",
-                      tone
-                    )}
-                    title={isTimeout ? `${p.name}: 超时` : `${p.name}: ${lat}ms`}
-                  >
-                    <span className="font-sans font-normal opacity-80">{p.name}</span>
-                    <span className="font-bold">{isTimeout ? "超时" : `${lat}ms`}</span>
-                  </span>
-                )
-              })}
+            <div className="mt-3 border-t pt-2 text-xs">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] sm:text-[11px] font-medium text-muted-foreground inline-flex items-center gap-0.5 shrink-0">
+                  <svg className="size-3 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  延迟
+                </span>
+                <div
+                  className={cn(
+                    "flex-1 min-w-0 gap-1",
+                    latencies.length <= 3
+                      ? "grid grid-flow-col auto-cols-fr"
+                      : "grid grid-cols-2 sm:grid-cols-4"
+                  )}
+                >
+                  {latencies.map((p) => {
+                    const isTimeout = p.latency === null || p.latency === undefined || p.latency < 0
+                    const lat = p.latency ?? 0
+                    const tone = isTimeout
+                      ? "text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/30"
+                      : lat <= 80
+                        ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                        : lat <= 180
+                          ? "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30"
+                          : "text-orange-600 dark:text-orange-400 bg-orange-500/10 border-orange-500/30"
+                    return (
+                      <span
+                        key={p.task_id}
+                        className={cn(
+                          "inline-flex items-center justify-center gap-0.5 px-1 py-0.5 rounded border text-[10px] sm:text-[11px] font-mono leading-none min-w-0 overflow-hidden whitespace-nowrap",
+                          tone
+                        )}
+                        title={isTimeout ? `${p.name}: 超时` : `${p.name}: ${lat}ms`}
+                      >
+                        <span className="font-sans font-normal opacity-85 truncate">{p.name}</span>
+                        <span className="font-bold shrink-0">{isTimeout ? "超时" : `${lat}ms`}</span>
+                      </span>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           )}
         </>
