@@ -946,7 +946,143 @@ function InstallDialog({ node, site, onClose, onRotated }: {
   )
 }
 
+function ServerDisplaySettingsDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [settings, setSettings] = useState({
+    public_show_price: false,
+    public_show_expiry: false,
+    public_show_traffic_limit: false,
+  })
+
+  useEffect(() => {
+    if (open) {
+      setLoading(true)
+      fetch("/api/proxy/settings/display")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.ok) {
+            setSettings({
+              public_show_price: !!data.public_show_price,
+              public_show_expiry: !!data.public_show_expiry,
+              public_show_traffic_limit: !!data.public_show_traffic_limit,
+            })
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false))
+    }
+  }, [open])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/settings/display", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        toast.success(data.message || "展示权限设置已保存")
+        onOpenChange(false)
+      } else {
+        toast.error(data.message || "保存失败")
+      }
+    } catch {
+      toast.error("网络请求失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[94vw] max-w-md sm:max-w-lg p-4 sm:p-6 space-y-4 max-h-[88vh] overflow-y-auto overflow-x-hidden">
+        <DialogHeader>
+          <DialogTitle className="text-base sm:text-lg font-bold flex items-center gap-2">
+            <Shield className="size-5 text-primary" />
+            <span>服务器公开信息展示权限</span>
+          </DialogTitle>
+          <DialogDescription className="text-xs leading-relaxed">
+            选择向公开探针主页（未登录访客）展示哪些数据。关闭后相应数据仅管理员登录后可见，保护服务器成本与配额隐私。
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 pt-1">
+          <div className="flex items-start justify-between gap-3 p-3 rounded-lg border bg-muted/20">
+            <div className="space-y-0.5 min-w-0 pr-2">
+              <span className="text-xs font-semibold flex items-center gap-1.5">
+                💰 展示服务器续费价格
+              </span>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                开启后，公开状态页节点详情中将显示购买价格与周期；关闭后对未登录访客完全隐藏。
+              </p>
+            </div>
+            <Switch
+              checked={settings.public_show_price}
+              onCheckedChange={(v) => setSettings((s) => ({ ...s, public_show_price: v }))}
+              disabled={loading || saving}
+              className="shrink-0 mt-0.5"
+            />
+          </div>
+
+          <div className="flex items-start justify-between gap-3 p-3 rounded-lg border bg-muted/20">
+            <div className="space-y-0.5 min-w-0 pr-2">
+              <span className="text-xs font-semibold flex items-center gap-1.5">
+                ⏳ 展示到期与剩余时间
+              </span>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                开启后，公开卡片展示到期时间与剩余可用天数；关闭后仅管理员登录可见。
+              </p>
+            </div>
+            <Switch
+              checked={settings.public_show_expiry}
+              onCheckedChange={(v) => setSettings((s) => ({ ...s, public_show_expiry: v }))}
+              disabled={loading || saving}
+              className="shrink-0 mt-0.5"
+            />
+          </div>
+
+          <div className="flex items-start justify-between gap-3 p-3 rounded-lg border bg-muted/20">
+            <div className="space-y-0.5 min-w-0 pr-2">
+              <span className="text-xs font-semibold flex items-center gap-1.5">
+                📊 展示流量限额与剩余流量
+              </span>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                开启后，公开卡片展示月度限额与剩余比例；关闭后卡片仅显示已用流量（隐藏限额与剩余量）。
+              </p>
+            </div>
+            <Switch
+              checked={settings.public_show_traffic_limit}
+              onCheckedChange={(v) => setSettings((s) => ({ ...s, public_show_traffic_limit: v }))}
+              disabled={loading || saving}
+              className="shrink-0 mt-0.5"
+            />
+          </div>
+        </div>
+
+        <DialogFooter className="flex flex-row justify-end gap-2 pt-2">
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={saving} className="text-xs">
+            取消
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={loading || saving} className="text-xs">
+            {saving ? "保存中…" : "保存权限设置"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () => void; site: string; refusal: string }) {
+  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false)
   const [licenseStatus, setLicenseStatus] = useState<any>(null)
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Node | null>(null)
@@ -1047,6 +1183,16 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
       {refusal && <p className="text-sm text-muted-foreground">{refusal}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <NodeSearch className="mr-auto w-full sm:w-64" value={query} onChange={setQuery} />
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => setDisplaySettingsOpen(true)}
+          className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
+          title="服务器公开信息展示权限（访客视图控制）"
+          aria-label="服务器公开信息展示权限"
+        >
+          <Settings className="size-4" />
+        </Button>
         {/* An open window is visible from the list itself, so nobody has to
             remember they left one open. */}
         <Button 
@@ -1274,6 +1420,11 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
           )}
         </ConfirmDialog>
       )}
+
+      <ServerDisplaySettingsDialog
+        open={displaySettingsOpen}
+        onOpenChange={setDisplaySettingsOpen}
+      />
     </div>
   )
 }
@@ -1714,121 +1865,6 @@ function useSettings() {
   }
 }
 
-function ServerDisplaySettingsCard() {
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [settings, setSettings] = useState({
-    public_show_price: false,
-    public_show_expiry: false,
-    public_show_traffic_limit: false,
-  })
-
-  useEffect(() => {
-    fetch("/api/proxy/settings/display")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.ok) {
-          setSettings({
-            public_show_price: !!data.public_show_price,
-            public_show_expiry: !!data.public_show_expiry,
-            public_show_traffic_limit: !!data.public_show_traffic_limit,
-          })
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      const res = await fetch("/api/proxy/settings/display", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      })
-      const data = await res.json()
-      if (data.ok) {
-        toast.success(data.message || "展示权限设置已保存")
-      } else {
-        toast.error(data.message || "保存失败")
-      }
-    } catch {
-      toast.error("网络请求失败")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Card className="gap-4 p-5">
-      <div className="space-y-1 border-b pb-3">
-        <h3 className="text-sm font-bold flex items-center gap-2">
-          <Shield className="size-4 text-primary" /> 服务器公开信息展示权限（访客视图控制）
-        </h3>
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          管理员在此自主选择向公开探针主页（未登录访客）展示哪些服务器数据。关闭后相应数据仅管理员在登录后可见，未登录访客无法查看，保护服务器成本与配额隐私。
-        </p>
-      </div>
-
-      <div className="space-y-3 pt-1">
-        <div className="flex items-start justify-between gap-4 p-3 rounded-lg border bg-muted/20">
-          <div className="space-y-0.5">
-            <span className="text-xs font-semibold flex items-center gap-1.5">
-              💰 展示服务器续费价格
-            </span>
-            <p className="text-[11px] text-muted-foreground leading-snug">
-              开启后，公开状态页节点详情中将显示服务器购买价格与计费周期；关闭后对未登录访客完全隐藏。
-            </p>
-          </div>
-          <Switch
-            checked={settings.public_show_price}
-            onCheckedChange={(v) => setSettings((s) => ({ ...s, public_show_price: v }))}
-            disabled={loading || saving}
-          />
-        </div>
-
-        <div className="flex items-start justify-between gap-4 p-3 rounded-lg border bg-muted/20">
-          <div className="space-y-0.5">
-            <span className="text-xs font-semibold flex items-center gap-1.5">
-              ⏳ 展示到期与剩余时间
-            </span>
-            <p className="text-[11px] text-muted-foreground leading-snug">
-              开启后，公开卡片与详情均展示服务器到期时间与剩余可用天数；关闭后仅管理员登录可见。
-            </p>
-          </div>
-          <Switch
-            checked={settings.public_show_expiry}
-            onCheckedChange={(v) => setSettings((s) => ({ ...s, public_show_expiry: v }))}
-            disabled={loading || saving}
-          />
-        </div>
-
-        <div className="flex items-start justify-between gap-4 p-3 rounded-lg border bg-muted/20">
-          <div className="space-y-0.5">
-            <span className="text-xs font-semibold flex items-center gap-1.5">
-              📊 展示流量限额与剩余流量
-            </span>
-            <p className="text-[11px] text-muted-foreground leading-snug">
-              开启后，公开卡片展示月度限额与剩余比例；关闭后卡片仅显示已用流量（隐藏限额与剩余量）。
-            </p>
-          </div>
-          <Switch
-            checked={settings.public_show_traffic_limit}
-            onCheckedChange={(v) => setSettings((s) => ({ ...s, public_show_traffic_limit: v }))}
-            disabled={loading || saving}
-          />
-        </div>
-      </div>
-
-      <div className="pt-2">
-        <Button size="sm" onClick={handleSave} disabled={loading || saving} className="text-xs">
-          {saving ? "保存中…" : "保存展示权限设置"}
-        </Button>
-      </div>
-    </Card>
-  )
-}
 
 function SettingsTab({
   updateInfo,
@@ -1850,7 +1886,7 @@ function SettingsTab({
               <Sparkles className="size-4 text-amber-500" /> 系统版本与在线更新
             </h3>
             <p className="text-xs text-muted-foreground">
-              当前版本：<code className="text-primary font-mono font-semibold">{updateInfo?.current_version || "v2.5.0"}</code>
+              当前版本：<code className="text-primary font-mono font-semibold">{updateInfo?.current_version || "v2.5.2"}</code>
               {updateInfo?.has_update ? (
                 <span className="ml-2 text-amber-600 dark:text-amber-400 font-semibold">
                   (🔥 发现最新版本 {updateInfo.latest_version})
@@ -1885,8 +1921,6 @@ function SettingsTab({
           系统支持全自动在线无损热升级（零停机、历史配置与数据库完全保留），亦可在 SSH 终端输入 <code>hhub upgrade</code> 快速完成更新。
         </p>
       </Card>
-
-      <ServerDisplaySettingsCard />
 
       <Card className="gap-4 p-5">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -2818,7 +2852,7 @@ export function Admin({
           <div className="flex items-center justify-between">
             <span>ProxyProbe</span>
             <span className="font-mono text-primary/70 font-medium">
-              {updateInfo?.current_version || "v2.5.0"}
+              {updateInfo?.current_version || "v2.5.2"}
             </span>
           </div>
 
