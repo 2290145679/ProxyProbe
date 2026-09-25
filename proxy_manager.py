@@ -303,10 +303,9 @@ if [ "$INSTALL_SINGBOX" = "1" ]; then
   fi
 
   if [ ! -f /etc/sing-box/cert.pem ] || [ ! -f /etc/sing-box/key.pem ]; then
-    openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-      -keyout /etc/sing-box/key.pem -out /etc/sing-box/cert.pem \
-      -subj "/CN=bing.com" -days 36500 \
-      -addext "subjectAltName=DNS:bing.com" 2>/dev/null || true
+    openssl ecparam -name prime256v1 -genkey -noout -out /etc/sing-box/key.pem 2>/dev/null || true
+    openssl req -new -x509 -key /etc/sing-box/key.pem -out /etc/sing-box/cert.pem -days 36500 -subj "/CN=bing.com" -addext "subjectAltName=DNS:bing.com" 2>/dev/null || \
+    openssl req -new -x509 -key /etc/sing-box/key.pem -out /etc/sing-box/cert.pem -days 36500 -subj "/CN=bing.com" 2>/dev/null || true
   fi
 
   if [ ! -f /etc/sing-box/config.json ]; then
@@ -453,7 +452,9 @@ echo "  后续在管理后台为此服务器创建的所有节点，将自动实
 echo "=================================================="
 """
 
-PROXY_AGENT_PY = """import hashlib
+PROXY_AGENT_PY = """#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import hashlib
 import json
 import os
 import shutil
@@ -481,9 +482,9 @@ def read_env_file():
                 for line in f:
                     line = line.strip()
                     if line.startswith("MONITOR_SERVER="):
-                        srv = line.split("=", 1)[1].strip("'\"")
+                        srv = line.split("=", 1)[1].strip("'").strip('"')
                     elif line.startswith("MONITOR_TOKEN="):
-                        tok = line.split("=", 1)[1].strip("'\"")
+                        tok = line.split("=", 1)[1].strip("'").strip('"')
         except Exception:
             pass
     return srv.rstrip("/"), tok
@@ -2820,7 +2821,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.8"
+CURRENT_VERSION = "v2.5.9"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -5224,11 +5225,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     r_inst = local_realm_installed
                     r_run = local_realm_running
                 else:
-                    x_inst = bool(st.get("xray_installed") or st.get("version"))
+                    x_inst = bool(st.get("xray_installed") or (is_online and st.get("version")))
                     x_run = is_online and bool(st.get("xray_running", st.get("status") == "running"))
-                    sb_inst = bool(st.get("singbox_installed"))
+                    sb_inst = bool(st.get("singbox_installed") or (is_online and st.get("singbox_version")))
                     sb_run = is_online and bool(st.get("singbox_running"))
-                    r_inst = bool(st.get("realm_installed"))
+                    r_inst = bool(st.get("realm_installed") or (is_online and st.get("realm_version")))
                     r_run = is_online and bool(st.get("realm_running"))
 
                 servers.append({
@@ -5412,12 +5413,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             xray_log = req.get("log", "")
             xray_installed = int(req.get("xray_installed", 1 if version else 0))
             xray_running = int(req.get("xray_running", 1 if status == "running" else 0))
-            singbox_installed = int(req.get("singbox_installed", 0))
-            singbox_running = int(req.get("singbox_running", 0))
             singbox_version = req.get("singbox_version", "")
-            realm_installed = int(req.get("realm_installed", 0))
-            realm_running = int(req.get("realm_running", 0))
+            singbox_installed = int(req.get("singbox_installed", 1 if singbox_version else 0))
+            singbox_running = int(req.get("singbox_running", 0))
             realm_version = req.get("realm_version", "")
+            realm_installed = int(req.get("realm_installed", 1 if realm_version else 0))
+            realm_running = int(req.get("realm_running", 0))
             now = int(time.time())
             with conn:
                 conn.execute("""
@@ -5951,10 +5952,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         return
                 else:
                     conn_chk = get_db()
-                    cur_st = conn_chk.execute("SELECT realm_installed FROM node_proxy_status WHERE node_id = ?", (server_id,))
+                    cur_st = conn_chk.execute("SELECT realm_installed, realm_version FROM node_proxy_status WHERE node_id = ?", (server_id,))
                     s_stat = cur_st.fetchone()
                     conn_chk.close()
-                    if not s_stat or not s_stat["realm_installed"]:
+                    r_ok = bool(s_stat and (s_stat["realm_installed"] or s_stat["realm_version"]))
+                    if not r_ok:
                         self.send_json({"ok": False, "message": f"服务器 [{server_name}] 尚未安装 Realm 端口转发核心！"}, 400)
                         return
             else:
@@ -5969,13 +5971,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         return
                 else:
                     conn_chk = get_db()
-                    cur_st = conn_chk.execute("SELECT xray_installed, singbox_installed FROM node_proxy_status WHERE node_id = ?", (server_id,))
+                    cur_st = conn_chk.execute("SELECT xray_installed, singbox_installed, version, singbox_version FROM node_proxy_status WHERE node_id = ?", (server_id,))
                     s_stat = cur_st.fetchone()
                     conn_chk.close()
-                    if needs_singbox and (not s_stat or not s_stat["singbox_installed"]):
+                    x_ok = bool(s_stat and (s_stat["xray_installed"] or s_stat["version"]))
+                    sb_ok = bool(s_stat and (s_stat["singbox_installed"] or s_stat["singbox_version"]))
+                    if needs_singbox and not sb_ok:
                         self.send_json({"ok": False, "message": f"服务器 [{server_name}] 尚未安装 Sing-box 核心，无法创建此类协议节点！"}, 400)
                         return
-                    if not needs_singbox and (not s_stat or not s_stat["xray_installed"]):
+                    if not needs_singbox and not x_ok:
                         self.send_json({"ok": False, "message": f"服务器 [{server_name}] 尚未安装 Xray-Core 核心，无法创建此类协议节点！"}, 400)
                         return
             
