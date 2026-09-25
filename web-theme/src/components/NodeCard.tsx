@@ -145,7 +145,39 @@ export type LatencyProbe = {
   task_id: number
   name: string
   latency: number | null
+  loss_rate?: number
+  history?: (number | null)[]
   ts?: number
+}
+
+function getTaskDotColor(name: string, index: number): string {
+  if (name.includes("联通")) return "bg-rose-500"
+  if (name.includes("电信")) return "bg-blue-500"
+  if (name.includes("移动")) return "bg-emerald-500"
+  const fallbacks = [
+    "bg-sky-500",
+    "bg-amber-500",
+    "bg-purple-500",
+    "bg-teal-500",
+    "bg-indigo-500",
+    "bg-pink-500",
+  ]
+  return fallbacks[index % fallbacks.length]
+}
+
+function getLatencyBarColor(val: number | null | undefined): string {
+  if (val === null || val === undefined) return "bg-muted/40 dark:bg-muted/20"
+  if (val < 0) return "bg-rose-500"
+  if (val <= 80) return "bg-emerald-500"
+  if (val <= 150) return "bg-emerald-400"
+  if (val <= 250) return "bg-amber-400"
+  return "bg-rose-500"
+}
+
+function getLossBarColor(val: number | null | undefined): string {
+  if (val === null || val === undefined) return "bg-muted/40 dark:bg-muted/20"
+  if (val < 0) return "bg-rose-500"
+  return "bg-emerald-500"
 }
 
 export type VisibilitySettings = {
@@ -271,41 +303,136 @@ export function NodeCard({
             </span>
           </div>
 
-          {/* 探针卡片直观展示已配置的网络延迟 */}
-          {latencies && latencies.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-2.5 text-xs">
-              <span className="text-[11px] font-medium text-muted-foreground inline-flex items-center gap-1 shrink-0">
-                <svg className="size-3 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                延迟:
-              </span>
-              {latencies.map((p) => {
-                const isTimeout = p.latency === null || p.latency === undefined || p.latency < 0
-                const lat = p.latency ?? 0
-                const tone = isTimeout
-                  ? "text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/30"
-                  : lat <= 80
-                    ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
-                    : lat <= 180
-                      ? "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30"
-                      : "text-orange-600 dark:text-orange-400 bg-orange-500/10 border-orange-500/30"
-                return (
-                  <span
-                    key={p.task_id}
-                    className={cn(
-                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-mono leading-none",
-                      tone
-                    )}
-                    title={isTimeout ? `${p.name}: 超时` : `${p.name}: ${lat}ms`}
-                  >
-                    <span className="font-sans font-normal opacity-80">{p.name}</span>
-                    <span className="font-bold">{isTimeout ? "超时" : `${lat}ms`}</span>
-                  </span>
-                )
-              })}
-            </div>
-          )}
+          {/* 探针卡片直观展示已配置的网络延迟与丢包率 */}
+          {latencies && latencies.length > 0 && (() => {
+            const isThreeNets = latencies.some((l) => /联通|电信|移动/.test(l.name))
+            const subtitle = isThreeNets ? "三网" : "监控点"
+
+            return (
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:gap-4 border-t border-border/40 pt-2.5 text-xs">
+                {/* 延迟 */}
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center justify-between text-muted-foreground mb-1.5 leading-none">
+                    <span className="font-semibold text-foreground text-xs">延迟</span>
+                    <span className="text-[11px] text-muted-foreground/80">{subtitle}</span>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {latencies.map((p, idx) => {
+                      const hasData = typeof p.latency === "number"
+                      const isTimeout = typeof p.latency === "number" && p.latency < 0
+                      const lat = p.latency ?? 0
+                      const tone = !hasData
+                        ? "text-muted-foreground"
+                        : isTimeout
+                          ? "text-rose-600 dark:text-rose-400 font-bold"
+                          : lat <= 80
+                            ? "text-emerald-600 dark:text-emerald-400 font-bold"
+                            : lat <= 150
+                              ? "text-emerald-500 dark:text-emerald-400 font-bold"
+                              : lat <= 250
+                                ? "text-amber-600 dark:text-amber-400 font-bold"
+                                : "text-rose-600 dark:text-rose-400 font-bold"
+
+                      const paddedHistory = [
+                        ...Array(Math.max(0, 20 - (p.history?.length || 0))).fill(null),
+                        ...(p.history || []),
+                      ].slice(-20)
+
+                      return (
+                        <div key={p.task_id} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs leading-none">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className={cn("size-1.5 rounded-full shrink-0", getTaskDotColor(p.name, idx))} />
+                              <span className="truncate text-muted-foreground text-[11px]">{p.name}</span>
+                            </div>
+                            <span className={cn("font-mono text-[11px] shrink-0", tone)}>
+                              {!hasData ? "—" : isTimeout ? "超时" : `${lat} ms`}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-[2px] h-1.5 w-full">
+                            {paddedHistory.map((val, i) => (
+                              <div
+                                key={i}
+                                className={cn(
+                                  "h-full flex-1 rounded-[1px] transition-colors",
+                                  getLatencyBarColor(val)
+                                )}
+                                title={
+                                  val === null || val === undefined
+                                    ? "无数据"
+                                    : val < 0
+                                      ? "超时 / 丢包"
+                                      : `${val} ms`
+                                }
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* 丢包 */}
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center justify-between text-muted-foreground mb-1.5 leading-none">
+                    <span className="font-semibold text-foreground text-xs">丢包</span>
+                    <span className="text-[11px] text-muted-foreground/80">{subtitle}</span>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {latencies.map((p, idx) => {
+                      const hasData = typeof p.latency === "number" || typeof p.loss_rate === "number"
+                      const lossRate = p.loss_rate ?? 0
+                      const lossTone = !hasData
+                        ? "text-muted-foreground"
+                        : lossRate === 0
+                          ? "text-muted-foreground"
+                          : lossRate < 10
+                            ? "text-amber-600 dark:text-amber-400 font-bold"
+                            : "text-rose-600 dark:text-rose-400 font-bold"
+
+                      const paddedHistory = [
+                        ...Array(Math.max(0, 20 - (p.history?.length || 0))).fill(null),
+                        ...(p.history || []),
+                      ].slice(-20)
+
+                      return (
+                        <div key={p.task_id} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs leading-none">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className={cn("size-1.5 rounded-full shrink-0", getTaskDotColor(p.name, idx))} />
+                              <span className="truncate text-muted-foreground text-[11px]">{p.name}</span>
+                            </div>
+                            <span className={cn("font-mono text-[11px] shrink-0", lossTone)}>
+                              {!hasData ? "—" : `${lossRate.toFixed(1)}%`}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-[2px] h-1.5 w-full">
+                            {paddedHistory.map((val, i) => (
+                              <div
+                                key={i}
+                                className={cn(
+                                  "h-full flex-1 rounded-[1px] transition-colors",
+                                  getLossBarColor(val)
+                                )}
+                                title={
+                                  val === null || val === undefined
+                                    ? "无数据"
+                                    : val < 0
+                                      ? "丢包"
+                                      : `正常 (${val} ms)`
+                                }
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
         </>
       ) : (
         /* Never connected: nothing to plot, so the card stays short rather than

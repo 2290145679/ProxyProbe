@@ -1886,7 +1886,7 @@ function SettingsTab({
               <Sparkles className="size-4 text-amber-500" /> 系统版本与在线更新
             </h3>
             <p className="text-xs text-muted-foreground">
-              当前版本：<code className="text-primary font-mono font-semibold">{updateInfo?.current_version || "v2.5.2"}</code>
+              当前版本：<code className="text-primary font-mono font-semibold">{updateInfo?.current_version || "v2.5.3"}</code>
               {updateInfo?.has_update ? (
                 <span className="ml-2 text-amber-600 dark:text-amber-400 font-semibold">
                   (🔥 发现最新版本 {updateInfo.latest_version})
@@ -2852,7 +2852,7 @@ export function Admin({
           <div className="flex items-center justify-between">
             <span>ProxyProbe</span>
             <span className="font-mono text-primary/70 font-medium">
-              {updateInfo?.current_version || "v2.5.2"}
+              {updateInfo?.current_version || "v2.5.3"}
             </span>
           </div>
 

@@ -590,6 +590,22 @@ upgrade_system() {
         warn "前端资源下载跳过"
     fi
 
+    # 4.1 更新探针前台主题 web-theme dist（从 Release 库下载 tar.gz）
+    _THEME_DIST="/opt/monitor/data/themes/default/dist"
+    _TMP_THEME="/tmp/web-theme-dist-upgrade-$$.tar.gz"
+    if curl -fsSL "${RELEASE_BASE}/web-theme-dist.tar.gz" -o "$_TMP_THEME" 2>/dev/null; then
+        mkdir -p "$_THEME_DIST"
+        tar -xzf "$_TMP_THEME" -C "$_THEME_DIST" 2>/dev/null
+        if [ -d "$_THEME_DIST/dist" ] && [ -f "$_THEME_DIST/dist/index.html" ]; then
+            cp -rf "$_THEME_DIST/dist/"* "$_THEME_DIST/" 2>/dev/null || mv -f "$_THEME_DIST/dist/"* "$_THEME_DIST/" 2>/dev/null
+            rm -rf "$_THEME_DIST/dist"
+        fi
+        [ -f "$_THEME_DIST/index.html" ] && info "探针前台主题资源已更新完毕" || warn "探针主题资源解压失败"
+        rm -f "$_TMP_THEME"
+    else
+        rm -f "$_TMP_THEME"
+    fi
+
     # 5. 更新 monitor-hub 核心二进制
     info "正在更新 monitor-hub 探针核心二进制..."
     curl -fsSL "${RELEASE_BASE}/monitor-hub-linux-${ARCH_HUB}" \
