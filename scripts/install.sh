@@ -282,6 +282,7 @@ fi
 # node that cannot fetch the binary keeps running.
 if [ "$INIT" = openrc ]; then
 	rc-service monitor-agent stop 2>/dev/null || true
+	rc-service proxy-agent stop 2>/dev/null || true
 else
 	systemctl stop monitor-agent 2>/dev/null || true
 	systemctl stop proxy-agent 2>/dev/null || true
@@ -343,6 +344,7 @@ RC
 		[ "$INSTALL_REALM" = "1" ] && PROXY_ARGS="$PROXY_ARGS --realm"
 		[ "$INSTALL_REALM" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-realm"
 		curl -fsSL "${SERVER%/}/proxy-agent.sh" | bash -s -- --server "$SERVER" --token "$TOKEN" $PROXY_ARGS || true
+		rc-service proxy-agent restart 2>/dev/null || rc-service proxy-agent start 2>/dev/null || true
 	fi
 	exit 0
 fi

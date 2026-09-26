@@ -6,13 +6,13 @@
 export async function copyToClipboard(text: string): Promise<boolean> {
   if (!text) return false
 
-  // 1. 若处于安全上下文 (HTTPS 或 localhost)，优先使用原生现代 Clipboard API
-  if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
+  // 1. 若原生现代 Clipboard API 可用，优先尝试
+  if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
     try {
       await navigator.clipboard.writeText(text)
       return true
     } catch {
-      // 若因权限或其他原因失败，无缝降级到 fallback 机制
+      // 若因权限、非安全上下文 (HTTP) 或其他原因失败，无缝降级到 fallback 机制
     }
   }
 
@@ -21,27 +21,50 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     const textArea = document.createElement("textarea")
     textArea.value = text
 
-    // 固定定位并移除视觉干扰，防止移动端滚动跳跃
+    // 关键点：如果当前有弹窗/Modal/Dialog (如 Radix UI Dialog)，必须将 textarea 挂载到该弹窗内部，
+    // 否则 Radix 的 FocusScope (焦点陷阱) 会在 textArea.focus() 时立即将焦点抢回弹窗内部，
+    // 导致选区丢失，document.execCommand('copy') 虽返回 true 但实际剪贴板内容为空！
+    const activeEl = document.activeElement as HTMLElement | null
+    const container =
+      activeEl?.closest('[role="dialog"]') ||
+      document.querySelector('[role="dialog"]') ||
+      document.body
+
+    // 关键点：不要使用 left: -9999px 或 display: none，也不要加 readonly！
+    // 某些浏览器对负坐标离屏或只读的 textarea 会禁止选区复制。
+    // 使用 fixed 定位在当前视口左上角，高宽微小，微透明，阻止鼠标事件。
     textArea.style.position = "fixed"
     textArea.style.top = "0"
-    textArea.style.left = "-9999px"
-    textArea.style.width = "2em"
-    textArea.style.height = "2em"
+    textArea.style.left = "0"
+    textArea.style.width = "20px"
+    textArea.style.height = "20px"
     textArea.style.padding = "0"
     textArea.style.border = "none"
     textArea.style.outline = "none"
     textArea.style.boxShadow = "none"
     textArea.style.background = "transparent"
-    textArea.style.opacity = "0"
-    textArea.setAttribute("readonly", "")
+    textArea.style.opacity = "0.01"
+    textArea.style.zIndex = "999999"
+    textArea.style.pointerEvents = "none"
+    textArea.setAttribute("tabindex", "-1")
+    textArea.setAttribute("aria-hidden", "true")
 
-    document.body.appendChild(textArea)
-    textArea.focus()
+    container.appendChild(textArea)
+    textArea.focus({ preventScroll: true })
     textArea.select()
     textArea.setSelectionRange(0, text.length)
 
     const successful = document.execCommand("copy")
-    document.body.removeChild(textArea)
+    container.removeChild(textArea)
+
+    if (activeEl && typeof activeEl.focus === "function") {
+      try {
+        activeEl.focus({ preventScroll: true })
+      } catch {
+        // ignore
+      }
+    }
+
     return successful
   } catch (err) {
     console.error("[copyToClipboard fallback failed]", err)

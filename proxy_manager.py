@@ -175,6 +175,15 @@ if [ "$INSTALL_XRAY" -eq 0 ] && [ "$INSTALL_SINGBOX" -eq 0 ] && [ "$INSTALL_REAL
   exit 0
 fi
 
+INIT="systemd"
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  INIT="systemd"
+elif command -v rc-update >/dev/null 2>&1 || [ -f /sbin/openrc-run ] || [ -d /run/openrc ]; then
+  INIT="openrc"
+elif command -v systemctl >/dev/null 2>&1; then
+  INIT="systemd"
+fi
+
 # 1. 安装基础依赖 python3, curl, unzip, tar
 if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
   echo "[+] 正在安装系统基础依赖 (python3, curl, unzip, tar)..."
@@ -183,6 +192,7 @@ if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || 
   elif command -v yum >/dev/null 2>&1; then
     yum install -y python3 curl unzip tar iptables || true
   elif command -v apk >/dev/null 2>&1; then
+    apk update >/dev/null 2>&1 || true
     apk add python3 curl unzip tar iptables || true
   fi
 fi
@@ -226,7 +236,8 @@ if [ "$INSTALL_XRAY" = "1" ]; then
   fi
 
   # 规范化 Xray 系统服务单元
-  cat > /etc/systemd/system/xray.service << 'EOF'
+  if [ "$INIT" = "systemd" ]; then
+    cat > /etc/systemd/system/xray.service << 'EOF'
 [Unit]
 Description=Xray Service
 After=network.target nss-lookup.target
@@ -243,6 +254,25 @@ LimitNOFILE=1000000
 [Install]
 WantedBy=multi-user.target
 EOF
+  else
+    cat > /etc/init.d/xray << 'EOF'
+#!/sbin/openrc-run
+name="xray"
+description="Xray Service"
+command="/usr/local/bin/xray"
+command_args="run -config /etc/xray/config.json"
+command_background=true
+pidfile="/run/xray.pid"
+output_log="/var/log/xray/access.log"
+error_log="/var/log/xray/error.log"
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+    chmod +x /etc/init.d/xray
+  fi
 
   if [ ! -f /etc/xray/config.json ]; then
     cat > /etc/xray/config.json << 'EOF'
@@ -260,9 +290,14 @@ EOF
   fi
   ln -sf /etc/xray/config.json /usr/local/etc/xray/config.json 2>/dev/null || true
 
-  systemctl daemon-reload
-  systemctl enable xray
-  systemctl restart xray
+  if [ "$INIT" = "systemd" ]; then
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable xray 2>/dev/null || true
+    systemctl restart xray 2>/dev/null || true
+  else
+    rc-update add xray default 2>/dev/null || true
+    rc-service xray restart 2>/dev/null || rc-service xray start 2>/dev/null || true
+  fi
 else
   echo "[*] 根据选项：跳过 Xray-Core 核心安装"
 fi
@@ -318,7 +353,8 @@ if [ "$INSTALL_SINGBOX" = "1" ]; then
 EOF
   fi
 
-  cat > /etc/systemd/system/sing-box.service << 'EOF'
+  if [ "$INIT" = "systemd" ]; then
+    cat > /etc/systemd/system/sing-box.service << 'EOF'
 [Unit]
 Description=sing-box Service
 Documentation=https://sing-box.sagernet.org/
@@ -337,10 +373,31 @@ LimitNOFILE=1000000
 [Install]
 WantedBy=multi-user.target
 EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable sing-box 2>/dev/null || true
+    systemctl restart sing-box 2>/dev/null || true
+  else
+    cat > /etc/init.d/sing-box << 'EOF'
+#!/sbin/openrc-run
+name="sing-box"
+description="Sing-box Service"
+command="/usr/local/bin/sing-box"
+command_args="run -c /etc/sing-box/config.json"
+directory="/etc/sing-box"
+command_background=true
+pidfile="/run/sing-box.pid"
+output_log="/var/log/sing-box/access.log"
+error_log="/var/log/sing-box/error.log"
 
-  systemctl daemon-reload
-  systemctl enable sing-box
-  systemctl restart sing-box
+depend() {
+    need net
+    after firewall
+}
+EOF
+    chmod +x /etc/init.d/sing-box
+    rc-update add sing-box default 2>/dev/null || true
+    rc-service sing-box restart 2>/dev/null || rc-service sing-box start 2>/dev/null || true
+  fi
 else
   echo "[*] 根据选项：跳过 Sing-box 核心安装"
 fi
@@ -389,7 +446,8 @@ if [ "$INSTALL_REALM" = "1" ]; then
 EOF
   fi
 
-  cat > /etc/systemd/system/realm.service << 'EOF'
+  if [ "$INIT" = "systemd" ]; then
+    cat > /etc/systemd/system/realm.service << 'EOF'
 [Unit]
 Description=Realm Port Forwarding Service
 After=network.target
@@ -405,10 +463,28 @@ LimitNOFILE=1000000
 [Install]
 WantedBy=multi-user.target
 EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable realm 2>/dev/null || true
+    systemctl restart realm 2>/dev/null || true
+  else
+    cat > /etc/init.d/realm << 'EOF'
+#!/sbin/openrc-run
+name="realm"
+description="Realm Port Forwarding Service"
+command="/usr/local/bin/realm"
+command_args="-c /etc/realm/config.json"
+command_background=true
+pidfile="/run/realm.pid"
 
-  systemctl daemon-reload
-  systemctl enable realm
-  systemctl restart realm
+depend() {
+    need net
+    after firewall
+}
+EOF
+    chmod +x /etc/init.d/realm
+    rc-update add realm default 2>/dev/null || true
+    rc-service realm restart 2>/dev/null || rc-service realm start 2>/dev/null || true
+  fi
 else
   echo "[*] 根据选项：跳过 Realm 端口转发核心安装"
 fi
@@ -418,8 +494,10 @@ echo "[+] 正在拉取代理同步守护程序..."
 $CURL_OPTS "$HUB_SERVER/api/proxy/agent-client-script" -o /opt/monitor/proxy_agent.py 2>/dev/null || true
 chmod +x /opt/monitor/proxy_agent.py 2>/dev/null || true
 
-# 6. 配置 proxy-agent.service
-cat > /etc/systemd/system/proxy-agent.service << EOF
+# 6. 配置 proxy-agent 守护进程服务
+PY_BIN=$(command -v python3 || echo "/usr/bin/python3")
+if [ "$INIT" = "systemd" ]; then
+  cat > /etc/systemd/system/proxy-agent.service << EOF
 [Unit]
 Description=Monitor Proxy Agent Daemon
 After=network.target
@@ -428,7 +506,7 @@ After=network.target
 Type=simple
 User=root
 EnvironmentFile=-/opt/monitor/agent.env
-ExecStart=/usr/bin/python3 -u /opt/monitor/proxy_agent.py --server $HUB_SERVER --token $HUB_TOKEN
+ExecStart=$PY_BIN -u /opt/monitor/proxy_agent.py --server $HUB_SERVER --token $HUB_TOKEN
 Restart=always
 RestartSec=5
 
@@ -436,9 +514,30 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable proxy-agent.service
-systemctl restart proxy-agent.service
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable proxy-agent.service 2>/dev/null || true
+  systemctl restart proxy-agent.service 2>/dev/null || true
+else
+  cat > /etc/init.d/proxy-agent << EOF
+#!/sbin/openrc-run
+name="proxy-agent"
+description="Monitor Proxy Agent Daemon"
+command="$PY_BIN"
+command_args="-u /opt/monitor/proxy_agent.py --server $HUB_SERVER --token $HUB_TOKEN"
+command_background=true
+pidfile="/run/proxy-agent.pid"
+output_log="/var/log/proxy-agent.log"
+error_log="/var/log/proxy-agent.log"
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+  chmod +x /etc/init.d/proxy-agent
+  rc-update add proxy-agent default 2>/dev/null || true
+  rc-service proxy-agent restart 2>/dev/null || rc-service proxy-agent start 2>/dev/null || true
+fi
 
 echo ""
 echo "=================================================="
@@ -467,7 +566,7 @@ if [ "$INSTALL_REALM" = "1" ]; then
   fi
 fi
 if [ -f /opt/monitor/proxy_agent.py ]; then
-  echo "  - 守护进程: proxy-agent.service 已就绪并启动"
+  echo "  - 守护进程: proxy-agent 已就绪并启动"
 else
   echo "  - 守护进程: [警告] proxy_agent.py 拉取失败，请检查主控连接！"
 fi
@@ -495,6 +594,77 @@ SINGBOX_BIN = "/usr/local/bin/sing-box"
 SINGBOX_CONFIG = "/etc/sing-box/config.json"
 REALM_BIN = "/usr/local/bin/realm"
 REALM_CONFIG = "/etc/realm/config.json"
+
+def is_systemd():
+    return os.path.exists("/run/systemd/system") or (shutil.which("systemctl") is not None and os.path.exists("/etc/systemd"))
+
+def service_action(action, name):
+    if is_systemd():
+        if action in ("reload_restart", "restart"):
+            subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
+            subprocess.run(["systemctl", "restart", name], capture_output=True)
+        elif action == "start":
+            subprocess.run(["systemctl", "start", name], capture_output=True)
+        elif action == "stop":
+            subprocess.run(["systemctl", "stop", name], capture_output=True)
+        elif action == "enable":
+            subprocess.run(["systemctl", "enable", name], capture_output=True)
+    else:
+        if action in ("reload_restart", "restart"):
+            res = subprocess.run(["rc-service", name, "restart"], capture_output=True)
+            if res.returncode != 0:
+                subprocess.run(["rc-service", name, "start"], capture_output=True)
+        elif action == "start":
+            subprocess.run(["rc-service", name, "start"], capture_output=True)
+        elif action == "stop":
+            subprocess.run(["rc-service", name, "stop"], capture_output=True)
+        elif action == "enable":
+            subprocess.run(["rc-update", "add", name, "default"], capture_output=True)
+
+def service_is_active(name):
+    if is_systemd():
+        return subprocess.run(["systemctl", "is-active", "--quiet", name]).returncode == 0
+    else:
+        return subprocess.run(["rc-service", name, "status"], capture_output=True).returncode == 0
+
+def register_service_if_missing(name, exec_start, desc="", working_dir=""):
+    if is_systemd():
+        svc_path = f"/etc/systemd/system/{name}.service"
+        if not os.path.exists(svc_path):
+            lines = ["[Unit]", f"Description={desc or name}", "After=network.target nss-lookup.target", "", "[Service]", "Type=simple", "User=root"]
+            if working_dir:
+                lines.append(f"WorkingDirectory={working_dir}")
+            lines.extend([f"ExecStart={exec_start}", "Restart=always", "RestartSec=3", "LimitNPROC=10000", "LimitNOFILE=1000000", "", "[Install]", "WantedBy=multi-user.target", ""])
+            try:
+                with open(svc_path, "w", encoding="utf-8") as f:
+                    f.write("\\n".join(lines))
+                subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
+                subprocess.run(["systemctl", "enable", name], capture_output=True)
+            except Exception:
+                pass
+    else:
+        init_path = f"/etc/init.d/{name}"
+        if not os.path.exists(init_path):
+            parts = exec_start.split()
+            init_lines = [
+                "#!/sbin/openrc-run",
+                f'name="{name}"',
+                f'description="{desc or name}"',
+                f'command="{parts[0]}"',
+                f'command_args="{" ".join(parts[1:])}"',
+                "command_background=true",
+                f'pidfile="/run/{name}.pid"'
+            ]
+            if working_dir:
+                init_lines.append(f'directory="{working_dir}"')
+            init_lines.extend(["", "depend() {", "    need net", "    after firewall", "}", ""])
+            try:
+                with open(init_path, "w", encoding="utf-8") as f:
+                    f.write("\\n".join(init_lines))
+                os.chmod(init_path, 0o755)
+                subprocess.run(["rc-update", "add", name, "default"], capture_output=True)
+            except Exception:
+                pass
 
 def read_env_file():
     srv, tok = "", ""
@@ -612,28 +782,7 @@ def ensure_xray_installed(server):
                 shutil.copy(dp, os.path.join("/usr/local/share/xray", dat))
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        svc = "\\n".join([
-            "[Unit]",
-            "Description=Xray Service",
-            "After=network.target nss-lookup.target",
-            "",
-            "[Service]",
-            "Type=simple",
-            "User=root",
-            "ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json",
-            "Restart=always",
-            "RestartSec=3",
-            "LimitNPROC=10000",
-            "LimitNOFILE=1000000",
-            "",
-            "[Install]",
-            "WantedBy=multi-user.target",
-            ""
-        ])
-        with open("/etc/systemd/system/xray.service", "w") as f:
-            f.write(svc)
-        subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
-        subprocess.run(["systemctl", "enable", "xray"], capture_output=True)
+        register_service_if_missing("xray", "/usr/local/bin/xray run -config /etc/xray/config.json", desc="Xray Service")
         print("[+] 探针节点 Xray-core 核心自动部署就绪", flush=True)
         return True
     except Exception as e:
@@ -698,27 +847,7 @@ def ensure_singbox_installed(server):
                 "-addext", "subjectAltName=DNS:bing.com"
             ], capture_output=True)
 
-        svc = "\\n".join([
-            "[Unit]",
-            "Description=sing-box Service",
-            "After=network.target nss-lookup.target",
-            "",
-            "[Service]",
-            "Type=simple",
-            "User=root",
-            "WorkingDirectory=/etc/sing-box",
-            "ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json",
-            "Restart=always",
-            "RestartSec=3",
-            "",
-            "[Install]",
-            "WantedBy=multi-user.target",
-            ""
-        ])
-        with open("/etc/systemd/system/sing-box.service", "w") as f:
-            f.write(svc)
-        subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
-        subprocess.run(["systemctl", "enable", "sing-box"], capture_output=True)
+        register_service_if_missing("sing-box", "/usr/local/bin/sing-box run -c /etc/sing-box/config.json", desc="sing-box Service", working_dir="/etc/sing-box")
         print("[+] 探针节点 Sing-box 核心自动部署就绪", flush=True)
         return True
     except Exception as e:
@@ -813,8 +942,7 @@ def sync_step(server, token, last_hash):
                     shutil.copyfile(XRAY_CONFIG, "/usr/local/etc/xray/config.json")
                 except Exception:
                     pass
-                subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
-                subprocess.run(["systemctl", "restart", "xray"], capture_output=True)
+                service_action("reload_restart", "xray")
                 time.sleep(1)
                 print(f"[{time.strftime('%X')}] Xray 配置生效并重启成功", flush=True)
             else:
@@ -842,7 +970,7 @@ def sync_step(server, token, last_hash):
             sb_chk = subprocess.run([SINGBOX_BIN, "check", "-c", tmp_sb], capture_output=True, text=True)
             if sb_chk.returncode == 0:
                 os.replace(tmp_sb, SINGBOX_CONFIG)
-                subprocess.run(["systemctl", "restart", "sing-box"], capture_output=True)
+                service_action("restart", "sing-box")
                 print(f"[{time.strftime('%X')}] Sing-box 配置生效并重启成功", flush=True)
             else:
                 print(f"[{time.strftime('%X')}] Sing-box 配置校验失败: {sb_chk.stderr}", flush=True)
@@ -851,7 +979,7 @@ def sync_step(server, token, last_hash):
             last_hash = curr_hash
 
     # 2. 状态检测与端口监听真实检测
-    is_active = subprocess.run(["systemctl", "is-active", "--quiet", "xray"]).returncode == 0
+    is_active = service_is_active("xray")
     version = "unknown"
     try:
         ver_res = subprocess.run([XRAY_BIN, "version"], capture_output=True, text=True)
@@ -866,11 +994,10 @@ def sync_step(server, token, last_hash):
     # 自动自愈：若有目标端口未正常监听，强制刷新防火墙规则并重启 Xray
     if target_ports and len(listening_ports) < len(target_ports):
         allow_ports(target_ports)
-        subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
-        subprocess.run(["systemctl", "restart", "xray"], capture_output=True)
+        service_action("reload_restart", "xray")
         time.sleep(1)
         listening_ports = [p for p in target_ports if check_port_listening(p)]
-        is_active = subprocess.run(["systemctl", "is-active", "--quiet", "xray"]).returncode == 0
+        is_active = service_is_active("xray")
 
     status = "running" if (is_active and (len(listening_ports) == len(target_ports) or not target_ports)) else "stopped"
     if not is_active:
@@ -893,7 +1020,7 @@ def sync_step(server, token, last_hash):
             chk = subprocess.run([sys.executable, "-m", "py_compile", current_file + ".new"], capture_output=True)
             if chk.returncode == 0:
                 os.replace(current_file + ".new", current_file)
-                subprocess.run(["systemctl", "restart", "proxy-agent"], capture_output=True)
+                service_action("restart", "proxy-agent")
             else:
                 try:
                     os.remove(current_file + ".new")
@@ -925,7 +1052,7 @@ def sync_step(server, token, last_hash):
     sb_running = False
     sb_version = ""
     if sb_installed:
-        sb_running = subprocess.run(["systemctl", "is-active", "--quiet", "sing-box"]).returncode == 0
+        sb_running = service_is_active("sing-box")
         try:
             sb_out = subprocess.run([SINGBOX_BIN, "version"], capture_output=True, text=True).stdout
             if sb_out:
@@ -938,7 +1065,19 @@ def sync_step(server, token, last_hash):
     realm_installed = os.path.exists(REALM_BIN)
     realm_running = False
     if realm_installed:
-        realm_running = subprocess.run(["systemctl", "is-active", "--quiet", "realm"]).returncode == 0
+        if not os.path.exists(REALM_CONFIG):
+            try:
+                os.makedirs(os.path.dirname(REALM_CONFIG), exist_ok=True)
+                with open(REALM_CONFIG, "w", encoding="utf-8") as f:
+                    json.dump({"log": {"level": "warn"}, "network": {"no_tcp": False, "use_udp": True}, "endpoints": [{"listen": "127.0.0.1:39998", "remote": "127.0.0.1:39998"}]}, f, indent=2)
+            except Exception:
+                pass
+        register_service_if_missing("realm", f"{REALM_BIN} -c {REALM_CONFIG}", desc="Realm Port Forwarding Service")
+        realm_running = service_is_active("realm")
+        if not realm_running:
+            service_action("start", "realm")
+            time.sleep(0.5)
+            realm_running = service_is_active("realm")
 
     user_stats = []
     if xr_running:
@@ -5383,9 +5522,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
             servers = []
 
             for r in remote_nodes:
-                r_ipv4 = (r.get("ipv4") or r.get("ip") or "").strip()
-                r_ipv6 = (r.get("ipv6") or "").strip()
+                raw_ipv4 = (r.get("ipv4") or "").strip()
+                pub_ip = (r.get("ip") or r.get("country_ip") or "").strip()
                 host = resolve_server_host(r)
+                if raw_ipv4 and not is_private_ip(raw_ipv4):
+                    r_ipv4 = raw_ipv4
+                elif pub_ip and not is_private_ip(pub_ip):
+                    r_ipv4 = pub_ip
+                else:
+                    r_ipv4 = host or raw_ipv4 or pub_ip
+                r_ipv6 = (r.get("ipv6") or "").strip()
                 is_local = (host in LOCAL_HOSTS)
                 st = status_map.get(r["id"], {})
                 last_seen = st.get("last_seen", 0)

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { BarChart3, Bell, CalendarClock, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users } from "lucide-react"
+import { BarChart3, Bell, CalendarClock, Check, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
@@ -371,6 +371,15 @@ function CreateNode({
   const [saving, setSaving] = useState(false)
   const [createdInfo, setCreatedInfo] = useState<{ id: number; token: string; name: string } | null>(null)
 
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    if (!command) return
+    await copy(command)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   async function save(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) return toast.error("请填写服务器名称")
@@ -436,16 +445,36 @@ function CreateNode({
             <CoreOptionsSelector cores={cores} onChange={setCores} />
 
             <div className="space-y-2 border-t pt-3">
-              <h4 className="text-xs font-medium text-muted-foreground">一键安装命令</h4>
-              <Command className="max-h-40 min-h-24">
-                {command}
-              </Command>
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-medium text-muted-foreground">一键安装命令</h4>
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="text-xs text-primary hover:underline flex items-center gap-1 font-medium transition-colors"
+                >
+                  {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+                  {copied ? <span className="text-emerald-600 dark:text-emerald-400 font-semibold">已复制命令</span> : "点击复制"}
+                </button>
+              </div>
+              <div 
+                className="relative group cursor-pointer"
+                onClick={handleCopy}
+                title="点击直接复制命令"
+              >
+                <Command className="max-h-40 min-h-24 hover:border-primary/50 transition-colors select-all">
+                  {command}
+                </Command>
+              </div>
             </div>
 
             <DialogFooter className="border-t pt-4">
               <Button variant="ghost" onClick={onClose}>完成</Button>
-              <Button onClick={() => copy(command)}>
-                <Copy className="size-4" /> 复制安装命令
+              <Button 
+                onClick={handleCopy}
+                className={copied ? "bg-emerald-600 hover:bg-emerald-700 text-white font-medium" : ""}
+              >
+                {copied ? <Check className="size-4 text-white" /> : <Copy className="size-4" />}
+                {copied ? "已复制安装命令" : "复制安装命令"}
               </Button>
             </DialogFooter>
           </div>

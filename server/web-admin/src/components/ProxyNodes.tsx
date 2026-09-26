@@ -619,8 +619,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const serverOptions: ProxyServer[] = (servers.length > 0 ? servers : nodes.map(n => ({
     id: n.id,
     name: n.name,
-    host: n.ipv4 || n.ip || "自动解析",
-    ipv4: n.ipv4 || n.ip || "",
+    host: n.ip || n.ipv4 || "自动解析",
+    ipv4: n.ip || n.ipv4 || "",
     ipv6: n.ipv6 || "",
     is_local: false,
     token: "",
@@ -662,7 +662,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     const defaultServer = serverOptions[0]
     const sId = String(defaultServer.id)
     const sName = defaultServer.name
-    const sHost = defaultServer.ipv4 || defaultServer.host || ""
+    const sHost = defaultServer.host || defaultServer.ipv4 || ""
 
     setNodeMode("direct")
     setRelayTargetMode("link_existing")
@@ -706,27 +706,32 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
   const handleServerChange = (sId: string) => {
     const s = serverOptions.find(n => String(n.id) === sId)
-    if (s) {
-      let chosenHost = s.ipv4 || s.host
-      if (ipType === "ipv6") {
-        if (s.ipv6) {
-          chosenHost = s.ipv6
-        } else {
-          setIpType("ipv4")
-        }
-      }
-      setForm(prev => {
-        const targetNode = proxyNodes.find(n => String(n.id) === selectedTargetNodeId)
-        const newName = computeNodeName(s.name, prev.protocol, nodeMode, includeServerPrefix, targetNode?.name)
-        return { 
-          ...prev, 
-          server_id: sId, 
-          server_name: s.name, 
-          server_host: chosenHost,
-          name: newName
-        }
-      })
+    if (!s) return
+
+    if (nodeMode === "relay" && !s.realm_installed) {
+      toast.error(`服务器【${s.name}】未安装 Realm 核心，无法作为中转入口！`)
+      return
     }
+
+    let chosenHost = s.host || s.ipv4 || ""
+    if (ipType === "ipv6") {
+      if (s.ipv6) {
+        chosenHost = s.ipv6
+      } else {
+        setIpType("ipv4")
+      }
+    }
+    setForm(prev => {
+      const targetNode = proxyNodes.find(n => String(n.id) === selectedTargetNodeId)
+      const newName = computeNodeName(s.name, prev.protocol, nodeMode, includeServerPrefix, targetNode?.name)
+      return { 
+        ...prev, 
+        server_id: sId, 
+        server_name: s.name, 
+        server_host: chosenHost,
+        name: newName
+      }
+    })
   }
 
   const handleSelectTargetNode = (targetId: string) => {
@@ -1406,9 +1411,30 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 }`}
                 onClick={() => {
                   setNodeMode("relay")
+                  const curServer = serverOptions.find(s => String(s.id) === form.server_id)
+                  let targetServer = curServer
+                  if (!curServer || !curServer.realm_installed) {
+                    const realmServer = serverOptions.find(s => s.realm_installed)
+                    if (realmServer) {
+                      targetServer = realmServer
+                      toast.info(`当前服务器未安装 Realm，已自动切换至已装 Realm 的【${realmServer.name}】`)
+                    } else {
+                      toast.error("当前无任何已安装 Realm 核心的服务器，请先在服务器管理中安装 Realm 核心！")
+                    }
+                  }
                   const targetNode = proxyNodes.find(n => String(n.id) === selectedTargetNodeId)
-                  const newName = computeNodeName(form.server_name, form.protocol, "relay", includeServerPrefix, targetNode?.name)
-                  setForm(prev => ({ ...prev, is_relay: 1, name: newName }))
+                  const chosenHost = targetServer ? (ipType === "ipv6" && targetServer.ipv6 ? targetServer.ipv6 : (targetServer.host || targetServer.ipv4 || "")) : form.server_host
+                  const newName = computeNodeName(targetServer ? targetServer.name : form.server_name, form.protocol, "relay", includeServerPrefix, targetNode?.name)
+                  setForm(prev => ({ 
+                    ...prev, 
+                    is_relay: 1, 
+                    name: newName,
+                    ...(targetServer ? {
+                      server_id: String(targetServer.id),
+                      server_name: targetServer.name,
+                      server_host: chosenHost
+                    } : {})
+                  }))
                 }}
               >
                 🔄 中转落地节点 (Realm)
@@ -1450,29 +1476,43 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   {serverOptions.length === 0 ? (
                     <div className="p-3 text-xs text-muted-foreground text-center">暂无可用的探针服务器</div>
                   ) : (
-                    serverOptions.map(s => (
-                      <SelectItem key={s.id} value={String(s.id)}>
-                        <div className="flex items-center justify-between w-full min-w-0 max-w-full gap-3">
-                          <span className="truncate font-medium text-xs">
-                            {s.name} ({s.host})
-                          </span>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="inline-flex items-center gap-1 text-[11px]">
-                              <span className={`size-1.5 rounded-full ${s.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                              <span className={s.xray_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Xray</span>
-                            </span>
-                            <span className="inline-flex items-center gap-1 text-[11px]">
-                              <span className={`size-1.5 rounded-full ${s.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                              <span className={s.singbox_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Sing-box</span>
-                            </span>
-                            <span className="inline-flex items-center gap-1 text-[11px]">
-                              <span className={`size-1.5 rounded-full ${s.realm_installed ? "bg-emerald-500" : "bg-red-500"}`} />
-                              <span className={s.realm_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Realm</span>
-                            </span>
+                    serverOptions.map(s => {
+                      const isRelayInvalid = nodeMode === "relay" && !s.realm_installed
+                      return (
+                        <SelectItem 
+                          key={s.id} 
+                          value={String(s.id)}
+                          className={isRelayInvalid ? "opacity-60 cursor-not-allowed hover:bg-destructive/10" : ""}
+                        >
+                          <div className="flex items-center justify-between w-full min-w-0 max-w-full gap-3">
+                            <div className="flex items-center gap-1.5 min-w-0 truncate">
+                              <span className="truncate font-medium text-xs">
+                                {s.name} ({s.host})
+                              </span>
+                              {isRelayInvalid && (
+                                <span className="text-[10px] text-red-500 bg-red-500/10 px-1 py-0.5 rounded font-normal shrink-0">
+                                  未装Realm
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="inline-flex items-center gap-1 text-[11px]">
+                                <span className={`size-1.5 rounded-full ${s.xray_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                                <span className={s.xray_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Xray</span>
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-[11px]">
+                                <span className={`size-1.5 rounded-full ${s.singbox_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                                <span className={s.singbox_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Sing-box</span>
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-[11px]">
+                                <span className={`size-1.5 rounded-full ${s.realm_installed ? "bg-emerald-500" : "bg-red-500"}`} />
+                                <span className={s.realm_installed ? "text-emerald-700 dark:text-emerald-400 font-medium" : "text-red-500"}>Realm</span>
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                      </SelectItem>
-                    ))
+                        </SelectItem>
+                      )
+                    })
                   )}
                 </SelectContent>
               </Select>
@@ -1492,7 +1532,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                     }`}
                     onClick={() => {
                       setIpType("ipv4")
-                      const targetIp = currentSelectedServer?.ipv4 || currentSelectedServer?.host || ""
+                      const targetIp = currentSelectedServer?.host || currentSelectedServer?.ipv4 || ""
                       if (targetIp) {
                         setForm(prev => ({ ...prev, server_host: targetIp }))
                       }
@@ -1563,7 +1603,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                     <span className="text-purple-600 dark:text-purple-400 font-medium">✓ 已绑定该服务器的 IPv6 专属连接地址</span>
                   )}
                   {ipType === "ipv4" && (
-                    <span>已选用 IPv4 连接地址 ({currentSelectedServer?.ipv4 || currentSelectedServer?.host})</span>
+                    <span>已选用 IPv4 连接地址 ({currentSelectedServer?.host || currentSelectedServer?.ipv4})</span>
                   )}
                   {ipType === "custom" && (
                     <span>自定义连接地址（支持绑定 DDNS 域名或 CDN 节点）</span>
