@@ -5303,8 +5303,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         if path == "/api/proxy/probe/public-status":
             latencies = get_node_latest_latencies()
+            is_adm = check_auth(self.headers)
             self.send_json({
                 "ok": True,
+                "is_admin": is_adm,
                 "settings": {
                     "public_show_price": get_setting("public_show_price", "0") == "1",
                     "public_show_expiry": get_setting("public_show_expiry", "0") == "1",

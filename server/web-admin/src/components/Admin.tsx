@@ -1041,7 +1041,7 @@ function ServerDisplaySettingsDialog({
             <span>服务器公开信息展示权限</span>
           </DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">
-            选择向公开探针主页（未登录访客）展示哪些数据。关闭后相应数据仅管理员登录后可见，保护服务器成本与配额隐私。
+            选择向公开探针主页展示哪些数据。关闭后相应数据仅管理员可见，访客与已登录客户均不可见，保护服务器成本与配额隐私。
           </DialogDescription>
         </DialogHeader>
 
@@ -1052,7 +1052,7 @@ function ServerDisplaySettingsDialog({
                 💰 展示服务器续费价格
               </span>
               <p className="text-[11px] text-muted-foreground leading-snug">
-                开启后，公开状态页服务器详情中将显示购买价格与周期；关闭后对未登录访客完全隐藏。
+                默认关闭（严格仅超级管理员登录可见；访客与已登录客户均不可见，彻底保护续费成本隐私）。
               </p>
             </div>
             <Switch

@@ -115,6 +115,7 @@ export default function App() {
   }, [me])
 
   const [probeStatus, setProbeStatus] = useState<{
+    is_admin?: boolean
     settings: {
       public_show_price: boolean
       public_show_expiry: boolean
@@ -140,11 +141,13 @@ export default function App() {
     return () => clearInterval(timer)
   }, [loadProbeStatus])
 
+  const isTrueAdmin = Boolean(probeStatus?.is_admin)
   const visibilitySettings: VisibilitySettings = {
-    show_price: probeStatus?.settings?.public_show_price ?? false,
-    show_expiry: probeStatus?.settings?.public_show_expiry ?? false,
-    show_traffic_limit: probeStatus?.settings?.public_show_traffic_limit ?? false,
-    is_admin: Boolean(me?.authed),
+    // 续费价格严格仅超级管理员可见，未登录访客与已登录客户均不可见
+    show_price: Boolean(probeStatus?.settings?.public_show_price && isTrueAdmin),
+    show_expiry: Boolean(probeStatus?.settings?.public_show_expiry),
+    show_traffic_limit: Boolean(probeStatus?.settings?.public_show_traffic_limit),
+    is_admin: isTrueAdmin,
   }
 
   const sorted = [...(nodes ?? [])].sort((a, b) => a.sort - b.sort || a.id - b.id)

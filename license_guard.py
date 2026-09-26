@@ -687,10 +687,15 @@ def ping_auth_server(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER) -> bool:
             conn.close()
             return False
 
+        cur.execute("SELECT value FROM setting WHERE key='license_raw_token'")
+        rt_row = cur.fetchone()
+        raw_token = rt_row[0].strip() if rt_row and rt_row[0] else ""
+
         mid = get_machine_id()
         now = int(time.time())
         req_data = json.dumps({
             "license_key": lic_key,
+            "raw_token": raw_token,
             "machine_id": mid,
             "version": "2.0.0",
             "timestamp": now

@@ -346,11 +346,13 @@ export function NodeDetail({
             .join(" · ")}
         />
         <Fact label="今日流量" value={`↓ ${bytes(node.day_rx)} · ↑ ${bytes(node.day_tx)}`} />
-        {(visibilitySettings?.is_admin || visibilitySettings?.show_price || visibilitySettings?.show_expiry) && (
+        {/* 续费信息：价格严格仅限超级管理员可见，未登录访客与已登录客户均不可见；到期时间受开关控制 */}
+        {(visibilitySettings?.is_admin || visibilitySettings?.show_expiry) && (
           <Fact
             label="续费"
             value={[
-              (visibilitySettings?.is_admin || visibilitySettings?.show_price)
+              // 价格严格限制：仅超级管理员登录且 node.price > 0 时展示，访客与已登录客户绝对不渲染！
+              visibilitySettings?.is_admin
                 ? (node.price > 0
                     ? `${money(node.price, node.currency)} / ${CYCLES[node.billing_cycle] ?? node.billing_cycle}`
                     : "免费")
