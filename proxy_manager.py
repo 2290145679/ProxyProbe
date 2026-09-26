@@ -193,7 +193,7 @@ if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || 
     yum install -y python3 curl unzip tar iptables || true
   elif command -v apk >/dev/null 2>&1; then
     apk update >/dev/null 2>&1 || true
-    apk add python3 curl unzip tar iptables || true
+    apk add python3 curl unzip tar iptables gcompat || true
   fi
 fi
 
@@ -625,7 +625,19 @@ def service_is_active(name):
     if is_systemd():
         return subprocess.run(["systemctl", "is-active", "--quiet", name]).returncode == 0
     else:
-        return subprocess.run(["rc-service", name, "status"], capture_output=True).returncode == 0
+        res = subprocess.run(["rc-service", name, "status"], capture_output=True, text=True)
+        if res.returncode == 0:
+            return True
+        pid_file = f"/run/{name}.pid"
+        if os.path.exists(pid_file):
+            try:
+                with open(pid_file) as f:
+                    pid = int(f.read().strip())
+                os.kill(pid, 0)
+                return True
+            except Exception:
+                pass
+        return False
 
 def register_service_if_missing(name, exec_start, desc="", working_dir=""):
     if is_systemd():
@@ -728,8 +740,18 @@ def check_port_listening(port):
         pass
     try:
         res = subprocess.run(["ss", "-tulpn"], capture_output=True, text=True)
-        if f":{port} " in res.stdout or f":{port}\t" in res.stdout or f":{port}\n" in res.stdout:
-            return True
+        target = f":{port}"
+        for line in (res.stdout or "").splitlines():
+            if target in line:
+                return True
+    except Exception:
+        pass
+    try:
+        res_ns = subprocess.run(["netstat", "-tlun"], capture_output=True, text=True)
+        target = f":{port}"
+        for line in (res_ns.stdout or "").splitlines():
+            if target in line:
+                return True
     except Exception:
         pass
     return False
