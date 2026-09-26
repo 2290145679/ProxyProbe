@@ -11,7 +11,6 @@ import {
   Users,
   Wifi,
   XCircle,
-  Zap,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -268,8 +267,8 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
         </div>
       </div>
 
-      {/* 第一行：四大核心指标卡片 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      {/* 第一行：三大核心指标卡片 */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         {/* 指标 1：节点健康度 */}
         <Card className="p-4 sm:p-5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
@@ -354,40 +353,6 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
                     ? Math.round((summary.active_users / summary.total_users) * 100)
                     : 100
                 }%`,
-              }}
-            />
-          </div>
-        </Card>
-
-        {/* 指标 4：全网平均握手延迟 */}
-        <Card className="p-4 sm:p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">平均握手延迟 (RTT)</span>
-            <Zap className="size-4 text-amber-500" />
-          </div>
-          <div className="my-2">
-            <div className="text-2xl sm:text-3xl font-bold tracking-tight flex items-baseline gap-1">
-              <span>{summary?.avg_latency_ms ? `${summary.avg_latency_ms}` : "--"}</span>
-              <span className="text-sm font-normal text-muted-foreground">ms</span>
-            </div>
-            <div className="text-xs text-muted-foreground mt-1 truncate" title={summary?.best_node || ""}>
-              {summary?.best_node ? `最优: ${summary.best_node} (${summary.best_latency_ms}ms)` : "尚未进行节点测速"}
-            </div>
-          </div>
-          <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
-            <div
-              className={`h-full transition-all duration-500 ${
-                (summary?.avg_latency_ms || 0) < 100
-                  ? "bg-emerald-500"
-                  : (summary?.avg_latency_ms || 0) < 200
-                  ? "bg-amber-500"
-                  : "bg-rose-500"
-              }`}
-              style={{
-                width: `${Math.min(
-                  Math.max(100 - ((summary?.avg_latency_ms || 50) / 400) * 100, 15),
-                  100
-                )}%`,
               }}
             />
           </div>

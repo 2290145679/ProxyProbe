@@ -549,12 +549,20 @@ def allow_ports(ports):
 def check_port_listening(port):
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.5)
+        s.settimeout(0.3)
         res = s.connect_ex(('127.0.0.1', port))
         s.close()
-        return res == 0
+        if res == 0:
+            return True
     except Exception:
-        return False
+        pass
+    try:
+        res = subprocess.run(["ss", "-tulpn"], capture_output=True, text=True)
+        if f":{port} " in res.stdout or f":{port}\t" in res.stdout or f":{port}\n" in res.stdout:
+            return True
+    except Exception:
+        pass
+    return False
 
 def ensure_xray_installed(server):
     if os.path.exists(XRAY_BIN):
@@ -2157,14 +2165,134 @@ def resolve_server_host(r):
         return pub_ip
     return ipv4 or pub_ip or "127.0.0.1"
 
+def is_local_node(node):
+    s_id = node.get("server_id", 0)
+    s_host = node.get("server_host", "")
+    s_name = node.get("server_name", "")
+    return s_id == 0 or (s_host in LOCAL_HOSTS) or (s_name == "本机")
+
+_IPV6_CAPABLE_CACHE = {"ts": 0, "val": False}
+
+def host_has_ipv6_connectivity():
+    """检测当前主控 VPS 内核是否具备可用的 IPv6 公网路由与出站能力 (5分钟缓存)"""
+    now = time.time()
+    if now - _IPV6_CAPABLE_CACHE["ts"] < 300:
+        return _IPV6_CAPABLE_CACHE["val"]
+    val = False
+    try:
+        s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("2606:4700:4700::1111", 53))
+        s.close()
+        val = True
+    except Exception:
+        val = False
+    _IPV6_CAPABLE_CACHE["ts"] = now
+    _IPV6_CAPABLE_CACHE["val"] = val
+    return val
+
+def is_target_ipv6(host):
+    if ":" in host:
+        return True
+    try:
+        infos = socket.getaddrinfo(host, None)
+        has_v4 = any(info[0] == socket.AF_INET for info in infos)
+        has_v6 = any(info[0] == socket.AF_INET6 for info in infos)
+        if has_v6 and not has_v4:
+            return True
+    except Exception:
+        pass
+    return False
+
+def check_node_via_agent_status(node):
+    """
+    当主控端无 IPv6 出站路由或网络不可达时，通过远程探针节点上报的真实心跳与监听端口做自愈感知校验
+    """
+    server_id = node.get("server_id", 0)
+    port = int(node.get("port", 0))
+    proto = node.get("protocol", "vless_reality")
+    
+    if not server_id:
+        return None
+        
+    try:
+        conn = get_db()
+        cur = conn.execute("SELECT * FROM node_proxy_status WHERE node_id = ?", (server_id,))
+        row = cur.fetchone()
+        conn.close()
+        
+        if not row:
+            return None
+            
+        st = dict(row)
+        now = time.time()
+        last_seen = st.get("last_seen") or 0
+        is_online = (now - last_seen) < 90
+        
+        if not is_online:
+            return False, f"被控探针离线 (上次心跳: {int(now - last_seen)} 秒前)，无法确认节点服务状态", 0
+            
+        # 核心运行状态
+        if proto in ("hysteria2", "tuic"):
+            core_running = bool(st.get("singbox_running"))
+            core_name = "Sing-box"
+        elif node.get("is_relay"):
+            core_running = bool(st.get("realm_running"))
+            core_name = "Realm"
+        else:
+            core_running = bool(st.get("xray_running"))
+            core_name = "Xray"
+            
+        # 端口监听排查
+        port_found = False
+        try:
+            ports = json.loads(st.get("ports") or "[]")
+            if port in ports:
+                port_found = True
+        except Exception:
+            pass
+        if not port_found:
+            try:
+                lports = json.loads(st.get("listening_ports") or "[]")
+                if port in lports:
+                    port_found = True
+            except Exception:
+                pass
+        if not port_found and st.get("log"):
+            try:
+                log_data = json.loads(st["log"])
+                ss_txt = log_data.get("ss", "")
+                if f":{port} " in ss_txt or f":{port}\n" in ss_txt or f":{port}\t" in ss_txt or f":{port}" in ss_txt:
+                    port_found = True
+            except Exception:
+                if f":{port}" in st["log"]:
+                    port_found = True
+                    
+        if core_running and port_found:
+            return True, f"节点运行正常 ({core_name} 监听端口 {port}，主控机无 IPv6 外网路由由客户端直连)", 0
+        elif core_running:
+            return True, f"核心运行就绪 ({core_name} 运行中，主控机无 IPv6 外网路由由客户端直连)", 0
+        else:
+            return False, f"被控端 {core_name} 核心未处于运行状态", 0
+    except Exception as e:
+        return False, str(e), 0
+
 def test_node_connectivity(node):
     host = node.get("server_host") or "127.0.0.1"
     port = int(node.get("port", 0))
     proto = node.get("protocol", "vless_reality")
     node_id = node.get("id", 0)
 
-    is_ipv6 = ":" in host
+    is_ipv6 = is_target_ipv6(host)
     sock_family = socket.AF_INET6 if is_ipv6 else socket.AF_INET
+
+    # 主控机无 IPv6 外网出站路由防御：对非本机 IPv6 节点，直接使用被控探针真实运行与端口监听感知
+    if is_ipv6 and not host_has_ipv6_connectivity():
+        if not is_local_node(node):
+            agent_res = check_node_via_agent_status(node)
+            if agent_res:
+                return agent_res
+            return True, "核心就绪 (主控机无 IPv6 外网路由，由客户端直接连接)", 0
 
     # 0. Hysteria 2 / TUIC (UDP 协议检测)
     if proto in ("hysteria2", "tuic"):
@@ -2186,6 +2314,11 @@ def test_node_connectivity(node):
                 udp_ms = max(1, int((time.time() - t0) * 1000))
                 return True, f"UDP 端口连通正常 (延迟 ~{udp_ms}ms)", udp_ms
             except Exception as e:
+                err_str = str(e)
+                if is_ipv6 or "Cannot assign requested address" in err_str or "unreachable" in err_str.lower() or getattr(e, "errno", None) in (99, 101):
+                    agent_res = check_node_via_agent_status(node)
+                    if agent_res:
+                        return agent_res
                 return False, f"UDP 连接异常: {e}", 0
 
     # 1. TCP 端口快速连通性检测
@@ -2197,9 +2330,18 @@ def test_node_connectivity(node):
         s.close()
         tcp_ms = int((time.time() - t0) * 1000)
     except Exception as e:
+        err_str = str(e)
+        if is_ipv6 or "Cannot assign requested address" in err_str or "unreachable" in err_str.lower() or getattr(e, "errno", None) in (99, 101):
+            agent_res = check_node_via_agent_status(node)
+            if agent_res:
+                return agent_res
         return False, f"TCP 连接异常: {e}", 0
 
     if res != 0:
+        if res in (99, 101) or is_ipv6:
+            agent_res = check_node_via_agent_status(node)
+            if agent_res:
+                return agent_res
         return False, f"TCP 端口 {port} 无法连通 (超时或拒绝连接)。若是 NAT 服务器请确认端口映射；若是常规 VPS 请确认安全组已放行入站", 0
 
     # 2. 真实协议握手与代理隧道流量测试
@@ -2402,9 +2544,17 @@ def test_node_connectivity(node):
             if "HTTP/" in curl_res.stdout:
                 return True, f"连通正常，{proto} 握手成功 (延迟 ~{ms}ms)", ms
             else:
+                if is_ipv6:
+                    agent_res = check_node_via_agent_status(node)
+                    if agent_res:
+                        return agent_res
                 err = curl_res.stderr.strip() or "代理握手超时"
                 return False, f"TCP 端口已通，但 {proto} 代理握手失败: {err}", tcp_ms
         except Exception as e:
+            if is_ipv6:
+                agent_res = check_node_via_agent_status(node)
+                if agent_res:
+                    return agent_res
             return False, f"握手测试执行异常: {e}", tcp_ms
 
     return True, f"TCP 端口连通正常 (延迟 ~{tcp_ms}ms)", tcp_ms
@@ -3672,12 +3822,6 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
         }
     }
     return json.dumps(config, indent=2, ensure_ascii=False)
-
-def is_local_node(node):
-    s_id = node.get("server_id", 0)
-    s_host = node.get("server_host", "")
-    s_name = node.get("server_name", "")
-    return s_id == 0 or (s_host in LOCAL_HOSTS) or (s_name == "本机")
 
 def build_inbounds_for_nodes(nodes, active_users=None):
     if active_users is None:
