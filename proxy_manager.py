@@ -23,6 +23,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlparse
 import license_guard
 
+# 修复 PyInstaller 环境变量污染子进程问题 (杜绝 LD_LIBRARY_PATH 干扰 systemctl / xray / sing-box)
+if getattr(sys, 'frozen', False):
+    if 'LD_LIBRARY_PATH_ORIG' in os.environ:
+        os.environ['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH_ORIG']
+    else:
+        os.environ.pop('LD_LIBRARY_PATH', None)
+
 DB_PATH = "/opt/monitor/data/monitor.db"
 XRAY_BIN = "/usr/local/bin/xray"
 XRAY_CONFIG = "/etc/xray/config.json"
