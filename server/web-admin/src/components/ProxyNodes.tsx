@@ -49,6 +49,7 @@ export interface ProxyNode {
   remote_host?: string
   remote_port?: number
   target_node_id?: number
+  bandwidth_limit_mbps?: number
 }
 
 export interface ProxyServer {
@@ -290,6 +291,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     }
   })
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [includeServerPrefix, setIncludeServerPrefix] = useState<boolean>(false)
   const [form, setForm] = useState({
@@ -314,6 +316,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     remote_host: "",
     remote_port: "",
     target_node_id: 0,
+    bandwidth_limit_mbps: "0",
   })
 
   const getProtocolCleanLabel = (p: string) => {
@@ -692,6 +695,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       remote_host: "",
       remote_port: "",
       target_node_id: 0,
+      bandwidth_limit_mbps: "0",
     })
     setDialogOpen(true)
     handleKeygen("vless_reality")
@@ -811,6 +815,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           remote_host: nodeMode === "relay" ? form.remote_host : "",
           remote_port: nodeMode === "relay" ? Number(form.remote_port) : 0,
           target_node_id: nodeMode === "relay" ? Number(form.target_node_id || 0) : 0,
+          bandwidth_limit_mbps: Number(form.bandwidth_limit_mbps || 0),
         })
       })
       const data = await res.json()
@@ -1156,6 +1161,26 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
             <Button 
               size="sm" 
+              variant="outline"
+              onClick={() => {
+                if (licenseStatus?.type === "revoked") {
+                  toast.error("当前商业许可证已被授权中心吊销冻结，禁止创建新节点！")
+                  return
+                }
+                if (serverOptions.length === 0) {
+                  toast.error("暂无可用的服务器！请先添加探针服务器。")
+                  return
+                }
+                setBatchDialogOpen(true)
+              }}
+              className="text-xs h-8 gap-1.5 border-primary/40 text-primary hover:bg-primary/10 shadow-sm font-medium"
+            >
+              <Sparkles className="size-3.5" />
+              一键全家桶
+            </Button>
+
+            <Button 
+              size="sm" 
               onClick={openCreateDialog}
               className="text-xs h-8 gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
             >
@@ -1256,6 +1281,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                       <span className="inline-block bg-[#7c3aed] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium shadow-sm">
                         {formatProtocolBadge(n.protocol)}
                       </span>
+                      {Boolean(n.bandwidth_limit_mbps && n.bandwidth_limit_mbps > 0) && (
+                        <span className="inline-block bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-medium" title={`限速: ${n.bandwidth_limit_mbps} Mbps`}>
+                          ⚡ {n.bandwidth_limit_mbps}M
+                        </span>
+                      )}
                       {n.is_relay === 1 && (
                         <span className="inline-block bg-sky-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-medium shadow-sm">
                           Realm
@@ -1943,6 +1973,27 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </div>
             </details>
 
+            <div className="space-y-1.5 w-full min-w-0 pt-2 border-t">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">单节点带宽限制 (Mbps)</Label>
+                <span className="text-[11px] text-muted-foreground font-mono">0 为不限速</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min="0"
+                  className="text-xs h-8 font-mono w-32"
+                  value={form.bandwidth_limit_mbps}
+                  placeholder="0"
+                  onChange={e => setForm(prev => ({ ...prev, bandwidth_limit_mbps: e.target.value }))}
+                />
+                <span className="text-xs text-muted-foreground font-mono">Mbps (QoS 速率上限)</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                限制该节点对外提供的单节点峰值带宽速率，0 为不限速。
+              </p>
+            </div>
+
             <DialogFooter className="pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(false)} className="h-8 text-xs">
                 取消
@@ -1954,6 +2005,17 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* 「全协议全家桶」一键批量生成 Dialog */}
+      <BatchCreateDialog
+        open={batchDialogOpen}
+        onOpenChange={setBatchDialogOpen}
+        servers={serverOptions}
+        onSuccess={() => {
+          loadData()
+          loadStatus()
+        }}
+      />
 
       {/* 流媒体与 AI 解锁配置 Dialog */}
       <Dialog open={unlockConfigOpen} onOpenChange={setUnlockConfigOpen}>
@@ -2211,5 +2273,191 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+function BatchCreateDialog({
+  open,
+  onOpenChange,
+  servers,
+  onSuccess,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  servers: any[]
+  onSuccess: () => void
+}) {
+  const [serverId, setServerId] = useState<string>(servers[0] ? String(servers[0].id) : "0")
+  const [protocols, setProtocols] = useState<string[]>([
+    "vless_reality",
+    "hysteria2",
+    "anytls",
+    "trojan",
+    "ss2022",
+  ])
+  const [bandwidth, setBandwidth] = useState<string>("0")
+  const [submitting, setSubmitting] = useState(false)
+
+  // 当外部服务器列表更新且当前尚未选定时自动同步
+  useEffect(() => {
+    if (servers.length > 0 && (!serverId || serverId === "0")) {
+      setServerId(String(servers[0].id))
+    }
+  }, [servers, serverId])
+
+  const ALL_BATCH_PROTOS = [
+    { id: "vless_reality", name: "VLESS Reality", desc: "XTLS Vision + TCP (高隐蔽主流伪装)" },
+    { id: "vless_reality_xhttp", name: "VLESS XHTTP", desc: "XHTTP 流协议 (抗弱网与抗封锁)" },
+    { id: "hysteria2", name: "Hysteria 2", desc: "极速 UDP 拥塞控制 (弱网暴力提速)" },
+    { id: "anytls", name: "AnyTLS", desc: "自适应 TLS 隧道协议 (Sing-box 专属)" },
+    { id: "trojan", name: "Trojan", desc: "标准 TLS 仿真实流量伪装协议" },
+    { id: "ss2022", name: "Shadowsocks 2022", desc: "AEAD-2022 Blake3 轻量加密" },
+  ]
+
+  const toggleProto = (p: string) => {
+    setProtocols((prev) =>
+      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+    )
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (protocols.length === 0) {
+      toast.error("请至少勾选一个协议！")
+      return
+    }
+    setSubmitting(true)
+    try {
+      const res = await fetch("/api/proxy/nodes/batch-create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          server_id: parseInt(serverId) || 0,
+          protocols,
+          bandwidth_limit_mbps: parseInt(bandwidth) || 0,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) {
+        throw new Error(data.message || "批量生成全家桶失败")
+      }
+      toast.success(data.message || `成功生成 ${protocols.length} 个协议节点！`)
+      onOpenChange(false)
+      onSuccess()
+    } catch (err: any) {
+      toast.error(err.message || "批量创建出错")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[96vw] max-w-lg max-h-[88vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+        <DialogHeader>
+          <DialogTitle className="text-base font-semibold flex items-center gap-2">
+            <Sparkles className="size-4 text-primary" /> 「全协议全家桶」一键批量生成
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            选择目标服务器后，系统将自动分配独立端口并一键批量创建 VLESS Reality、Hysteria 2、AnyTLS、Trojan、SS2022 等主流核心协议节点。
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">选择目标服务器</Label>
+            <Select value={serverId} onValueChange={setServerId}>
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="选择目标服务器" />
+              </SelectTrigger>
+              <SelectContent>
+                {servers.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)} className="text-xs">
+                    {s.name} ({s.host || s.ipv4 || "本机"})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium">勾选要生成的协议组合</Label>
+              <span className="text-[11px] text-muted-foreground">已选择 {protocols.length} 个协议</span>
+            </div>
+            <div className="grid grid-cols-1 gap-2 border rounded-lg p-2.5 bg-muted/20">
+              {ALL_BATCH_PROTOS.map((p) => {
+                const checked = protocols.includes(p.id)
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => toggleProto(p.id)}
+                    className={`flex items-start gap-2.5 p-2 rounded-md border cursor-pointer transition-all ${
+                      checked
+                        ? "bg-primary/5 border-primary/40 text-foreground"
+                        : "border-transparent text-muted-foreground hover:bg-muted/40"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {}}
+                      className="mt-0.5 rounded border-muted-foreground/30 text-primary focus:ring-primary cursor-pointer"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium flex items-center gap-1.5">
+                        <span>{p.name}</span>
+                        {checked && <Check className="size-3 text-primary shrink-0" />}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">
+                        {p.desc}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">统一单节点带宽限制 (Mbps)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min="0"
+                value={bandwidth}
+                onChange={(e) => setBandwidth(e.target.value)}
+                placeholder="0"
+                className="text-xs h-9 font-mono w-36"
+              />
+              <span className="text-xs text-muted-foreground shrink-0 font-mono">Mbps (0 为不限速)</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              为本次批量创建的每个节点配置 QoS 速率上限，0 代表不限制带宽速率。
+            </p>
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              className="h-8 text-xs"
+            >
+              取消
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={submitting || protocols.length === 0}
+              className="h-8 text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              {submitting ? "正在批量生成..." : `立即生成全家桶 (${protocols.length} 个节点)`}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

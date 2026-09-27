@@ -71,6 +71,7 @@ type NodeItem = {
   enabled: number
   flag?: string
   display_name?: string
+  bandwidth_limit_mbps?: number
 }
 
 function formatBytes(bytes: number) {
@@ -124,6 +125,19 @@ export function UserDashboard({
   const [qrUrl, setQrUrl] = useState("")
   const [resettingToken, setResettingToken] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [supportTg, setSupportTg] = useState<{ enabled: boolean; telegram_url: string }>({ enabled: false, telegram_url: "" })
+
+  // 获取 Telegram 客服支持设置 (若后台关闭则完全不展示)
+  useEffect(() => {
+    fetch("/api/proxy/settings/support")
+      .then(res => res.json())
+      .then(data => {
+        if (data.ok && data.enabled && data.telegram_url) {
+          setSupportTg({ enabled: true, telegram_url: data.telegram_url })
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   // 实时轮询用户流量与订阅状态 (每 3 秒自动刷新)
   useEffect(() => {
@@ -258,6 +272,20 @@ export function UserDashboard({
                 <ExternalLink className="size-3 text-muted-foreground ml-0.5 hidden sm:inline shrink-0" />
               </a>
             </Button>
+
+            {supportTg.enabled && supportTg.telegram_url && (
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                className="gap-1.5 text-xs h-8 px-2 sm:px-3 shrink-0 border-[#229ED9]/40 text-[#229ED9] hover:bg-[#229ED9]/10"
+              >
+                <a href={supportTg.telegram_url} target="_blank" rel="noopener noreferrer" title="联系 Telegram 客服专员">
+                  <Send className="size-3.5 fill-[#229ED9] shrink-0" />
+                  <span>联系客服</span>
+                </a>
+              </Button>
+            )}
 
             <span className="text-xs text-muted-foreground mr-1 hidden md:inline-flex items-center gap-1.5">
               <span>用户:</span>
@@ -613,6 +641,11 @@ export function UserDashboard({
                         <Badge variant="secondary" className="text-[10px] py-0 px-1 font-mono uppercase shrink-0">
                           {n.protocol.replace("_", " ")}
                         </Badge>
+                        {Boolean(n.bandwidth_limit_mbps && n.bandwidth_limit_mbps > 0) && (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1 font-mono shrink-0 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30">
+                            ⚡ {n.bandwidth_limit_mbps} Mbps
+                          </Badge>
+                        )}
                       </div>
                       <div className="text-[11px] text-muted-foreground truncate font-mono">
                         {n.server_name} · {displayHost}:{n.port}
@@ -636,6 +669,29 @@ export function UserDashboard({
             </div>
           )}
         </Card>
+
+        {/* 客服支持快捷入口卡片 (仅当管理员后台开启时显示，默认关闭 100% 隐藏) */}
+        {supportTg.enabled && supportTg.telegram_url && (
+          <Card className="p-4 sm:p-5 border border-[#229ED9]/30 bg-[#229ED9]/5 shadow-sm">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-3 text-center sm:text-left">
+                <div className="size-10 rounded-full bg-[#229ED9]/15 flex items-center justify-center shrink-0">
+                  <Send className="size-5 text-[#229ED9] fill-[#229ED9]" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-foreground">需要人工协助？官方 Telegram 在线客服</h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">如需线路咨询、客户端导入排障或技术支持，欢迎随时联系 Telegram 在线客服</p>
+                </div>
+              </div>
+              <Button asChild size="sm" className="bg-[#229ED9] hover:bg-[#229ED9]/90 text-white font-medium text-xs h-9 px-4 shrink-0 shadow-sm">
+                <a href={supportTg.telegram_url} target="_blank" rel="noopener noreferrer">
+                  <Send className="size-3.5 fill-white mr-1.5" />
+                  联系 TG 客服
+                </a>
+              </Button>
+            </div>
+          </Card>
+        )}
       </main>
 
       {/* 手机扫码弹窗 */}

@@ -10,9 +10,13 @@ import shutil
 import socket
 import sqlite3
 import ssl
+import smtplib
 import subprocess
 import sys
 import tempfile
+from email.header import Header
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import threading
 import time
 import urllib.error
@@ -1288,12 +1292,35 @@ def init_db():
             ("last_check_status", "TEXT DEFAULT ''"),
             ("last_check_latency", "INTEGER DEFAULT 0"),
             ("last_check_time", "INTEGER DEFAULT 0"),
-            ("last_check_error", "TEXT DEFAULT ''")
+            ("last_check_error", "TEXT DEFAULT ''"),
+            ("bandwidth_limit_mbps", "INTEGER DEFAULT 0")
         ]:
             try:
                 conn.execute(f"ALTER TABLE proxy_node ADD COLUMN {col_name} {col_type}")
             except Exception:
                 pass
+
+        try:
+            conn.execute("ALTER TABLE proxy_user ADD COLUMN email TEXT DEFAULT ''")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE proxy_user ADD COLUMN bandwidth_limit_mbps INTEGER DEFAULT 0")
+        except Exception:
+            pass
+
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_verify_code (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL,
+            code TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            ip TEXT DEFAULT ''
+        )
+        """)
 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS proxy_traffic_hourly (
@@ -1606,6 +1633,201 @@ def perform_telegram_backup(custom_chat_id=None):
     set_setting("backup_tg_last_time", str(ts_now))
     set_setting("backup_tg_last_status", f"成功 ({time_str}, {gz_size / 1024:.1f} KB)")
     return True, f"备份成功并已推送至 Telegram ({gz_size / 1024:.1f} KB)", gz_size
+
+def send_smtp_email(to_email, subject, html_content):
+    host = get_setting("smtp_host", "").strip()
+    port = int(get_setting("smtp_port", "465"))
+    user = get_setting("smtp_user", "").strip()
+    password = get_setting("smtp_pass", "").strip()
+    from_name = get_setting("smtp_from_name", "HHUB").strip()
+    use_ssl = get_setting("smtp_ssl", "1") == "1"
+
+    if not host or not user or not password:
+        return False, "发信邮箱尚未配置，请管理员在后台「设置」中配置 SMTP 参数"
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = Header(subject, "utf-8")
+    msg["From"] = f"{Header(from_name, 'utf-8').encode()} <{user}>"
+    msg["To"] = to_email
+
+    part = MIMEText(html_content, "html", "utf-8")
+    msg.attach(part)
+
+    try:
+        if use_ssl or port == 465:
+            server = smtplib.SMTP_SSL(host, port, timeout=15)
+        else:
+            server = smtplib.SMTP(host, port, timeout=15)
+            server.starttls()
+        server.login(user, password)
+        server.sendmail(user, [to_email], msg.as_string())
+        server.quit()
+        return True, "邮件发送成功"
+    except Exception as e:
+        return False, f"发信失败: {e}"
+
+def generate_verification_email_html(site_name, code, purpose_text):
+    return f"""
+    <div style="max-width: 520px; margin: 0 auto; padding: 32px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05);">
+        <div style="text-align: center; margin-bottom: 24px;">
+            <h2 style="color: #111827; font-size: 22px; font-weight: 800; margin: 0; letter-spacing: -0.5px;">{site_name}</h2>
+            <p style="color: #6b7280; font-size: 13px; margin: 6px 0 0;">安全中心 · {purpose_text}</p>
+        </div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 22px; text-align: center; margin-bottom: 24px;">
+            <div style="font-size: 12px; color: #64748b; margin-bottom: 8px; font-weight: 500;">您的 6 位数字验证码</div>
+            <span style="font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #4f46e5; font-family: monospace;">{code}</span>
+        </div>
+        <p style="color: #334155; font-size: 13px; line-height: 1.6; margin: 0 0 12px;">
+            您正在进行 <strong>{purpose_text}</strong> 操作，请在 <strong>10 分钟</strong> 内输入上方验证码完成验证。
+        </p>
+        <p style="color: #94a3b8; font-size: 12px; line-height: 1.5; margin: 0;">
+            提示：如果这不是您本人的操作，请忽略此邮件，切勿将验证码泄露给任何人。
+        </p>
+        <div style="border-top: 1px solid #f1f5f9; margin-top: 28px; padding-top: 16px; text-align: center; color: #94a3b8; font-size: 11px;">
+            © {site_name} · 本邮件由系统安全引擎自动发送，请勿直接回复
+        </div>
+    </div>
+    """
+
+def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0):
+    conn = get_db()
+    try:
+        # 0. 商业许可证/套餐配额检查
+        lic_status = license_guard.get_current_license_status(conn)
+        curr_node_count = conn.execute("SELECT COUNT(*) FROM proxy_node").fetchone()[0]
+        max_nodes = lic_status.get("max_nodes", 1)
+        plan_name = lic_status.get("plan_name", "免费版")
+        if curr_node_count + len(protocols) > max_nodes:
+            raise ValueError(f"当前【{plan_name}】节点配额上限为 {max_nodes} 个（已建 {curr_node_count} 个），无法批量生成 {len(protocols)} 个节点，请先升级商业许可证套餐！")
+
+        # 1. Get server info
+        if server_id == 0:
+            cur_first = conn.execute("SELECT id, name, ip, ipv4, country FROM node ORDER BY id ASC LIMIT 1")
+            first_row = cur_first.fetchone()
+            if first_row:
+                s_dict = dict(first_row)
+                server_id = s_dict["id"]
+                s_name = s_dict.get("name") or f"Server-{server_id}"
+                s_host = resolve_server_host(s_dict)
+            else:
+                s_name = "本机"
+                s_host = get_setting("server_host", "189.24.108.25")
+        else:
+            cur = conn.execute("SELECT id, name, ip, ipv4, country FROM node WHERE id = ?", (server_id,))
+            s_row = cur.fetchone()
+            if not s_row:
+                raise ValueError(f"未找到目标服务器 (ID: {server_id})")
+            s_dict = dict(s_row)
+            s_name = s_dict.get("name") or f"Server-{server_id}"
+            s_host = resolve_server_host(s_dict)
+
+        # 2. Find allocated ports
+        cur_ports = conn.execute("SELECT port FROM proxy_node")
+        used_ports = {r[0] for r in cur_ports.fetchall()}
+
+        needed = len(protocols)
+        allocated_ports = []
+        candidate = 20000 + random.randint(100, 3000)
+        while len(allocated_ports) < needed:
+            if candidate not in used_ports:
+                allocated_ports.append(candidate)
+                used_ports.add(candidate)
+            candidate += 1
+            if candidate > 65000:
+                candidate = 15000
+
+        now = int(time.time())
+        created = []
+        with conn:
+            for proto, port in zip(protocols, allocated_ports):
+                uuid_val = str(uuid.uuid4())
+                pwd_val = gen_random_password(16)
+
+                if proto == "vless_reality":
+                    priv, pub, sid = gen_xray_keys()
+                    name = f"[{s_name}] VLESS Reality"
+                    cur = conn.execute("""
+                        INSERT INTO proxy_node (
+                            server_id, server_name, server_host, name, protocol, port,
+                            uuid, flow, sni, dest, public_key, private_key, short_id,
+                            bandwidth_limit_mbps, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    """, (server_id, s_name, s_host, name, proto, port,
+                          uuid_val, "xtls-rprx-vision", "www.apple.com", "www.apple.com:443", pub, priv, sid,
+                          bandwidth_limit_mbps, now))
+                    created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
+
+                elif proto == "vless_reality_xhttp":
+                    priv, pub, sid = gen_xray_keys()
+                    name = f"[{s_name}] VLESS XHTTP"
+                    cur = conn.execute("""
+                        INSERT INTO proxy_node (
+                            server_id, server_name, server_host, name, protocol, port,
+                            uuid, flow, sni, dest, public_key, private_key, short_id, ws_path,
+                            bandwidth_limit_mbps, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    """, (server_id, s_name, s_host, name, proto, port,
+                          uuid_val, "", "www.apple.com", "www.apple.com:443", pub, priv, sid, "/xhttp",
+                          bandwidth_limit_mbps, now))
+                    created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
+
+                elif proto == "hysteria2":
+                    name = f"[{s_name}] Hysteria 2"
+                    cur = conn.execute("""
+                        INSERT INTO proxy_node (
+                            server_id, server_name, server_host, name, protocol, port,
+                            uuid, password, sni,
+                            bandwidth_limit_mbps, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    """, (server_id, s_name, s_host, name, proto, port,
+                          uuid_val, pwd_val, "bing.com",
+                          bandwidth_limit_mbps, now))
+                    created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
+
+                elif proto == "anytls":
+                    name = f"[{s_name}] AnyTLS"
+                    cur = conn.execute("""
+                        INSERT INTO proxy_node (
+                            server_id, server_name, server_host, name, protocol, port,
+                            uuid, password, sni,
+                            bandwidth_limit_mbps, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    """, (server_id, s_name, s_host, name, proto, port,
+                          uuid_val, pwd_val, "www.bing.com",
+                          bandwidth_limit_mbps, now))
+                    created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
+
+                elif proto == "trojan":
+                    name = f"[{s_name}] Trojan"
+                    cur = conn.execute("""
+                        INSERT INTO proxy_node (
+                            server_id, server_name, server_host, name, protocol, port,
+                            uuid, password, sni,
+                            bandwidth_limit_mbps, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    """, (server_id, s_name, s_host, name, proto, port,
+                          uuid_val, pwd_val, "bing.com",
+                          bandwidth_limit_mbps, now))
+                    created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
+
+                elif proto == "ss2022":
+                    name = f"[{s_name}] Shadowsocks 2022"
+                    psk = base64.b64encode(secrets.token_bytes(16)).decode("utf-8")
+                    cur = conn.execute("""
+                        INSERT INTO proxy_node (
+                            server_id, server_name, server_host, name, protocol, port,
+                            uuid, password, method,
+                            bandwidth_limit_mbps, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    """, (server_id, s_name, s_host, name, proto, port,
+                          uuid_val, psk, "2022-blake3-aes-128-gcm",
+                          bandwidth_limit_mbps, now))
+                    created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
+    finally:
+        conn.close()
+
+    apply_all_configs()
+    return created
 
 def telegram_backup_loop():
     while True:
@@ -3187,7 +3409,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.16"
+CURRENT_VERSION = "v2.5.17"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -5088,7 +5310,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "未登录"}, 401)
                 return
             conn = get_db()
-            cur = conn.execute("SELECT id, server_id, name, protocol, server_name, server_host, port, enabled FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
+            cur = conn.execute("SELECT id, server_id, name, protocol, server_name, server_host, port, enabled, bandwidth_limit_mbps FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
             nodes = [dict(r) for r in cur.fetchall()]
             cur_nodes = conn.execute("SELECT id, ip, ipv4, country FROM node")
             server_rows = cur_nodes.fetchall()
@@ -5408,6 +5630,45 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "public_show_price": get_setting("public_show_price", "0") == "1",
                 "public_show_expiry": get_setting("public_show_expiry", "0") == "1",
                 "public_show_traffic_limit": get_setting("public_show_traffic_limit", "0") == "1"
+            })
+            return
+
+        if path == "/api/proxy/settings/support":
+            tg_enabled = get_setting("support_tg_enabled", "0") == "1"
+            tg_url = get_setting("support_tg_url", "")
+            self.send_json({
+                "ok": True,
+                "enabled": tg_enabled,
+                "telegram_url": tg_url
+            })
+            return
+
+        if path == "/api/proxy/settings/smtp":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            self.send_json({
+                "ok": True,
+                "smtp_enabled": get_setting("smtp_enabled", "0") == "1",
+                "smtp_host": get_setting("smtp_host", "smtp.gmail.com"),
+                "smtp_port": int(get_setting("smtp_port", "465")),
+                "smtp_ssl": get_setting("smtp_ssl", "1") == "1",
+                "smtp_user": get_setting("smtp_user", ""),
+                "smtp_pass": get_setting("smtp_pass", ""),
+                "smtp_from_name": get_setting("smtp_from_name", "HHUB"),
+                "site_name": get_setting("site_name", "HHUB-加速中心"),
+                "register_enabled": get_setting("register_enabled", "1") == "1"
+            })
+            return
+
+        if path == "/api/proxy/auth/config":
+            self.send_json({
+                "ok": True,
+                "register_enabled": get_setting("register_enabled", "1") == "1",
+                "smtp_enabled": get_setting("smtp_enabled", "0") == "1",
+                "site_name": get_setting("site_name", "HHUB-加速中心"),
+                "support_tg_enabled": get_setting("support_tg_enabled", "0") == "1",
+                "support_tg_url": get_setting("support_tg_url", "") if get_setting("support_tg_enabled", "0") == "1" else ""
             })
             return
 
@@ -5920,7 +6181,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             conn = get_db()
             user_row = None
             if username:
-                cur = conn.execute("SELECT * FROM proxy_user WHERE username = ?", (username,))
+                cur = conn.execute("SELECT * FROM proxy_user WHERE username = ? OR email = ?", (username, username))
                 user_row = cur.fetchone()
             else:
                 cur = conn.execute("SELECT * FROM proxy_user WHERE is_admin = 1 ORDER BY id ASC LIMIT 1")
@@ -6018,6 +6279,216 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "message": msg, "status": lic_status})
             else:
                 self.send_json({"ok": False, "message": msg}, 400)
+            return
+
+        if path == "/api/proxy/auth/send-code":
+            email = (req.get("email") or "").strip().lower()
+            action_type = (req.get("action_type") or req.get("purpose") or "register").strip()
+            
+            if not email or not re.match(r"^[\w\.\+\-]+@[\w\.\-]+\.[a-zA-Z]{2,}$", email):
+                self.send_json({"ok": False, "message": "请输入有效的电子邮箱地址"}, 400)
+                return
+
+            if get_setting("smtp_enabled", "0") != "1":
+                self.send_json({"ok": False, "message": "系统尚未启用或未配置邮箱发信服务，请联系管理员配置 SMTP！"}, 400)
+                return
+
+            now = int(time.time())
+            conn = get_db()
+            
+            # Check 60-second cooldown
+            cur_cd = conn.execute("SELECT created_at FROM email_verify_code WHERE email = ? AND action_type = ? ORDER BY id DESC LIMIT 1", (email, action_type))
+            row_cd = cur_cd.fetchone()
+            if row_cd and (now - row_cd[0]) < 60:
+                conn.close()
+                left_sec = 60 - (now - row_cd[0])
+                self.send_json({"ok": False, "message": f"验证码发送过于频繁，请等待 {left_sec} 秒后再试"}, 429)
+                return
+
+            if action_type == "register":
+                if get_setting("register_enabled", "1") != "1":
+                    conn.close()
+                    self.send_json({"ok": False, "message": "系统当前未开放用户自主注册，请联系管理员"}, 403)
+                    return
+                cur_u = conn.execute("SELECT id FROM proxy_user WHERE email = ? OR username = ?", (email, email))
+                if cur_u.fetchone():
+                    conn.close()
+                    self.send_json({"ok": False, "message": "该邮箱已被注册，请直接登录或使用忘记密码"}, 400)
+                    return
+                purpose_text = "注册新账户"
+            elif action_type == "reset_password":
+                cur_u = conn.execute("SELECT id FROM proxy_user WHERE email = ? OR username = ?", (email, email))
+                if not cur_u.fetchone():
+                    conn.close()
+                    self.send_json({"ok": False, "message": "该邮箱尚未注册任何账户"}, 404)
+                    return
+                purpose_text = "重置登录密码"
+            else:
+                conn.close()
+                self.send_json({"ok": False, "message": "未知的业务类型"}, 400)
+                return
+
+            code = f"{random.randint(100000, 999999)}"
+            site_name = get_setting("site_name", "HHUB-加速中心")
+            html_content = generate_verification_email_html(site_name, code, purpose_text)
+
+            ok, err = send_smtp_email(email, f"[{site_name}] {code} 是您的{purpose_text}验证码", html_content)
+            if not ok:
+                conn.close()
+                self.send_json({"ok": False, "message": f"邮件发送失败: {err}"}, 500)
+                return
+
+            with conn:
+                conn.execute("""
+                    INSERT INTO email_verify_code (email, code, action_type, expires_at, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (email, code, action_type, now + 600, now))
+            conn.close()
+            self.send_json({"ok": True, "message": "验证码已成功发送至您的邮箱，10 分钟内有效"})
+            return
+
+        if path == "/api/proxy/auth/register":
+            if get_setting("register_enabled", "1") != "1":
+                self.send_json({"ok": False, "message": "系统当前未开放用户自主注册"}, 403)
+                return
+            email = (req.get("email") or "").strip().lower()
+            code = (req.get("code") or "").strip()
+            password = (req.get("password") or "").strip()
+
+            if not email or not re.match(r"^[\w\.\+\-]+@[\w\.\-]+\.[a-zA-Z]{2,}$", email):
+                self.send_json({"ok": False, "message": "请输入有效的电子邮箱"}, 400)
+                return
+            if not code or len(code) != 6:
+                self.send_json({"ok": False, "message": "请输入 6 位邮箱验证码"}, 400)
+                return
+            if not password or len(password) < 6:
+                self.send_json({"ok": False, "message": "密码长度至少 6 位"}, 400)
+                return
+
+            now = int(time.time())
+            conn = get_db()
+
+            lic_status = license_guard.get_current_license_status(conn)
+            curr_user_count = conn.execute("SELECT COUNT(*) FROM proxy_user WHERE is_admin = 0").fetchone()[0]
+            max_users = lic_status.get("max_users", 1)
+            plan_name = lic_status.get("plan_name", "免费版")
+            if curr_user_count >= max_users:
+                conn.close()
+                self.send_json({
+                    "ok": False,
+                    "error": "license_quota_exceeded",
+                    "message": f"系统用户配额已满（上限 {max_users} 个客户端用户），请联系管理员升级许可证套餐！"
+                }, 403)
+                return
+
+            cur_vc = conn.execute("""
+                SELECT id, code, expires_at FROM email_verify_code
+                WHERE email = ? AND action_type = 'register'
+                ORDER BY id DESC LIMIT 1
+            """, (email,))
+            row_vc = cur_vc.fetchone()
+            if not row_vc or row_vc["code"] != code:
+                conn.close()
+                self.send_json({"ok": False, "message": "验证码不正确，请重新核对或重新获取"}, 400)
+                return
+            if row_vc["expires_at"] < now:
+                conn.close()
+                self.send_json({"ok": False, "message": "验证码已过期，请重新获取"}, 400)
+                return
+
+            cur_exist = conn.execute("SELECT id FROM proxy_user WHERE email = ? OR username = ?", (email, email))
+            if cur_exist.fetchone():
+                conn.close()
+                self.send_json({"ok": False, "message": "该邮箱已注册，请直接登录"}, 400)
+                return
+
+            sub_token = secrets.token_hex(16)
+            pwd_hash = hash_password(password)
+            default_traffic = int(float(get_setting("register_default_traffic_gb", "200")) * 1024 * 1024 * 1024)
+
+            with conn:
+                cur_ins = conn.execute("""
+                    INSERT INTO proxy_user (
+                        username, email, password_hash, sub_token,
+                        traffic_limit_bytes, upload_bytes, download_bytes,
+                        expires_at, enabled, is_admin, created_at, device_limit, bandwidth_limit_mbps
+                    ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 1, 0, ?, 0, 0)
+                """, (email, email, pwd_hash, sub_token, default_traffic, now))
+                new_user_id = cur_ins.lastrowid
+                conn.execute("DELETE FROM email_verify_code WHERE email = ?", (email,))
+
+            raw_token = secrets.token_hex(32)
+            token_hash = sha256(raw_token.encode()).hexdigest()
+            session_days = 14
+            expires_at = now + session_days * 86400
+            with conn:
+                conn.execute("INSERT OR REPLACE INTO session (token_hash, expires_at) VALUES (?, ?)", (token_hash, expires_at))
+                conn.execute("INSERT OR REPLACE INTO proxy_session_user (token_hash, user_id, created_at) VALUES (?, ?, ?)", (token_hash, new_user_id, now))
+            conn.close()
+
+            threading.Thread(target=apply_all_configs, daemon=True).start()
+
+            cookie_header = f"monitor_session={raw_token}; Path=/; Max-Age={session_days*86400}; SameSite=Lax; HttpOnly"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Set-Cookie", cookie_header)
+            resp_body = json.dumps({
+                "ok": True,
+                "message": "注册成功并已自动登录",
+                "user": {
+                    "id": new_user_id,
+                    "username": email,
+                    "email": email,
+                    "is_admin": False
+                }
+            }, ensure_ascii=False).encode("utf-8")
+            self.send_header("Content-Length", str(len(resp_body)))
+            self.end_headers()
+            self.wfile.write(resp_body)
+            return
+
+        if path == "/api/proxy/auth/reset-password":
+            email = (req.get("email") or "").strip().lower()
+            code = (req.get("code") or "").strip()
+            new_password = (req.get("new_password") or "").strip()
+
+            if not email or not code:
+                self.send_json({"ok": False, "message": "邮箱与验证码不能为空"}, 400)
+                return
+            if not new_password or len(new_password) < 6:
+                self.send_json({"ok": False, "message": "新密码长度至少 6 位"}, 400)
+                return
+
+            now = int(time.time())
+            conn = get_db()
+            cur_vc = conn.execute("""
+                SELECT id, code, expires_at FROM email_verify_code
+                WHERE email = ? AND action_type = 'reset_password'
+                ORDER BY id DESC LIMIT 1
+            """, (email,))
+            row_vc = cur_vc.fetchone()
+            if not row_vc or row_vc["code"] != code:
+                conn.close()
+                self.send_json({"ok": False, "message": "验证码不正确，请重新核对"}, 400)
+                return
+            if row_vc["expires_at"] < now:
+                conn.close()
+                self.send_json({"ok": False, "message": "验证码已过期，请重新获取"}, 400)
+                return
+
+            cur_u = conn.execute("SELECT id FROM proxy_user WHERE email = ? OR username = ?", (email, email))
+            u_row = cur_u.fetchone()
+            if not u_row:
+                conn.close()
+                self.send_json({"ok": False, "message": "未找到对应的用户账户"}, 404)
+                return
+
+            with conn:
+                conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (hash_password(new_password), u_row[0]))
+                conn.execute("DELETE FROM email_verify_code WHERE email = ?", (email,))
+            conn.close()
+
+            self.send_json({"ok": True, "message": "密码重置成功，请使用新密码登录"})
             return
 
         # 2. Admin required for all other POST endpoints
@@ -6163,8 +6634,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 return
 
             username = req.get("username", "").strip()
+            email = req.get("email", "").strip() or (username if "@" in username else "")
             password = req.get("password", "").strip()
             limit_gb = float(req.get("traffic_limit_gb", 200))
+            bandwidth_limit_mbps = int(req.get("bandwidth_limit_mbps", 0))
             expires_days = int(req.get("expires_days", 0))
             device_limit = int(req.get("device_limit", 0))
 
@@ -6184,9 +6657,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             try:
                 with conn:
                     cur = conn.execute("""
-                        INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit)
-                        VALUES (?, ?, ?, ?, 0, 0, ?, 1, 0, ?, ?)
-                    """, (username, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time()), device_limit))
+                        INSERT INTO proxy_user (username, email, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit, bandwidth_limit_mbps)
+                        VALUES (?, ?, ?, ?, ?, 0, 0, ?, 1, 0, ?, ?, ?)
+                    """, (username, email, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time()), device_limit, bandwidth_limit_mbps))
                     new_id = cur.lastrowid
                 conn.close()
                 apply_all_configs()
@@ -6233,6 +6706,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             expires_at = req.get("expires_at")
             new_pwd = req.get("password", "").strip()
             device_limit = req.get("device_limit")
+            bw_mbps = req.get("bandwidth_limit_mbps")
+            email = req.get("email")
             
             conn = get_db()
             with conn:
@@ -6243,6 +6718,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     conn.execute("UPDATE proxy_user SET expires_at = ? WHERE id = ?", (int(expires_at), user_id))
                 if device_limit is not None:
                     conn.execute("UPDATE proxy_user SET device_limit = ? WHERE id = ?", (int(device_limit), user_id))
+                if bw_mbps is not None:
+                    conn.execute("UPDATE proxy_user SET bandwidth_limit_mbps = ? WHERE id = ?", (int(bw_mbps), user_id))
+                if email is not None:
+                    conn.execute("UPDATE proxy_user SET email = ? WHERE id = ?", (str(email).strip(), user_id))
                 if new_pwd:
                     conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (hash_password(new_pwd), user_id))
             conn.close()
@@ -6428,6 +6907,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             password = req.get("password", "")
             username = req.get("username", "")
             extra_json = req.get("extra_json", "")
+            bandwidth_limit_mbps = int(req.get("bandwidth_limit_mbps", 0))
 
             if protocol in ("vless_reality", "vless_reality_xhttp") and (not priv_key or not pub_key):
                 gen_priv, gen_pub, gen_sid = gen_xray_keys()
@@ -6450,14 +6930,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     uuid, flow, sni, dest, public_key, private_key, short_id,
                     ws_path, method, password, username, extra_json,
                     is_relay, relay_server_id, relay_port, remote_host, remote_port, target_node_id,
-                    enabled, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    bandwidth_limit_mbps, enabled, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """, (
                     server_id, server_name, server_host, name, protocol, port,
                     uuid, flow, sni, dest, pub_key, priv_key, short_id,
                     ws_path, method, password, username, extra_json,
                     is_relay, relay_server_id, port, remote_host, remote_port, target_node_id,
-                    now
+                    bandwidth_limit_mbps, now
                 ))
                 new_id = cur.lastrowid
             conn.close()
@@ -6562,6 +7042,100 @@ class ProxyHandler(BaseHTTPRequestHandler):
             set_setting("public_show_traffic_limit", show_traffic)
             self.send_json({"ok": True, "message": "服务器公开信息展示权限已更新"})
             return
+
+        elif path.startswith("/api/proxy/nodes/") and path.endswith("/edit"):
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            try:
+                node_id = int(path.split("/")[-2])
+            except ValueError:
+                self.send_json({"ok": False, "message": "无效的节点 ID"}, 400)
+                return
+            name = (req.get("name") or "").strip()
+            bw = req.get("bandwidth_limit_mbps")
+            conn = get_db()
+            with conn:
+                if name:
+                    conn.execute("UPDATE proxy_node SET name = ? WHERE id = ?", (name, node_id))
+                if bw is not None:
+                    conn.execute("UPDATE proxy_node SET bandwidth_limit_mbps = ? WHERE id = ?", (int(bw), node_id))
+            conn.close()
+            apply_all_configs()
+            self.send_json({"ok": True, "message": "节点配置已更新"})
+            return
+
+        elif path == "/api/proxy/nodes/batch-create":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            server_id = int(req.get("server_id", 0))
+            protocols = req.get("protocols") or ["vless_reality", "hysteria2", "anytls", "trojan", "ss2022"]
+            bandwidth_limit_mbps = int(req.get("bandwidth_limit_mbps", 0))
+            try:
+                created = batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps)
+                self.send_json({
+                    "ok": True,
+                    "created": created,
+                    "message": f"成功一键生成全家桶 {len(created)} 个协议节点！"
+                })
+            except Exception as e:
+                self.send_json({"ok": False, "message": str(e)}, 400)
+            return
+
+        elif path == "/api/proxy/settings/support":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            enabled = "1" if req.get("enabled") else "0"
+            tg_url = (req.get("telegram_url") or "").strip()
+            set_setting("support_tg_enabled", enabled)
+            set_setting("support_tg_url", tg_url)
+            self.send_json({"ok": True, "message": "客服设置已成功保存"})
+            return
+
+        elif path == "/api/proxy/settings/smtp":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            set_setting("smtp_enabled", "1" if req.get("smtp_enabled") else "0")
+            set_setting("smtp_host", (req.get("smtp_host") or "").strip())
+            set_setting("smtp_port", str(int(req.get("smtp_port", 465))))
+            set_setting("smtp_ssl", "1" if req.get("smtp_ssl") else "0")
+            set_setting("smtp_user", (req.get("smtp_user") or "").strip())
+            if "smtp_pass" in req and req["smtp_pass"]:
+                set_setting("smtp_pass", str(req["smtp_pass"]).strip())
+            set_setting("smtp_from_name", (req.get("smtp_from_name") or "HHUB").strip())
+            set_setting("site_name", (req.get("site_name") or "HHUB-加速中心").strip())
+            set_setting("register_enabled", "1" if req.get("register_enabled") else "0")
+            self.send_json({"ok": True, "message": "SMTP 邮件发信配置已成功保存"})
+            return
+
+        elif path == "/api/proxy/smtp/test":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            to_email = (req.get("to_email") or get_setting("smtp_user", "")).strip()
+            if not to_email:
+                self.send_json({"ok": False, "message": "请填写测试接收邮箱或在配置中填写发信账号"}, 400)
+                return
+            site_name = get_setting("site_name", "HHUB-加速中心")
+            test_html = f"""
+            <div style="max-width: 520px; margin: 0 auto; padding: 28px; font-family: sans-serif; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <h3 style="color: #4f46e5; margin-top: 0;">🎉 SMTP 测试邮件发送成功！</h3>
+                <p style="color: #334155; line-height: 1.6;">您好！这是一封来自 <strong>{site_name}</strong> 的系统发信测试邮件。</p>
+                <p style="color: #64748b; font-size: 13px;">这证明您的 SMTP 邮件服务器配置（包括主机、端口、SSL/TLS 握手及授权凭据）完全正确，用户注册与重置密码邮件功能已可正常运作！</p>
+                <div style="margin-top: 20px; font-size: 12px; color: #94a3b8;">发送时间: {time.strftime('%Y-%m-%d %H:%M:%S')}</div>
+            </div>
+            """
+            ok, err = send_smtp_email(to_email, f"[{site_name}] SMTP 发信配置测试通知", test_html)
+            if ok:
+                self.send_json({"ok": True, "message": f"测试邮件已成功发送至 {to_email}，请查收邮箱！"})
+            else:
+                self.send_json({"ok": False, "message": f"测试发信失败: {err}"}, 500)
+            return
+
+
 
         self.send_json({"error": "Not Found"}, 404)
 

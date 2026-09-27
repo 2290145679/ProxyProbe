@@ -1,13 +1,12 @@
 {
-  "version": "v2.5.16",
-  "title": "ProxyProbe v2.5.16 全新支持 AnyTLS 极速防识别协议与端到端健康感知",
-  "release_date": "2026-09-27",
+  "version": "v2.5.17",
+  "title": "ProxyProbe v2.5.17 全协议全家桶一键批量生成、邮箱验证码注册与单节点带宽限制",
+  "release_date": "2026-09-28",
   "changelog": [
-    "【全新 AnyTLS 协议支持】原生集成 Sing-box AnyTLS 高抗封锁防识别入站，支持自定义密码与 SNI 伪装",
-    "【多客户端全能导出】支持 AnyTLS 协议通用 URI 分享链接、Clash/Mihomo YAML 以及 Sing-box JSON 客户端一键订阅",
-    "【端到端真实握手测试】连通性测试新增 AnyTLS 原生 TLS 握手感知引擎，测量真实 RTT 往返延迟，彻底杜绝假阳性",
-    "【零破坏架构隔离】严格保证对既有协议（VLESS Reality、Hysteria 2、Trojan、SS2022、SOCKS5）完全物理隔离与零功能回退"
+    "【全协议全家桶一键批量生成】在代理节点管理中提供一键选择服务器并批量部署 VLESS Reality, Hysteria 2, AnyTLS, Trojan, SS2022 核心协议节点",
+    "【邮箱验证码注册与找回密码】用户端全新支持邮箱验证码注册与忘记密码重置，管理员后台提供完整 SMTP 发信配置（兼容 Google 邮箱、QQ、163 等）与测试发信功能",
+    "【单节点与单用户带宽限速】支持对代理节点与客户端用户设置带宽限制 (Mbps QoS 限速)，精准管控单节点速率",
+    "【Telegram 在线客服支持】管理员后台可配置官方客服 TG 链接与展示开关，默认关闭；开启后在用户控制台与登录页优雅呈现客服入口"
   ],
   "release_url": "https://github.com/2290145679/ProxyProbe-Release"
 }
-

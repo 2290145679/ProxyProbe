@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { BarChart3, Bell, CalendarClock, Check, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users } from "lucide-react"
+import { BarChart3, Bell, CalendarClock, Check, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Mail, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
@@ -2009,7 +2009,358 @@ function SettingsTab({
           </Button>
         </div>
       </Card>
+
+      {/* 客服支持与 Telegram 联系渠道设置 */}
+      <TelegramSupportSettingsCard />
+
+      {/* 用户邮箱注册与 SMTP 邮件发信服务设置 */}
+      <SmtpSettingsCard />
     </div>
+  )
+}
+
+function TelegramSupportSettingsCard() {
+  const [enabled, setEnabled] = useState(false)
+  const [telegramUrl, setTelegramUrl] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    fetch("/api/proxy/settings/support")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) {
+          setEnabled(!!d.enabled)
+          setTelegramUrl(d.telegram_url || "")
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/settings/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled, telegram_url: telegramUrl }),
+      })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(d.message || "客服设置已成功保存")
+      } else {
+        toast.error(d.message || "保存失败")
+      }
+    } catch (e: any) {
+      toast.error(e.message || "网络请求失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Send className="size-4 text-[#229ED9] fill-[#229ED9]" /> 客服与支持设置 (Telegram)
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            配置官方 Telegram 客服入口。默认关闭（用户界面 100% 隐藏）；开启后在用户控制台展示联系通道。
+          </p>
+        </div>
+        <Badge
+          variant={enabled ? "secondary" : "outline"}
+          className={enabled ? "bg-[#229ED9]/10 text-[#229ED9] border-[#229ED9]/30" : ""}
+        >
+          {enabled ? "已开启" : "已隐藏"}
+        </Badge>
+      </div>
+
+      <div className="space-y-4 pt-1">
+        <div className="flex items-center gap-2 text-sm">
+          <Switch checked={enabled} onCheckedChange={setEnabled} id="support-tg-toggle" />
+          <Label htmlFor="support-tg-toggle" className="cursor-pointer text-xs font-medium">
+            在用户中心与登录界面展示 Telegram 客服联系入口
+          </Label>
+        </div>
+
+        {enabled && (
+          <div className="grid gap-2">
+            <Label className="text-xs font-medium">Telegram 客服链接 / 用户名</Label>
+            <Input
+              value={telegramUrl}
+              onChange={(e) => setTelegramUrl(e.target.value)}
+              placeholder="https://t.me/your_telegram_bot 或 @your_customer_service"
+              className="text-xs h-9 font-mono"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              用户点击客服入口后将直接唤起 Telegram 客户端跳转至对应客服聊天对话。
+            </p>
+          </div>
+        )}
+
+        <div>
+          <Button size="sm" onClick={handleSave} disabled={saving || loading} className="text-xs h-8">
+            {saving ? "保存中..." : "保存客服设置"}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function SmtpSettingsCard() {
+  const [smtpEnabled, setSmtpEnabled] = useState(false)
+  const [registerEnabled, setRegisterEnabled] = useState(true)
+  const [smtpHost, setSmtpHost] = useState("smtp.gmail.com")
+  const [smtpPort, setSmtpPort] = useState(465)
+  const [smtpSsl, setSmtpSsl] = useState(true)
+  const [smtpUser, setSmtpUser] = useState("")
+  const [smtpPass, setSmtpPass] = useState("")
+  const [smtpFromName, setSmtpFromName] = useState("HHUB")
+  const [siteName, setSiteName] = useState("HHUB-加速中心")
+
+  const [testEmail, setTestEmail] = useState("")
+  const [testDialogOpen, setTestDialogOpen] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch("/api/proxy/settings/smtp")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) {
+          setSmtpEnabled(!!d.smtp_enabled)
+          setRegisterEnabled(!!d.register_enabled)
+          if (d.smtp_host) setSmtpHost(d.smtp_host)
+          if (d.smtp_port) setSmtpPort(d.smtp_port)
+          setSmtpSsl(d.smtp_ssl !== false)
+          if (d.smtp_user) setSmtpUser(d.smtp_user)
+          if (d.smtp_pass) setSmtpPass(d.smtp_pass)
+          if (d.smtp_from_name) setSmtpFromName(d.smtp_from_name)
+          if (d.site_name) setSiteName(d.site_name)
+          if (d.smtp_user && !testEmail) setTestEmail(d.smtp_user)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/settings/smtp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          smtp_enabled: smtpEnabled,
+          register_enabled: registerEnabled,
+          smtp_host: smtpHost,
+          smtp_port: smtpPort,
+          smtp_ssl: smtpSsl,
+          smtp_user: smtpUser,
+          smtp_pass: smtpPass,
+          smtp_from_name: smtpFromName,
+          site_name: siteName,
+        }),
+      })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(d.message || "SMTP 发信配置已成功保存")
+      } else {
+        toast.error(d.message || "保存失败")
+      }
+    } catch (e: any) {
+      toast.error(e.message || "网络请求失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleTestSend = async () => {
+    if (!testEmail) {
+      toast.error("请输入测试接收邮箱地址")
+      return
+    }
+    setTesting(true)
+    try {
+      const res = await fetch("/api/proxy/smtp/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to_email: testEmail }),
+      })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(d.message || "测试邮件已发送，请查收！")
+        setTestDialogOpen(false)
+      } else {
+        toast.error(d.message || "测试发信失败")
+      }
+    } catch (e: any) {
+      toast.error(e.message || "网络请求失败")
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Mail className="size-4 text-primary" /> 邮箱注册与 SMTP 邮件服务配置
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            配置 SMTP 邮箱发信凭据，用于用户自主注册账号与忘记密码时发送 6 位数字验证码邮件。
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setTestDialogOpen(true)}
+            className="text-xs h-8 gap-1.5"
+          >
+            <Send className="size-3" /> 测试发信
+          </Button>
+          <Badge
+            variant={smtpEnabled ? "secondary" : "outline"}
+            className={smtpEnabled ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" : ""}
+          >
+            {smtpEnabled ? "发信已启用" : "发信未启用"}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="space-y-4 pt-1">
+        <div className="flex flex-wrap items-center gap-6 text-sm">
+          <div className="flex items-center gap-2">
+            <Switch checked={registerEnabled} onCheckedChange={setRegisterEnabled} id="register-toggle" />
+            <Label htmlFor="register-toggle" className="cursor-pointer text-xs font-medium">
+              开放用户自主邮箱注册
+            </Label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Switch checked={smtpEnabled} onCheckedChange={setSmtpEnabled} id="smtp-toggle" />
+            <Label htmlFor="smtp-toggle" className="cursor-pointer text-xs font-medium">
+              启用 SMTP 邮件发信服务
+            </Label>
+          </div>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 pt-2">
+          <Field label="SMTP 服务器主机" hint="例如: smtp.gmail.com 或 smtp.qq.com">
+            <Input
+              value={smtpHost}
+              onChange={(e) => setSmtpHost(e.target.value)}
+              placeholder="smtp.gmail.com"
+              className="text-xs h-9 font-mono"
+            />
+          </Field>
+
+          <Field label="SMTP 端口与加密" hint="SSL 推荐 465；STARTTLS 推荐 587">
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                value={smtpPort}
+                onChange={(e) => setSmtpPort(parseInt(e.target.value) || 465)}
+                className="text-xs h-9 font-mono w-28"
+              />
+              <div className="flex items-center gap-2 px-3 border rounded-md text-xs bg-muted/20">
+                <Switch checked={smtpSsl} onCheckedChange={setSmtpSsl} id="smtp-ssl-toggle" />
+                <Label htmlFor="smtp-ssl-toggle" className="cursor-pointer text-xs">
+                  {smtpSsl ? "SSL 协议 (465)" : "TLS 协议 (587)"}
+                </Label>
+              </div>
+            </div>
+          </Field>
+
+          <Field label="发信邮箱账号" hint="Google 邮箱或 QQ/163 账号">
+            <Input
+              value={smtpUser}
+              onChange={(e) => {
+                setSmtpUser(e.target.value)
+                if (!testEmail) setTestEmail(e.target.value)
+              }}
+              placeholder="your_email@gmail.com"
+              className="text-xs h-9 font-mono"
+            />
+          </Field>
+
+          <Field label="授权密码 / 应用专用密码" hint="Google 邮箱需在 Google 账户安全性中生成 16 位「应用专用密码」">
+            <Input
+              type="password"
+              value={smtpPass}
+              onChange={(e) => setSmtpPass(e.target.value)}
+              placeholder="••••••••••••••••"
+              className="text-xs h-9 font-mono"
+            />
+          </Field>
+
+          <Field label="发信人名称" hint="邮件中显示的发件人署名">
+            <Input
+              value={smtpFromName}
+              onChange={(e) => setSmtpFromName(e.target.value)}
+              placeholder="HHUB 安全中心"
+              className="text-xs h-9"
+            />
+          </Field>
+
+          <Field label="站点安全名称" hint="验证码邮件正文中引用的系统名称">
+            <Input
+              value={siteName}
+              onChange={(e) => setSiteName(e.target.value)}
+              placeholder="HHUB-加速中心"
+              className="text-xs h-9"
+            />
+          </Field>
+        </div>
+
+        <div className="flex items-center gap-3 pt-2">
+          <Button size="sm" onClick={handleSave} disabled={saving || loading} className="text-xs h-8">
+            {saving ? "保存中..." : "保存 SMTP 设置"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setTestDialogOpen(true)} className="text-xs h-8">
+            发送测试邮件
+          </Button>
+        </div>
+      </div>
+
+      <Dialog open={testDialogOpen} onOpenChange={setTestDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-semibold">SMTP 发信测试</DialogTitle>
+            <DialogDescription className="text-xs">
+              输入接收测试邮件的邮箱，验证服务器 SMTP 配置连通性
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">接收测试邮箱</Label>
+              <Input
+                type="email"
+                value={testEmail}
+                onChange={(e) => setTestEmail(e.target.value)}
+                placeholder="test@example.com"
+                className="text-xs h-9"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setTestDialogOpen(false)} className="text-xs h-8">
+              取消
+            </Button>
+            <Button size="sm" onClick={handleTestSend} disabled={testing || !testEmail} className="text-xs h-8 gap-1.5">
+              {testing ? "正在发送..." : "发送测试"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
   )
 }
 
