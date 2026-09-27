@@ -224,6 +224,7 @@ interface CoreStatus {
 const PROTOCOL_OPTIONS = [
   { value: "vless_reality", label: "VLESS + Reality", badge: "推荐" },
   { value: "vless_reality_xhttp", label: "VLESS + Reality + XHTTP", badge: "新特性" },
+  { value: "anytls", label: "AnyTLS (Sing-box 极速防识别)", badge: "新协议" },
   { value: "hysteria2", label: "Hysteria 2 (Hy2)", badge: "极速UDP" },
   { value: "vless_ws", label: "VLESS + WebSocket", badge: "CDN" },
   { value: "vmess_ws", label: "VMess + WebSocket", badge: "兼容" },
@@ -319,6 +320,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     switch (p) {
       case "vless_reality": return "VLESS Reality"
       case "vless_reality_xhttp": return "VLESS Reality XHTTP"
+      case "anytls": return "AnyTLS"
       case "hysteria2": return "Hysteria 2"
       case "vless_ws": return "VLESS WS"
       case "vmess_ws": return "VMess WS"
@@ -633,7 +635,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   }))).filter(s => s.id !== 0)
 
   const currentSelectedServer = serverOptions.find(s => String(s.id) === form.server_id)
-  const isSingboxProto = form.protocol === "hysteria2" || form.protocol === "tuic"
+  const isSingboxProto = form.protocol === "hysteria2" || form.protocol === "tuic" || form.protocol === "anytls"
   const isRequiredCoreInstalled = nodeMode === "relay"
     ? Boolean(currentSelectedServer?.realm_installed)
     : (isSingboxProto ? Boolean(currentSelectedServer?.singbox_installed) : Boolean(currentSelectedServer?.xray_installed))
@@ -911,6 +913,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     switch (proto) {
       case "vless_reality": return "VLESS + Reality"
       case "vless_reality_xhttp": return "VLESS + Reality + XHTTP"
+      case "anytls": return "AnyTLS"
       case "vless_ws": return "VLESS + WS"
       case "vmess_ws": return "VMess + WS"
       case "trojan": return "Trojan"
@@ -1770,7 +1773,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   {nodeMode === "relay" ? (
                     <>中转服务器【{form.server_name}】当前未安装 Realm 核心。中转端口转发需要 Realm 核心支持，请先在顶栏核心状态卡片中一键安装 Realm 核心后再创建中转落地节点。</>
                   ) : (
-                    <>服务器【{form.server_name}】当前未安装 {isSingboxProto ? "Sing-box" : "Xray-Core"} 核心。{isSingboxProto ? "Hysteria 2 (HY2) 协议需要 Sing-box 核心支持。" : "此协议需要 Xray-Core 核心支持。"}请先在该服务器上安装对应核心后再创建节点。</>
+                    <>服务器【{form.server_name}】当前未安装 {isSingboxProto ? "Sing-box" : "Xray-Core"} 核心。{isSingboxProto ? "Hysteria 2 / AnyTLS 协议需要 Sing-box 核心支持。" : "此协议需要 Xray-Core 核心支持。"}请先在该服务器上安装对应核心后再创建节点。</>
                   )}
                 </div>
               </div>
@@ -1895,13 +1898,13 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </div>
             )}
 
-            {form.protocol === "hysteria2" && (
+            {(form.protocol === "hysteria2" || form.protocol === "anytls") && (
               <div className="space-y-1.5 w-full min-w-0">
                 <Label className="text-xs">SNI 伪装域名</Label>
                 <Input
                   className="text-xs h-8 font-mono w-full"
                   value={form.sni}
-                  placeholder="如: bing.com 或 www.apple.com"
+                  placeholder="如: www.bing.com 或 www.apple.com"
                   onChange={e => setForm(prev => ({ ...prev, sni: e.target.value, dest: `https://${e.target.value}` }))}
                   required
                 />
@@ -1912,7 +1915,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               <div className="flex items-center justify-between">
                 <Label className="text-xs">
                   {form.protocol === "ss2022" ? "预共享密钥 (Base64 Key)" : 
-                   form.protocol === "trojan" || form.protocol === "socks5" || form.protocol === "hysteria2" ? "连接认证密码" : 
+                   form.protocol === "trojan" || form.protocol === "socks5" || form.protocol === "hysteria2" || form.protocol === "anytls" ? "连接认证密码" : 
                    "用户 UUID"}
                 </Label>
                 <button
@@ -1925,10 +1928,10 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </div>
               <Input
                 className="text-xs h-8 font-mono w-full"
-                value={form.protocol === "ss2022" || form.protocol === "trojan" || form.protocol === "socks5" || form.protocol === "hysteria2" ? form.password : form.uuid}
+                value={form.protocol === "ss2022" || form.protocol === "trojan" || form.protocol === "socks5" || form.protocol === "hysteria2" || form.protocol === "anytls" ? form.password : form.uuid}
                 onChange={e => {
                   const val = e.target.value
-                  if (form.protocol === "ss2022" || form.protocol === "trojan" || form.protocol === "socks5" || form.protocol === "hysteria2") {
+                  if (form.protocol === "ss2022" || form.protocol === "trojan" || form.protocol === "socks5" || form.protocol === "hysteria2" || form.protocol === "anytls") {
                     setForm(prev => ({ ...prev, password: val }))
                   } else {
                     setForm(prev => ({ ...prev, uuid: val }))

@@ -100,6 +100,8 @@ function protocolBadge(proto: string) {
       return <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0 font-normal">Reality</Badge>
     case "vless_reality_xhttp":
       return <Badge variant="outline" className="border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-400 text-[10px] px-1.5 py-0 font-normal">Reality xHTTP</Badge>
+    case "anytls":
+      return <Badge variant="outline" className="border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-[10px] px-1.5 py-0 font-normal">AnyTLS</Badge>
     case "hysteria2":
       return <Badge variant="outline" className="border-purple-500/30 bg-purple-500/10 text-purple-600 dark:text-purple-400 text-[10px] px-1.5 py-0 font-normal">Hysteria 2</Badge>
     case "trojan":

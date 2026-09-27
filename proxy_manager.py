@@ -2394,7 +2394,7 @@ def check_node_via_agent_status(node):
             return False, f"被控探针离线 (上次心跳: {int(now - last_seen)} 秒前)，无法确认节点服务状态", 0
             
         # 核心运行状态
-        if proto in ("hysteria2", "tuic"):
+        if proto in ("hysteria2", "tuic", "anytls"):
             core_running = bool(st.get("singbox_running"))
             core_name = "Sing-box"
         elif node.get("is_relay"):
@@ -2506,6 +2506,27 @@ def test_node_connectivity(node):
         return False, f"TCP 端口 {port} 无法连通 (超时或拒绝连接)。若是 NAT 服务器请确认端口映射；若是常规 VPS 请确认安全组已放行入站", 0
 
     # 2. 真实协议握手与代理隧道流量测试
+    # 2.0 AnyTLS 真实 TLS 握手测试 (Sing-box)
+    if proto == "anytls":
+        t0 = time.time()
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            sni = node.get("sni") or "www.bing.com"
+            with socket.create_connection((host, port), timeout=3.0) as sock:
+                with ctx.wrap_socket(sock, server_hostname=sni) as ssock:
+                    tls_version = ssock.version()
+                    ms = max(1, int((time.time() - t0) * 1000))
+                    return True, f"连通正常，AnyTLS 握手成功 [{tls_version}] (延迟 ~{ms}ms)", ms
+        except Exception as e:
+            err_str = str(e)
+            if is_ipv6 or "Cannot assign requested address" in err_str:
+                agent_res = check_node_via_agent_status(node)
+                if agent_res:
+                    return agent_res
+            return False, f"TCP 端口已通，但 AnyTLS TLS 握手失败: {e}", tcp_ms
+
     # 2.1 SOCKS5 直接由 curl 测试握手认证
     if proto == "socks5":
         uname = (node.get("username") or "").strip()
@@ -3034,6 +3055,10 @@ def format_node_link(node, user=None, server_country_map=None):
             sni = node.get("sni") or "bing.com"
             return f"tuic://{uid_val}:{pwd_str}@{uri_host}:{port}?congestion_control=bbr&alpn=h3&sni={sni}&udp_relay_mode=native&allow_insecure=1#{name}"
 
+        elif proto == "anytls":
+            sni = node.get("sni") or "www.bing.com"
+            return f"anytls://{pwd_str}@{uri_host}:{port}?sni={sni}&allowInsecure=1#{name}"
+
         return ""
     except Exception as e:
         print(f"[Error] format_node_link exception for node {node.get('id')}: {e}")
@@ -3155,7 +3180,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.15"
+CURRENT_VERSION = "v2.5.16"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -3618,6 +3643,18 @@ rules:
                     "path": ws_path
                 }
             }
+        elif proto == "anytls":
+            sni = n.get("sni") or "www.bing.com"
+            proxy_item = {
+                "name": name,
+                "type": "anytls",
+                "server": host,
+                "port": port,
+                "password": pwd_str,
+                "sni": sni,
+                "skip-cert-verify": True,
+                "udp": True
+            }
         elif proto == "hysteria2":
             sni = n.get("sni") or "bing.com"
             proxy_item = {
@@ -3842,6 +3879,20 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
                     "type": "http",
                     "path": xpath
                 }
+        elif proto == "anytls":
+            sni = n.get("sni") or "www.bing.com"
+            node_item = {
+                "type": "anytls",
+                "tag": tag,
+                "server": host,
+                "server_port": port,
+                "password": pwd_str,
+                "tls": {
+                    "enabled": True,
+                    "server_name": sni,
+                    "insecure": True
+                }
+            }
         elif proto == "hysteria2":
             sni = n.get("sni") or "bing.com"
             node_item = {
@@ -4259,6 +4310,31 @@ def build_singbox_inbounds_for_nodes(nodes, active_users=None):
                 },
                 "masquerade": masq
             })
+        elif proto == "anytls":
+            ensure_server_cert()
+            anytls_users = []
+            seen_pwds = set()
+            if pwd and pwd not in seen_pwds:
+                seen_pwds.add(pwd)
+                anytls_users.append({ "name": "default", "password": pwd })
+            for u in active_users:
+                _, u_pwd = ensure_user_credentials(u)
+                if u_pwd not in seen_pwds:
+                    seen_pwds.add(u_pwd)
+                    anytls_users.append({ "name": f"user_{u['id']}", "password": u_pwd })
+
+            inbounds.append({
+                "type": "anytls",
+                "tag": f"anytls-in-{n.get('id', port)}",
+                "listen": "::",
+                "listen_port": port,
+                "users": anytls_users,
+                "tls": {
+                    "enabled": True,
+                    "certificate_path": SINGBOX_CERT,
+                    "key_path": SINGBOX_KEY
+                }
+            })
     return inbounds
 
 def apply_singbox_config():
@@ -4270,7 +4346,7 @@ def apply_singbox_config():
     all_nodes = [dict(r) for r in cur.fetchall()]
     conn.close()
 
-    local_nodes = [n for n in all_nodes if is_local_node(n) and not n.get("is_relay") and n["protocol"] in ("hysteria2", "tuic")]
+    local_nodes = [n for n in all_nodes if is_local_node(n) and not n.get("is_relay") and n["protocol"] in ("hysteria2", "tuic", "anytls")]
     inbounds = build_singbox_inbounds_for_nodes(local_nodes)
 
     os.makedirs("/var/log/sing-box", exist_ok=True)
@@ -4587,7 +4663,7 @@ def apply_xray_config():
     all_nodes = [dict(r) for r in cur.fetchall()]
     conn.close()
 
-    local_nodes = [n for n in all_nodes if is_local_node(n) and not n.get("is_relay")]
+    local_nodes = [n for n in all_nodes if is_local_node(n) and not n.get("is_relay") and n["protocol"] not in ("hysteria2", "tuic", "anytls")]
     inbounds = build_inbounds_for_nodes(local_nodes)
 
     if not inbounds:
@@ -4927,8 +5003,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             server_nodes = [dict(r) for r in cur_nodes.fetchall()]
             conn.close()
 
-            xray_nodes = [n for n in server_nodes if n["protocol"] not in ("hysteria2", "tuic") and not n.get("is_relay")]
-            singbox_nodes = [n for n in server_nodes if n["protocol"] in ("hysteria2", "tuic") and not n.get("is_relay")]
+            xray_nodes = [n for n in server_nodes if n["protocol"] not in ("hysteria2", "tuic", "anytls") and not n.get("is_relay")]
+            singbox_nodes = [n for n in server_nodes if n["protocol"] in ("hysteria2", "tuic", "anytls") and not n.get("is_relay")]
             inbounds = build_inbounds_for_nodes(xray_nodes)
             singbox_inbounds = build_singbox_inbounds_for_nodes(singbox_nodes)
             self.send_json({
@@ -5673,6 +5749,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "dest": "www.apple.com:443",
                     "ws_path": "/xhttp" if proto == "vless_reality_xhttp" else "/ws-proxy"
                 })
+            elif proto == "anytls":
+                pwd = gen_random_password(16)
+                res.update({
+                    "password": pwd,
+                    "sni": "www.bing.com"
+                })
             elif proto == "hysteria2":
                 pwd = gen_random_password(16)
                 res.update({
@@ -6305,7 +6387,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         return
             else:
                 # 校验所选服务器是否已安装对应协议所需的核心
-                needs_singbox = protocol in ("hysteria2", "tuic")
+                needs_singbox = protocol in ("hysteria2", "tuic", "anytls")
                 if is_local:
                     if needs_singbox and not os.path.exists(SINGBOX_BIN):
                         self.send_json({"ok": False, "message": "本机尚未安装 Sing-box 核心，无法创建此类协议节点，请先在核心状态卡片中安装核心！"}, 400)
@@ -6329,7 +6411,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             
             uuid = req.get("uuid") or gen_uuid()
             flow = req.get("flow", "xtls-rprx-vision")
-            sni = req.get("sni") or ("bing.com" if protocol in ("trojan", "hysteria2", "tuic") else "www.apple.com")
+            sni = req.get("sni") or ("www.bing.com" if protocol in ("trojan", "hysteria2", "tuic", "anytls") else "www.apple.com")
             dest = req.get("dest", f"{sni}:443")
             priv_key = req.get("private_key", "")
             pub_key = req.get("public_key", "")
@@ -6349,7 +6431,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 password = gen_ss2022_key(method)
             elif protocol == "socks5" and not password:
                 password = gen_random_password(12)
-            elif protocol == "trojan" and not password:
+            elif protocol in ("trojan", "anytls") and not password:
                 password = gen_random_password(16)
 
             now = int(time.time())

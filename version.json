@@ -1,11 +1,13 @@
 {
-  "version": "v2.5.15",
-  "title": "ProxyProbe v2.5.15 探针服务器全套餐无限制纳管与商业配额解绑",
+  "version": "v2.5.16",
+  "title": "ProxyProbe v2.5.16 全新支持 AnyTLS 极速防识别协议与端到端健康感知",
   "release_date": "2026-09-27",
   "changelog": [
-    "【探针服务器无限纳管】取消探针服务器数量与商业套餐的强绑定限制，基础监控探针全套餐（含免费体验版）支持无上限纳管",
-    "【商业授权模型优化】商业许可证配额精准聚焦于「代理节点」与「客户端用户」两大核心业务维度，界面与API全面解绑服务器数量门禁",
-    "【管理面板交互升级】优化服务器管理与授权中心看板，直观呈现无限纳管状态与节点/用户梯队配额标准"
+    "【全新 AnyTLS 协议支持】原生集成 Sing-box AnyTLS 高抗封锁防识别入站，支持自定义密码与 SNI 伪装",
+    "【多客户端全能导出】支持 AnyTLS 协议通用 URI 分享链接、Clash/Mihomo YAML 以及 Sing-box JSON 客户端一键订阅",
+    "【端到端真实握手测试】连通性测试新增 AnyTLS 原生 TLS 握手感知引擎，测量真实 RTT 往返延迟，彻底杜绝假阳性",
+    "【零破坏架构隔离】严格保证对既有协议（VLESS Reality、Hysteria 2、Trojan、SS2022、SOCKS5）完全物理隔离与零功能回退"
   ],
   "release_url": "https://github.com/2290145679/ProxyProbe-Release"
 }
+
