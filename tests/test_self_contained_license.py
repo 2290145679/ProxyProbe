@@ -27,7 +27,7 @@ try:
           "| 剩余天数:", curr_status.get("days_left"))
     assert curr_status["active"] == True
     assert curr_status["plan_name"] == "行星套餐"
-    assert curr_status["max_servers"] == 5
+    assert curr_status["max_servers"] == -1
 
     # 4. 模拟防伪校验（篡改卡密字符）
     tampered_code = code[:-1] + ("A" if code[-1] != "A" else "B")

@@ -123,7 +123,6 @@ export function LicenseManager() {
     }
   }
 
-  const maxServers = status?.max_servers || status?.limits?.max_servers || 1
   const maxNodes = status?.max_nodes || status?.limits?.max_nodes || 1
   const maxUsers = status?.max_users || status?.limits?.max_users || 1
 
@@ -143,7 +142,7 @@ export function LicenseManager() {
             商业许可证授权管理
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
-            探针基础功能终身免费；激活商业授权即可解锁多服务器纳管、多协议节点与海量用户订阅体系
+            探针基础监控无限添加、终身免费；激活商业授权即可解锁多协议节点与海量用户订阅体系
           </p>
         </div>
         <Button
@@ -186,7 +185,7 @@ export function LicenseManager() {
                 </Badge>
               ) : (
                 <Badge variant="secondary" className="gap-1 text-muted-foreground">
-                  免费体验版 (1服/1节/1户)
+                  免费体验版 (探针无限/1节/1户)
                 </Badge>
               )}
             </div>
@@ -221,7 +220,7 @@ export function LicenseManager() {
                 <AlertTriangle className="size-4 shrink-0 text-amber-500 mt-0.5" />
                 <div>
                   <span className="font-semibold block mb-0.5">免费体验模式配额限制</span>
-                  当前正在运行体验配额：<strong>最多 1 台服务器、1 个代理节点、1 个客户端用户</strong>。若需增加服务器或代理节点集群，请联系管理员签发商业授权。
+                  探针服务器支持<strong>无限制添加与监控</strong>。免费体验模式限制运行：<strong>最多 1 个代理节点、1 个客户端用户</strong>。若需增加代理节点或用户规模，请联系管理员签发商业授权。
                 </div>
               </div>
             )}
@@ -242,14 +241,14 @@ export function LicenseManager() {
                     <span className="flex items-center gap-1.5 text-muted-foreground font-medium">
                       <Server className="size-3.5 text-cyan-500" /> 服务器纳管
                     </span>
-                    <span className="font-semibold text-foreground font-mono">
-                      {curServers} / {maxServers} 台
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 font-mono">
+                      {curServers} 台 (无限制)
                     </span>
                   </div>
                   <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
                     <div
-                      className={`h-full transition-all ${curServers >= maxServers ? "bg-amber-500" : "bg-cyan-500"}`}
-                      style={{ width: `${Math.min(100, Math.round((curServers / maxServers) * 100))}%` }}
+                      className="h-full bg-emerald-500 transition-all"
+                      style={{ width: "100%" }}
                     />
                   </div>
                 </div>
@@ -322,34 +321,34 @@ export function LicenseManager() {
         {/* 5 大套餐规格对比卡片 */}
         <Card className="flex flex-col justify-between">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold">套餐梯队标准 (服/节/户)</CardTitle>
-            <CardDescription className="text-xs">支持按需升级更高规格套餐</CardDescription>
+            <CardTitle className="text-base font-semibold">套餐梯队标准 (节点 / 用户)</CardTitle>
+            <CardDescription className="text-xs">✨ 基础探针全套餐无限纳管，仅按节点与用户配额授权</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2.5 text-xs pt-0 flex-1">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between p-2 rounded border bg-muted/10">
                 <span className="font-medium text-muted-foreground">免费体验版</span>
-                <span className="font-mono text-xs font-semibold">1 / 1 / 1</span>
+                <span className="font-mono text-xs font-semibold">1 节点 / 1 用户</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded border bg-cyan-500/5 border-cyan-500/20">
                 <span className="font-semibold text-cyan-500">1. 星尘套餐</span>
-                <span className="font-mono text-xs font-semibold text-cyan-600 dark:text-cyan-400">3 / 6 / 6</span>
+                <span className="font-mono text-xs font-semibold text-cyan-600 dark:text-cyan-400">6 节点 / 6 用户</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded border bg-emerald-500/5 border-emerald-500/20">
                 <span className="font-semibold text-emerald-500">2. 行星套餐</span>
-                <span className="font-mono text-xs font-semibold text-emerald-600 dark:text-emerald-400">5 / 12 / 12</span>
+                <span className="font-mono text-xs font-semibold text-emerald-600 dark:text-emerald-400">12 节点 / 12 用户</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded border bg-amber-500/5 border-amber-500/20">
                 <span className="font-semibold text-amber-500">3. 恒星套餐</span>
-                <span className="font-mono text-xs font-semibold text-amber-600 dark:text-amber-400">8 / 18 / 18</span>
+                <span className="font-mono text-xs font-semibold text-amber-600 dark:text-amber-400">18 节点 / 18 用户</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded border bg-indigo-500/5 border-indigo-500/20">
                 <span className="font-semibold text-indigo-500">4. 星系套餐</span>
-                <span className="font-mono text-xs font-semibold text-indigo-600 dark:text-indigo-400">12 / 30 / 30</span>
+                <span className="font-mono text-xs font-semibold text-indigo-600 dark:text-indigo-400">30 节点 / 30 用户</span>
               </div>
               <div className="flex items-center justify-between p-2 rounded border bg-fuchsia-500/5 border-fuchsia-500/20">
                 <span className="font-semibold text-fuchsia-500">5. 宇宙套餐</span>
-                <span className="font-mono text-xs font-semibold text-fuchsia-600 dark:text-fuchsia-400">20 / 50 / 50</span>
+                <span className="font-mono text-xs font-semibold text-fuchsia-600 dark:text-fuchsia-400">50 节点 / 50 用户</span>
               </div>
             </div>
           </CardContent>

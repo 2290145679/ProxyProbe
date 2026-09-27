@@ -4700,12 +4700,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             user_count = conn.execute("SELECT COUNT(*) FROM proxy_user WHERE is_admin = 0").fetchone()[0]
             conn.close()
 
-            max_servers = lic_status.get("max_servers", 1)
+            max_servers = -1  # 基础探针全套餐无限制纳管
             max_nodes = lic_status.get("max_nodes", 1)
             max_users = lic_status.get("max_users", 1)
 
             lic_status["limits"] = {
-                "max_servers": max_servers,
+                "max_servers": -1,
                 "max_nodes": max_nodes,
                 "max_users": max_users
             }
@@ -4715,7 +4715,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "node_count": node_count,
                 "user_count": user_count,
                 "free_limits": {
-                    "max_servers": 1,
+                    "max_servers": -1,
                     "max_nodes": 1,
                     "max_users": 1
                 }

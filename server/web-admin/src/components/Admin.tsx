@@ -1217,17 +1217,13 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
               {licenseStatus.plan_name || (licenseStatus.active ? "商业版" : "免费体验版")}
             </span>
             <span>
-              服务器纳管配额：<strong>{nodes.length} / {licenseStatus.max_servers || licenseStatus.limits?.max_servers || (licenseStatus.active ? 5 : 1)} 台</strong>
-              {nodes.length >= (licenseStatus.max_servers || licenseStatus.limits?.max_servers || (licenseStatus.active ? 5 : 1)) && (
-                <span className="text-amber-500 font-medium ml-1.5">(配额已满，升级套餐以添加更多)</span>
-              )}
+              已纳管服务器：<strong>{nodes.length} 台</strong>
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium ml-1.5">(基础探针无限纳管)</span>
             </span>
           </div>
-          {!licenseStatus.active && (
-            <span className="text-amber-600 dark:text-amber-400 font-medium shrink-0">
-              免费版限额 1 台，前往【商业授权】激活可解锁更多服务器
-            </span>
-          )}
+          <span className="text-muted-foreground font-medium shrink-0">
+            探针基础功能终身免费；商业授权按代理节点与客户端用户配额授权
+          </span>
         </div>
       )}
       {refusal && <p className="text-sm text-muted-foreground">{refusal}</p>}
@@ -1253,14 +1249,6 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
               toast.error("当前商业许可证已被授权中心吊销冻结，禁止添加服务器！")
               return
             }
-            if (licenseStatus) {
-              const maxServers = licenseStatus?.max_servers || licenseStatus?.limits?.max_servers || (licenseStatus?.active ? 5 : 1)
-              if (nodes.length >= maxServers) {
-                const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
-                toast.error(`当前【${planName}】配额已满（上限 ${maxServers} 台服务器，当前已建 ${nodes.length} 台），添加更多服务器请升级商业套餐！`)
-                return
-              }
-            }
             setRegistering(true)
           }}
         >
@@ -1272,14 +1260,6 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
             if (licenseStatus?.type === "revoked") {
               toast.error("当前商业许可证已被授权中心吊销冻结，禁止添加服务器！")
               return
-            }
-            if (licenseStatus) {
-              const maxServers = licenseStatus?.max_servers || licenseStatus?.limits?.max_servers || (licenseStatus?.active ? 5 : 1)
-              if (nodes.length >= maxServers) {
-                const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
-                toast.error(`当前【${planName}】配额已满（上限 ${maxServers} 台服务器，当前已建 ${nodes.length} 台），添加更多服务器请前往左侧【商业授权】升级商业套餐！`)
-                return
-              }
             }
             setCreating(true)
           }}

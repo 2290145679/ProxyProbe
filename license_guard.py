@@ -45,14 +45,14 @@ PLAN_INT_MAP = {
 }
 PLAN_STR_TO_INT = {v: k for k, v in PLAN_INT_MAP.items()}
 
-# 套餐规格标准定义
+# 套餐规格标准定义（基础探针服务器全套餐无限纳管，仅按代理节点与客户端用户配额授权）
 PLAN_MAP = {
-    "free": {"name": "免费体验版", "max_servers": 1, "max_nodes": 1, "max_users": 1},
-    "stardust": {"name": "星尘套餐", "max_servers": 3, "max_nodes": 6, "max_users": 6},
-    "planet": {"name": "行星套餐", "max_servers": 5, "max_nodes": 12, "max_users": 12},
-    "star": {"name": "恒星套餐", "max_servers": 8, "max_nodes": 18, "max_users": 18},
-    "galaxy": {"name": "星系套餐", "max_servers": 12, "max_nodes": 30, "max_users": 30},
-    "universe": {"name": "宇宙套餐", "max_servers": 20, "max_nodes": 50, "max_users": 50},
+    "free": {"name": "免费体验版", "max_servers": -1, "max_nodes": 1, "max_users": 1},
+    "stardust": {"name": "星尘套餐", "max_servers": -1, "max_nodes": 6, "max_users": 6},
+    "planet": {"name": "行星套餐", "max_servers": -1, "max_nodes": 12, "max_users": 12},
+    "star": {"name": "恒星套餐", "max_servers": -1, "max_nodes": 18, "max_users": 18},
+    "galaxy": {"name": "星系套餐", "max_servers": -1, "max_nodes": 30, "max_users": 30},
+    "universe": {"name": "宇宙套餐", "max_servers": -1, "max_nodes": 50, "max_users": 50},
 }
 
 # 尝试加载 cryptography 库，若无则使用纯 Python Ed25519 校验器
@@ -409,14 +409,14 @@ def get_current_license_status(db_conn) -> dict:
     row = cur.fetchone()
     lic_key = row[0].strip() if row and row[0] else ""
 
-    # 套餐规格标准定义
+    # 套餐规格标准定义（基础探针全套餐无限纳管）
     PLAN_MAP = {
-        "free": {"name": "免费体验版", "max_servers": 1, "max_nodes": 1, "max_users": 1},
-        "stardust": {"name": "星尘套餐", "max_servers": 3, "max_nodes": 6, "max_users": 6},
-        "planet": {"name": "行星套餐", "max_servers": 5, "max_nodes": 12, "max_users": 12},
-        "star": {"name": "恒星套餐", "max_servers": 8, "max_nodes": 18, "max_users": 18},
-        "galaxy": {"name": "星系套餐", "max_servers": 12, "max_nodes": 30, "max_users": 30},
-        "universe": {"name": "宇宙套餐", "max_servers": 20, "max_nodes": 50, "max_users": 50},
+        "free": {"name": "免费体验版", "max_servers": -1, "max_nodes": 1, "max_users": 1},
+        "stardust": {"name": "星尘套餐", "max_servers": -1, "max_nodes": 6, "max_users": 6},
+        "planet": {"name": "行星套餐", "max_servers": -1, "max_nodes": 12, "max_users": 12},
+        "star": {"name": "恒星套餐", "max_servers": -1, "max_nodes": 18, "max_users": 18},
+        "galaxy": {"name": "星系套餐", "max_servers": -1, "max_nodes": 30, "max_users": 30},
+        "universe": {"name": "宇宙套餐", "max_servers": -1, "max_nodes": 50, "max_users": 50},
     }
 
     if not lic_key:
@@ -425,10 +425,10 @@ def get_current_license_status(db_conn) -> dict:
             "active": False,
             "type": "free",
             "plan_name": free_spec["name"],
-            "max_servers": free_spec["max_servers"],
+            "max_servers": -1,
             "max_nodes": free_spec["max_nodes"],
             "max_users": free_spec["max_users"],
-            "message": "当前为免费体验模式（配额：1服务器/1节点/1用户）",
+            "message": "当前为免费体验模式（基础探针无限纳管 / 1节点 / 1用户）",
             "machine_id": mid,
             "days_left": 0
         }
@@ -525,13 +525,13 @@ def get_current_license_status(db_conn) -> dict:
     plan_type = payload.get("type", "planet")
     plan_info = PLAN_MAP.get(plan_type, {
         "name": "商业定制版",
-        "max_servers": payload.get("max_servers", 5),
+        "max_servers": -1,
         "max_nodes": payload.get("max_nodes", 12),
         "max_users": payload.get("max_users", 12)
     })
 
-    # 优先使用签发时注入的硬配额，若无则使用标准套餐配额
-    max_servers = payload.get("max_servers") or plan_info["max_servers"]
+    # 基础探针服务器全套餐无限制纳管 (-1)
+    max_servers = -1
     max_nodes = payload.get("max_nodes") or plan_info["max_nodes"]
     max_users = payload.get("max_users") or plan_info["max_users"]
 
@@ -541,7 +541,7 @@ def get_current_license_status(db_conn) -> dict:
         "plan_name": plan_info["name"],
         "customer": payload.get("customer", "商业授权"),
         "license_id": lic_key if (lic_key.startswith("PP-") and "." not in lic_key) else payload.get("id", lic_key),
-        "max_servers": max_servers,
+        "max_servers": -1,
         "max_nodes": max_nodes,
         "max_users": max_users,
         "expire_at": expire_at,
@@ -549,7 +549,7 @@ def get_current_license_status(db_conn) -> dict:
         "days_left": days_left,
         "machine_id": mid,
         "last_sync": last_sync,
-        "message": f"商业许可证有效（{plan_info['name']}：{max_servers}服/{max_nodes}节/{max_users}户）"
+        "message": f"商业许可证有效（{plan_info['name']}：探针无限/{max_nodes}节/{max_users}户）"
     }
 
 
