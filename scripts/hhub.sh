@@ -564,6 +564,15 @@ upgrade_system() {
         info "proxy-manager 二进制已更新"
     } || warn "proxy-manager 二进制下载跳过或已是最新"
 
+    # 确保 proxy-manager.service 执行的是最新的 ELF 二进制
+    if [ -f "$ROOT/proxy-manager" ] && [ -x "$ROOT/proxy-manager" ]; then
+        if grep -q "python3.*proxy_manager\.py" /etc/systemd/system/proxy-manager.service 2>/dev/null; then
+            sed -i 's|ExecStart=.*python3.*/proxy_manager\.py.*|ExecStart=/opt/monitor/proxy-manager --port 28090|' /etc/systemd/system/proxy-manager.service
+            systemctl daemon-reload 2>/dev/null || true
+            info "已自动将 proxy-manager 服务切换为编译二进制执行"
+        fi
+    fi
+
     # 2. 更新 install.sh（从 Release 库）
     curl -fsSL "${RELEASE_BASE}/install.sh" -o "$SCRIPTS_DIR/install.sh.new" 2>/dev/null && \
         mv -f "$SCRIPTS_DIR/install.sh.new" "$SCRIPTS_DIR/install.sh" && \
