@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react"
 import { 
   GitFork, Layers, Plus, RefreshCw, Copy, Check, Trash2, 
   QrCode, Box, Activity, Download, AlertCircle, ArrowRightLeft,
-  SlidersHorizontal, Sparkles, Globe
+  SlidersHorizontal, Sparkles, Globe, Pencil, ChevronDown, ChevronUp
 } from "lucide-react"
 import { toast } from "sonner"
 import QRCode from "qrcode"
@@ -50,6 +50,7 @@ export interface ProxyNode {
   remote_port?: number
   target_node_id?: number
   bandwidth_limit_mbps?: number
+  vip_levels?: string
 }
 
 export interface ProxyServer {
@@ -282,6 +283,14 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [qrNode, setQrNode] = useState<ProxyNode | null>(null)
   const [qrDataUrl, setQrDataUrl] = useState<string>("")
 
+  // Group by server & Edit & Delete Dialog states
+  const [groupByServer, setGroupByServer] = useState(false)
+  const [collapsedServers, setCollapsedServers] = useState<Record<string, boolean>>({})
+  const [editNode, setEditNode] = useState<ProxyNode | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [deleteConfirmNode, setDeleteConfirmNode] = useState<{ id: number; name: string } | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
   // Create Modal State
   const [licenseStatus, setLicenseStatus] = useState<any>(() => {
     try {
@@ -317,6 +326,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     remote_port: "",
     target_node_id: 0,
     bandwidth_limit_mbps: "0",
+    vip_levels: "",
   })
 
   const getProtocolCleanLabel = (p: string) => {
@@ -696,6 +706,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       remote_port: "",
       target_node_id: 0,
       bandwidth_limit_mbps: "0",
+      vip_levels: "",
     })
     setDialogOpen(true)
     handleKeygen("vless_reality")
@@ -816,6 +827,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           remote_port: nodeMode === "relay" ? Number(form.remote_port) : 0,
           target_node_id: nodeMode === "relay" ? Number(form.target_node_id || 0) : 0,
           bandwidth_limit_mbps: Number(form.bandwidth_limit_mbps || 0),
+          vip_levels: form.vip_levels || "",
         })
       })
       const data = await res.json()
@@ -847,19 +859,32 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     }
   }
 
-  const handleDelete = async (id: number, name: string) => {
-    if (!confirm(`确定要删除节点 [${name}] 吗？`)) return
+  const handleDelete = (id: number, name: string) => {
+    setDeleteConfirmNode({ id, name })
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirmNode) return
+    const id = deleteConfirmNode.id
+    setDeleting(true)
+    // 乐观立即从前端移除，提供零延迟极速体验并彻底杜绝弹窗堆叠
+    setProxyNodes(prev => prev.filter(n => n.id !== id))
+    setDeleteConfirmNode(null)
     try {
       const res = await fetch(`/api/proxy/nodes/${id}`, { method: "DELETE" })
       const data = await res.json()
       if (data.ok) {
-        toast.success("节点已删除")
+        toast.success("节点已成功删除")
         loadData()
       } else {
         toast.error(data.message || "删除失败")
+        loadData()
       }
     } catch {
-      toast.error("网络异常")
+      toast.error("网络异常，无法同步删除")
+      loadData()
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -1159,6 +1184,16 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               )}
             </Button>
 
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs shrink-0 select-none">
+              <Layers className="size-3.5 text-muted-foreground" />
+              <span className="text-[11px] font-medium text-foreground">按服务器归类</span>
+              <Switch
+                checked={groupByServer}
+                onCheckedChange={setGroupByServer}
+                className="scale-75"
+              />
+            </div>
+
             <Button 
               size="sm" 
               variant="outline"
@@ -1194,186 +1229,428 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           <div className="p-12 text-center text-sm text-muted-foreground">
             暂无已配置的代理节点，点击右上角【+ 新建节点】即可添加。
           </div>
-        ) : (
-          <Table>
-            <TableHeader className="bg-muted/10">
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="w-[150px] text-xs font-medium">所属服务器</TableHead>
-                <TableHead className="w-[150px] text-xs font-medium">节点名称</TableHead>
-                {isUnlockColVisible && (
-                  <TableHead className="min-w-[170px] text-xs font-medium">
-                    <div className="flex items-center gap-1.5">
-                      <span>流媒体 / AI</span>
-                      <button
-                        type="button"
-                        onClick={openUnlockConfig}
-                        title="自定义检测项与偏好设置 (Gemini / GPT / 奈飞等)"
-                        className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-                      >
-                        <SlidersHorizontal className="size-3.5" />
-                      </button>
-                    </div>
-                  </TableHead>
-                )}
-                <TableHead className="w-[150px] text-xs font-medium">协议</TableHead>
-                <TableHead className="w-[90px] text-xs font-medium">端口</TableHead>
-                <TableHead className="text-xs font-medium">伪装目标 / SNI</TableHead>
-                <TableHead className="w-[70px] text-xs font-medium">状态</TableHead>
-                <TableHead className="w-[180px] text-right text-xs font-medium">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {proxyNodes.map((n) => (
-                <TableRow key={n.id} className="hover:bg-muted/30">
-                  <TableCell className="text-xs">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`size-2 rounded-full shrink-0 ${n.is_relay ? "bg-blue-500" : "bg-emerald-500"}`} />
-                      <span className="font-medium text-foreground">{n.server_name}</span>
-                      <Badge 
-                        variant={n.server_host.includes(":") ? "secondary" : "outline"} 
-                        className={`text-[10px] py-0 px-1 font-mono shrink-0 ${
-                          n.server_host.includes(":")
-                            ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-300 dark:border-purple-800"
-                            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800"
-                        }`}
-                      >
-                        {n.server_host.includes(":") ? "IPv6" : "IPv4"}
-                      </Badge>
-                      {n.is_relay === 1 && (
-                        <Badge variant="outline" className="text-[10px] py-0 px-1 border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30">
-                          中转
+        ) : groupByServer ? (
+          <div className="space-y-4 p-4 pt-1">
+            {serverOptions
+              .map(srv => ({
+                server: srv,
+                nodes: proxyNodes.filter(n => n.server_id === srv.id || n.server_name === srv.name)
+              }))
+              .filter(g => g.nodes.length > 0)
+              .map(({ server, nodes: sNodes }) => {
+                const isCollapsed = Boolean(collapsedServers[String(server.id)])
+                return (
+                  <Card key={server.id} className="overflow-hidden border shadow-xs">
+                    <div
+                      onClick={() => setCollapsedServers(prev => ({ ...prev, [String(server.id)]: !prev[String(server.id)] }))}
+                      className="flex items-center justify-between p-3.5 bg-muted/40 hover:bg-muted/60 transition cursor-pointer select-none"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="size-2.5 rounded-full bg-emerald-500 shrink-0" />
+                        <span className="font-bold text-sm text-foreground truncate">{server.name}</span>
+                        <span className="text-xs font-mono text-muted-foreground truncate max-w-[200px]">
+                          ({server.host || server.ipv4 || "本机"})
+                        </span>
+                        <Badge variant="secondary" className="text-xs px-2 py-0.5">
+                          {sNodes.length} 个协议节点
                         </Badge>
-                      )}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <span>{isCollapsed ? "点击展开" : "点击折叠"}</span>
+                        {isCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+                      </div>
                     </div>
-                    <div className="text-[11px] text-muted-foreground font-mono truncate max-w-[150px] mt-0.5" title={n.server_host}>
-                      {n.server_host}
-                    </div>
-                    {n.is_relay === 1 && (
-                      <div className="text-[11px] text-muted-foreground mt-0.5 font-mono truncate max-w-[150px]" title={`转发至落地 ${n.remote_host}:${n.remote_port}`}>
-                        ➔ {n.remote_host}:{n.remote_port}
+
+                    {!isCollapsed && (
+                      <div className="w-full overflow-x-auto border-t">
+                        <Table>
+                          <TableHeader className="bg-muted/10">
+                            <TableRow className="hover:bg-transparent">
+                              <TableHead className="sticky left-0 z-20 bg-background min-w-[130px] max-w-[160px] text-xs font-semibold shadow-[2px_0_4px_-1px_rgba(0,0,0,0.1)]">
+                                节点名称
+                              </TableHead>
+                              <TableHead className="w-[100px] text-xs font-medium">VIP 权限</TableHead>
+                              {isUnlockColVisible && (
+                                <TableHead className="min-w-[170px] text-xs font-medium">流媒体 / AI</TableHead>
+                              )}
+                              <TableHead className="w-[140px] text-xs font-medium">协议</TableHead>
+                              <TableHead className="w-[85px] text-xs font-medium">端口</TableHead>
+                              <TableHead className="text-xs font-medium">伪装目标 / SNI</TableHead>
+                              <TableHead className="w-[65px] text-xs font-medium">状态</TableHead>
+                              <TableHead className="w-[190px] text-right text-xs font-medium">操作</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {sNodes.map((n) => (
+                              <TableRow key={n.id} className="hover:bg-muted/30">
+                                <TableCell className="sticky left-0 z-10 bg-background min-w-[130px] max-w-[160px] text-xs font-medium shadow-[2px_0_4px_-1px_rgba(0,0,0,0.1)]">
+                                  <div className="flex items-center gap-1.5 font-medium text-foreground">
+                                    {n.flag && <span className="text-sm select-none leading-none shrink-0">{n.flag}</span>}
+                                    <span className="truncate max-w-[120px] font-semibold" title={n.name}>{n.name}</span>
+                                  </div>
+                                </TableCell>
+
+                                <TableCell className="text-xs">
+                                  {n.vip_levels ? (
+                                    <div className="flex flex-wrap gap-1">
+                                      {n.vip_levels.split(",").map(v => v.trim()).filter(Boolean).map(v => (
+                                        <Badge key={v} className="text-[10px] py-0 px-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 uppercase font-mono font-semibold">
+                                          {v}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <Badge variant="outline" className="text-[10px] py-0 px-1 text-muted-foreground">
+                                      全员
+                                    </Badge>
+                                  )}
+                                </TableCell>
+
+                                {isUnlockColVisible && (
+                                  <TableCell className="text-xs">
+                                    <UnlockBadges
+                                      status={unlockStatus[String(n.id)]}
+                                      testing={testingUnlockId === n.id}
+                                      onTest={() => handleTestUnlock(n.id)}
+                                      enabledKeys={unlockEnabled}
+                                      presets={unlockPresets}
+                                      customItems={unlockCustom}
+                                      showBadges={showUnlockBadges}
+                                    />
+                                  </TableCell>
+                                )}
+
+                                <TableCell className="text-xs">
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="inline-block bg-[#7c3aed] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium shadow-sm">
+                                      {formatProtocolBadge(n.protocol)}
+                                    </span>
+                                    {Boolean(n.bandwidth_limit_mbps && n.bandwidth_limit_mbps > 0) && (
+                                      <span className="inline-block bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-medium" title={`限速: ${n.bandwidth_limit_mbps} Mbps`}>
+                                        ⚡ {n.bandwidth_limit_mbps}M
+                                      </span>
+                                    )}
+                                    {n.is_relay === 1 && (
+                                      <span className="inline-block bg-sky-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-medium shadow-sm">
+                                        Realm
+                                      </span>
+                                    )}
+                                  </div>
+                                </TableCell>
+
+                                <TableCell className="text-xs font-mono text-muted-foreground">
+                                  {n.is_relay === 1 ? (
+                                    <span title={`中转端口 ${n.port} ➔ 落地端口 ${n.remote_port}`}>
+                                      {n.port} <span className="text-blue-500 font-bold">➔</span> {n.remote_port}
+                                    </span>
+                                  ) : (
+                                    n.port
+                                  )}
+                                </TableCell>
+
+                                <TableCell className="text-xs font-mono text-muted-foreground">
+                                  {n.sni || (n.is_relay === 1 ? n.remote_host : "—")}
+                                </TableCell>
+
+                                <TableCell>
+                                  <Switch
+                                    checked={n.enabled === 1}
+                                    onCheckedChange={() => handleToggle(n.id)}
+                                    className="data-[state=checked]:bg-black dark:data-[state=checked]:bg-white"
+                                  />
+                                </TableCell>
+
+                                <TableCell className="text-right">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className={`h-7 text-xs gap-1 px-2 ${
+                                        testResult[n.id]?.ok === true
+                                          ? "text-emerald-600 hover:text-emerald-700 font-medium"
+                                          : testResult[n.id]?.ok === false
+                                          ? "text-red-500 hover:text-red-600 font-medium"
+                                          : "text-muted-foreground hover:text-foreground"
+                                      }`}
+                                      onClick={() => handleTestNode(n.id)}
+                                      disabled={testingId === n.id}
+                                      title={testResult[n.id]?.msg || "测试节点连通性"}
+                                    >
+                                      <Activity className={`size-3.5 ${testingId === n.id ? "animate-spin text-primary" : ""}`} />
+                                      {testingId === n.id ? "测试中" : testResult[n.id] ? `${testResult[n.id].ms}ms` : "测试"}
+                                    </Button>
+                                    {n.link && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground px-2"
+                                        onClick={() => copyLink(n.link!, n.id)}
+                                      >
+                                        {copiedId === n.id ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+                                        复制链接
+                                      </Button>
+                                    )}
+
+                                    {n.link && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-7 text-muted-foreground hover:text-foreground"
+                                        onClick={() => showQr(n)}
+                                        title="手机扫码"
+                                      >
+                                        <QrCode className="size-3.5" />
+                                      </Button>
+                                    )}
+
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-7 text-muted-foreground hover:text-foreground"
+                                      onClick={() => {
+                                        setEditNode(n)
+                                        setEditOpen(true)
+                                      }}
+                                      title="编辑节点配置"
+                                    >
+                                      <Pencil className="size-3.5" />
+                                    </Button>
+
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-7 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                      onClick={() => handleDelete(n.id, n.name)}
+                                      title="删除节点"
+                                    >
+                                      <Trash2 className="size-3.5" />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
                       </div>
                     )}
-                  </TableCell>
-
-                  <TableCell className="text-xs font-medium">
-                    <div className="flex items-center gap-1.5">
-                      {n.flag && <span className="text-sm select-none leading-none">{n.flag}</span>}
-                      <span>{n.name}</span>
-                    </div>
-                  </TableCell>
-
+                  </Card>
+                )
+              })}
+          </div>
+        ) : (
+          <div className="w-full overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-muted/10">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="sticky left-0 z-20 bg-background min-w-[130px] max-w-[160px] text-xs font-semibold shadow-[2px_0_4px_-1px_rgba(0,0,0,0.1)]">
+                    节点名称
+                  </TableHead>
+                  <TableHead className="w-[150px] text-xs font-medium">所属服务器</TableHead>
+                  <TableHead className="w-[90px] text-xs font-medium">VIP 权限</TableHead>
                   {isUnlockColVisible && (
+                    <TableHead className="min-w-[170px] text-xs font-medium">
+                      <div className="flex items-center gap-1.5">
+                        <span>流媒体 / AI</span>
+                        <button
+                          type="button"
+                          onClick={openUnlockConfig}
+                          title="自定义检测项与偏好设置 (Gemini / GPT / 奈飞等)"
+                          className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                        >
+                          <SlidersHorizontal className="size-3.5" />
+                        </button>
+                      </div>
+                    </TableHead>
+                  )}
+                  <TableHead className="w-[140px] text-xs font-medium">协议</TableHead>
+                  <TableHead className="w-[85px] text-xs font-medium">端口</TableHead>
+                  <TableHead className="text-xs font-medium">伪装目标 / SNI</TableHead>
+                  <TableHead className="w-[65px] text-xs font-medium">状态</TableHead>
+                  <TableHead className="w-[190px] text-right text-xs font-medium">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {proxyNodes.map((n) => (
+                  <TableRow key={n.id} className="hover:bg-muted/30">
+                    <TableCell className="sticky left-0 z-10 bg-background min-w-[130px] max-w-[160px] text-xs font-medium shadow-[2px_0_4px_-1px_rgba(0,0,0,0.1)]">
+                      <div className="flex items-center gap-1.5 font-medium text-foreground">
+                        {n.flag && <span className="text-sm select-none leading-none shrink-0">{n.flag}</span>}
+                        <span className="truncate max-w-[120px] font-semibold" title={n.name}>{n.name}</span>
+                      </div>
+                    </TableCell>
+
                     <TableCell className="text-xs">
-                      <UnlockBadges
-                        status={unlockStatus[String(n.id)]}
-                        testing={testingUnlockId === n.id}
-                        onTest={() => handleTestUnlock(n.id)}
-                        enabledKeys={unlockEnabled}
-                        presets={unlockPresets}
-                        customItems={unlockCustom}
-                        showBadges={showUnlockBadges}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`size-2 rounded-full shrink-0 ${n.is_relay ? "bg-blue-500" : "bg-emerald-500"}`} />
+                        <span className="font-medium text-foreground">{n.server_name}</span>
+                        <Badge 
+                          variant={n.server_host.includes(":") ? "secondary" : "outline"} 
+                          className={`text-[10px] py-0 px-1 font-mono shrink-0 ${
+                            n.server_host.includes(":")
+                              ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-300 dark:border-purple-800"
+                              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800"
+                          }`}
+                        >
+                          {n.server_host.includes(":") ? "IPv6" : "IPv4"}
+                        </Badge>
+                        {n.is_relay === 1 && (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1 border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30">
+                            中转
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground font-mono truncate max-w-[150px] mt-0.5" title={n.server_host}>
+                        {n.server_host}
+                      </div>
+                      {n.is_relay === 1 && (
+                        <div className="text-[11px] text-muted-foreground mt-0.5 font-mono truncate max-w-[150px]" title={`转发至落地 ${n.remote_host}:${n.remote_port}`}>
+                          ➔ {n.remote_host}:{n.remote_port}
+                        </div>
+                      )}
+                    </TableCell>
+
+                    <TableCell className="text-xs">
+                      {n.vip_levels ? (
+                        <div className="flex flex-wrap gap-1">
+                          {n.vip_levels.split(",").map(v => v.trim()).filter(Boolean).map(v => (
+                            <Badge key={v} className="text-[10px] py-0 px-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 uppercase font-mono font-semibold">
+                              {v}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] py-0 px-1 text-muted-foreground">
+                          全员
+                        </Badge>
+                      )}
+                    </TableCell>
+
+                    {isUnlockColVisible && (
+                      <TableCell className="text-xs">
+                        <UnlockBadges
+                          status={unlockStatus[String(n.id)]}
+                          testing={testingUnlockId === n.id}
+                          onTest={() => handleTestUnlock(n.id)}
+                          enabledKeys={unlockEnabled}
+                          presets={unlockPresets}
+                          customItems={unlockCustom}
+                          showBadges={showUnlockBadges}
+                        />
+                      </TableCell>
+                    )}
+
+                    <TableCell className="text-xs">
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="inline-block bg-[#7c3aed] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium shadow-sm">
+                          {formatProtocolBadge(n.protocol)}
+                        </span>
+                        {Boolean(n.bandwidth_limit_mbps && n.bandwidth_limit_mbps > 0) && (
+                          <span className="inline-block bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-medium" title={`限速: ${n.bandwidth_limit_mbps} Mbps`}>
+                            ⚡ {n.bandwidth_limit_mbps}M
+                          </span>
+                        )}
+                        {n.is_relay === 1 && (
+                          <span className="inline-block bg-sky-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-medium shadow-sm">
+                            Realm
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="text-xs font-mono text-muted-foreground">
+                      {n.is_relay === 1 ? (
+                        <span title={`中转端口 ${n.port} ➔ 落地端口 ${n.remote_port}`}>
+                          {n.port} <span className="text-blue-500 font-bold">➔</span> {n.remote_port}
+                        </span>
+                      ) : (
+                        n.port
+                      )}
+                    </TableCell>
+
+                    <TableCell className="text-xs font-mono text-muted-foreground">
+                      {n.sni || (n.is_relay === 1 ? n.remote_host : "—")}
+                    </TableCell>
+
+                    <TableCell>
+                      <Switch
+                        checked={n.enabled === 1}
+                        onCheckedChange={() => handleToggle(n.id)}
+                        className="data-[state=checked]:bg-black dark:data-[state=checked]:bg-white"
                       />
                     </TableCell>
-                  )}
 
-                  <TableCell className="text-xs">
-                    <div className="flex flex-wrap items-center gap-1">
-                      <span className="inline-block bg-[#7c3aed] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium shadow-sm">
-                        {formatProtocolBadge(n.protocol)}
-                      </span>
-                      {Boolean(n.bandwidth_limit_mbps && n.bandwidth_limit_mbps > 0) && (
-                        <span className="inline-block bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-medium" title={`限速: ${n.bandwidth_limit_mbps} Mbps`}>
-                          ⚡ {n.bandwidth_limit_mbps}M
-                        </span>
-                      )}
-                      {n.is_relay === 1 && (
-                        <span className="inline-block bg-sky-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-medium shadow-sm">
-                          Realm
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-
-                  <TableCell className="text-xs font-mono text-muted-foreground">
-                    {n.is_relay === 1 ? (
-                      <span title={`中转端口 ${n.port} ➔ 落地端口 ${n.remote_port}`}>
-                        {n.port} <span className="text-blue-500 font-bold">➔</span> {n.remote_port}
-                      </span>
-                    ) : (
-                      n.port
-                    )}
-                  </TableCell>
-
-                  <TableCell className="text-xs font-mono text-muted-foreground">
-                    {n.sni || (n.is_relay === 1 ? n.remote_host : "—")}
-                  </TableCell>
-
-                  <TableCell>
-                    <Switch
-                      checked={n.enabled === 1}
-                      onCheckedChange={() => handleToggle(n.id)}
-                      className="data-[state=checked]:bg-black dark:data-[state=checked]:bg-white"
-                    />
-                  </TableCell>
-
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={`h-7 text-xs gap-1 px-2 ${
-                          testResult[n.id]?.ok === true
-                            ? "text-emerald-600 hover:text-emerald-700 font-medium"
-                            : testResult[n.id]?.ok === false
-                            ? "text-red-500 hover:text-red-600 font-medium"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                        onClick={() => handleTestNode(n.id)}
-                        disabled={testingId === n.id}
-                        title={testResult[n.id]?.msg || "测试节点连通性"}
-                      >
-                        <Activity className={`size-3.5 ${testingId === n.id ? "animate-spin text-primary" : ""}`} />
-                        {testingId === n.id ? "测试中" : testResult[n.id] ? `${testResult[n.id].ms}ms` : "测试"}
-                      </Button>
-                      {n.link && (
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground px-2"
-                          onClick={() => copyLink(n.link!, n.id)}
+                          className={`h-7 text-xs gap-1 px-2 ${
+                            testResult[n.id]?.ok === true
+                              ? "text-emerald-600 hover:text-emerald-700 font-medium"
+                              : testResult[n.id]?.ok === false
+                              ? "text-red-500 hover:text-red-600 font-medium"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          onClick={() => handleTestNode(n.id)}
+                          disabled={testingId === n.id}
+                          title={testResult[n.id]?.msg || "测试节点连通性"}
                         >
-                          {copiedId === n.id ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
-                          复制链接
+                          <Activity className={`size-3.5 ${testingId === n.id ? "animate-spin text-primary" : ""}`} />
+                          {testingId === n.id ? "测试中" : testResult[n.id] ? `${testResult[n.id].ms}ms` : "测试"}
                         </Button>
-                      )}
+                        {n.link && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground px-2"
+                            onClick={() => copyLink(n.link!, n.id)}
+                          >
+                            {copiedId === n.id ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+                            复制链接
+                          </Button>
+                        )}
 
-                      {n.link && (
+                        {n.link && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 text-muted-foreground hover:text-foreground"
+                            onClick={() => showQr(n)}
+                            title="手机扫码"
+                          >
+                            <QrCode className="size-3.5" />
+                          </Button>
+                        )}
+
                         <Button
                           variant="ghost"
                           size="icon"
                           className="size-7 text-muted-foreground hover:text-foreground"
-                          onClick={() => showQr(n)}
-                          title="手机扫码"
+                          onClick={() => {
+                            setEditNode(n)
+                            setEditOpen(true)
+                          }}
+                          title="编辑节点配置"
                         >
-                          <QrCode className="size-3.5" />
+                          <Pencil className="size-3.5" />
                         </Button>
-                      )}
 
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                        onClick={() => handleDelete(n.id, n.name)}
-                        title="删除节点"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                          onClick={() => handleDelete(n.id, n.name)}
+                          title="删除节点"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </Card>
 
@@ -1994,6 +2271,22 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </p>
             </div>
 
+            <div className="space-y-1.5 w-full min-w-0 pt-2 border-t">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">VIP 访问权限等级 (留空全员可见)</Label>
+                <span className="text-[11px] text-muted-foreground font-mono">如: vip1 或 vip1,vip2</span>
+              </div>
+              <Input
+                className="text-xs h-8 font-mono w-full"
+                value={form.vip_levels}
+                placeholder="留空为所有等级可见，多个用英文逗号隔开，如 vip1,vip2"
+                onChange={e => setForm(prev => ({ ...prev, vip_levels: e.target.value }))}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                设置允许访问该节点的 VIP 套餐等级。留空则普通用户和所有 VIP 均可访问；若设置了 vip1,vip2，则仅对应等级用户可见并可订阅。
+              </p>
+            </div>
+
             <DialogFooter className="pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(false)} className="h-8 text-xs">
                 取消
@@ -2272,6 +2565,52 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 节点编辑 Dialog */}
+      <EditNodeDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        node={editNode}
+        onSuccess={() => {
+          loadData()
+          loadStatus()
+        }}
+      />
+
+      {/* 删除单实例确认 Dialog (杜绝系统弹窗堆叠与删除延迟) */}
+      {deleteConfirmNode && (
+        <Dialog open={true} onOpenChange={(open) => { if (!open) setDeleteConfirmNode(null) }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-base font-semibold flex items-center gap-2 text-rose-600">
+                <Trash2 className="size-4" /> 确认删除节点
+              </DialogTitle>
+              <DialogDescription className="text-xs pt-1">
+                确定要删除节点【{deleteConfirmNode.name}】吗？此操作将立即停止该协议服务并不可恢复。
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="pt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleteConfirmNode(null)}
+                className="h-8 text-xs"
+              >
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={deleting}
+                onClick={handleConfirmDelete}
+                className="h-8 text-xs"
+              >
+                {deleting ? "正在删除..." : "确认删除"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
@@ -2296,6 +2635,7 @@ function BatchCreateDialog({
     "ss2022",
   ])
   const [bandwidth, setBandwidth] = useState<string>("0")
+  const [vipLevels, setVipLevels] = useState<string>("")
   const [submitting, setSubmitting] = useState(false)
 
   // 当外部服务器列表更新且当前尚未选定时自动同步
@@ -2335,6 +2675,7 @@ function BatchCreateDialog({
           server_id: parseInt(serverId) || 0,
           protocols,
           bandwidth_limit_mbps: parseInt(bandwidth) || 0,
+          vip_levels: vipLevels,
         }),
       })
       const data = await res.json()
@@ -2437,6 +2778,22 @@ function BatchCreateDialog({
             </p>
           </div>
 
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium">统一 VIP 访问等级 (留空全员可见)</Label>
+              <span className="text-[11px] text-muted-foreground font-mono">如: vip1 或 vip1,vip2</span>
+            </div>
+            <Input
+              value={vipLevels}
+              onChange={(e) => setVipLevels(e.target.value)}
+              placeholder="留空为所有等级可见，多个用英文逗号隔开，如 vip1,vip2"
+              className="text-xs h-9 font-mono"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              为批量创建的所有节点绑定 VIP 权限。留空代表全员可访问与订阅。
+            </p>
+          </div>
+
           <DialogFooter className="pt-2">
             <Button
               type="button"
@@ -2454,6 +2811,207 @@ function BatchCreateDialog({
               className="h-8 text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {submitting ? "正在批量生成..." : `立即生成全家桶 (${protocols.length} 个节点)`}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function EditNodeDialog({
+  open,
+  onOpenChange,
+  node,
+  onSuccess,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  node: ProxyNode | null
+  onSuccess: () => void
+}) {
+  const [form, setForm] = useState({
+    name: "",
+    port: "",
+    uuid: "",
+    password: "",
+    sni: "",
+    bandwidth_limit_mbps: "0",
+    vip_levels: "",
+    enabled: 1,
+  })
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (node) {
+      setForm({
+        name: node.name || "",
+        port: String(node.port || ""),
+        uuid: node.uuid || "",
+        password: node.password || "",
+        sni: node.sni || "",
+        bandwidth_limit_mbps: String(node.bandwidth_limit_mbps || 0),
+        vip_levels: node.vip_levels || "",
+        enabled: node.enabled ?? 1,
+      })
+    }
+  }, [node])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!node) return
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/proxy/nodes/${node.id}/edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name,
+          port: parseInt(form.port),
+          uuid: form.uuid,
+          password: form.password,
+          sni: form.sni,
+          bandwidth_limit_mbps: parseInt(form.bandwidth_limit_mbps) || 0,
+          vip_levels: form.vip_levels,
+          enabled: form.enabled,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.message || "更新节点失败")
+      toast.success(data.message || "节点配置已更新！")
+      onOpenChange(false)
+      onSuccess()
+    } catch (err: any) {
+      toast.error(err.message || "更新出错")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!node) return null
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[96vw] max-w-lg max-h-[88vh] overflow-y-auto p-4 sm:p-6">
+        <DialogHeader>
+          <DialogTitle className="text-base font-semibold flex items-center gap-2">
+            <Pencil className="size-4 text-primary" /> 编辑代理节点: {node.name}
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            修改节点的端口、密钥、SNI 伪装、限速策略及 VIP 套餐访问权限。
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">节点名称</Label>
+            <Input
+              value={form.name}
+              onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
+              required
+              className="text-xs h-8"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">服务监听端口</Label>
+              <Input
+                type="number"
+                value={form.port}
+                onChange={e => setForm(prev => ({ ...prev, port: e.target.value }))}
+                required
+                className="text-xs h-8 font-mono"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">单节点限速 (Mbps, 0为不限)</Label>
+              <Input
+                type="number"
+                min="0"
+                value={form.bandwidth_limit_mbps}
+                onChange={e => setForm(prev => ({ ...prev, bandwidth_limit_mbps: e.target.value }))}
+                className="text-xs h-8 font-mono"
+              />
+            </div>
+          </div>
+
+          {node.uuid && (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">用户 UUID</Label>
+              <Input
+                value={form.uuid}
+                onChange={e => setForm(prev => ({ ...prev, uuid: e.target.value }))}
+                className="text-xs h-8 font-mono"
+              />
+            </div>
+          )}
+
+          {node.password && (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">认证密码 / 预共享密钥</Label>
+              <Input
+                value={form.password}
+                onChange={e => setForm(prev => ({ ...prev, password: e.target.value }))}
+                className="text-xs h-8 font-mono"
+              />
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">SNI 伪装域名</Label>
+            <Input
+              value={form.sni}
+              onChange={e => setForm(prev => ({ ...prev, sni: e.target.value }))}
+              className="text-xs h-8 font-mono"
+              placeholder="如 www.apple.com"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium">VIP 访问权限等级</Label>
+              <span className="text-[11px] text-muted-foreground font-mono">如: vip1 或 vip1,vip2</span>
+            </div>
+            <Input
+              value={form.vip_levels}
+              onChange={e => setForm(prev => ({ ...prev, vip_levels: e.target.value }))}
+              placeholder="留空为所有用户可见，多个用英文逗号隔开，如 vip1,vip2"
+              className="text-xs h-8 font-mono"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              绑定对应的 VIP 套餐等级。留空则普通用户和所有 VIP 用户均可获取。
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/20">
+            <div className="space-y-0.5">
+              <div className="text-xs font-medium">节点启用状态</div>
+              <div className="text-[11px] text-muted-foreground">关闭后将停止下发该节点</div>
+            </div>
+            <Switch
+              checked={form.enabled === 1}
+              onCheckedChange={checked => setForm(prev => ({ ...prev, enabled: checked ? 1 : 0 }))}
+            />
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              className="h-8 text-xs"
+            >
+              取消
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={saving}
+              className="h-8 text-xs bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+            >
+              {saving ? "正在保存..." : "保存修改"}
             </Button>
           </DialogFooter>
         </form>

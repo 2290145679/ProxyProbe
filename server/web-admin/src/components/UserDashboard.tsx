@@ -4,8 +4,12 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  Bell,
   Calendar,
+  ChevronRight,
   Copy,
+  Crown,
+  Download,
   ExternalLink,
   Eye,
   EyeOff,
@@ -33,6 +37,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -43,6 +48,7 @@ export type UserProfile = {
   id: number
   username: string
   is_admin: boolean
+  vip_level?: string
   sub_token: string
   sub_url: string
   clash_url?: string
@@ -127,6 +133,16 @@ export function UserDashboard({
   const [refreshing, setRefreshing] = useState(false)
   const [supportTg, setSupportTg] = useState<{ enabled: boolean; telegram_url: string }>({ enabled: false, telegram_url: "" })
 
+  // 系统公告、全局通知与客户端软件专区
+  const [announcements, setAnnouncements] = useState<any[]>([])
+  const [selectedAnnouncement, setSelectedAnnouncement] = useState<any | null>(null)
+  const [announcementDialogOpen, setAnnouncementDialogOpen] = useState(false)
+
+  const [globalNotice, setGlobalNotice] = useState<{ title: string; content: string } | null>(null)
+  const [globalNoticeOpen, setGlobalNoticeOpen] = useState(false)
+
+  const [clientApps, setClientApps] = useState<any[]>([])
+
   // 获取 Telegram 客服支持设置 (若后台关闭则完全不展示)
   useEffect(() => {
     fetch("/api/proxy/settings/support")
@@ -134,6 +150,32 @@ export function UserDashboard({
       .then(data => {
         if (data.ok && data.enabled && data.telegram_url) {
           setSupportTg({ enabled: true, telegram_url: data.telegram_url })
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // 加载公告、通知与软件列表
+  useEffect(() => {
+    fetch("/api/proxy/user/announcements")
+      .then(r => r.json())
+      .then(d => { if (d.ok && Array.isArray(d.announcements)) setAnnouncements(d.announcements) })
+      .catch(() => {})
+
+    fetch("/api/proxy/user/apps")
+      .then(r => r.json())
+      .then(d => { if (d.ok && Array.isArray(d.apps)) setClientApps(d.apps) })
+      .catch(() => {})
+
+    fetch("/api/proxy/user/notification")
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok && d.enabled && d.title) {
+          setGlobalNotice({ title: d.title, content: d.content || "" })
+          const dismissed = sessionStorage.getItem("dismissed_notice_" + d.title)
+          if (!dismissed) {
+            setGlobalNoticeOpen(true)
+          }
         }
       })
       .catch(() => {})
@@ -411,7 +453,16 @@ export function UserDashboard({
           </div>
 
           {/* 详细指标网格 */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-2">
+            <div className="rounded-lg bg-muted/50 p-3 space-y-1 border border-border/50">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Crown className="size-3.5 text-amber-500" /> VIP 等级套餐
+              </div>
+              <p className="text-base font-semibold tracking-tight uppercase font-mono text-amber-600 dark:text-amber-400">
+                {user.vip_level || "VIP1"}
+              </p>
+            </div>
+
             <div className="rounded-lg bg-muted/50 p-3 space-y-1 border border-border/50">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <ArrowUp className="size-3.5 text-blue-500" /> 上传流量
@@ -444,7 +495,7 @@ export function UserDashboard({
               </p>
             </div>
 
-            <div className="rounded-lg bg-muted/50 p-3 space-y-1 border border-border/50 col-span-2 sm:col-span-1">
+            <div className="rounded-lg bg-muted/50 p-3 space-y-1 border border-border/50">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Calendar className="size-3.5 text-amber-500" /> 到期时间
               </div>
@@ -454,6 +505,110 @@ export function UserDashboard({
             </div>
           </div>
         </Card>
+
+        {/* 系统公告栏 (点击展开详细内容) */}
+        {announcements.length > 0 && (
+          <Card className="p-4 sm:p-5 border shadow-sm space-y-3">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2">
+                <Bell className="size-4 text-primary" />
+                <h3 className="text-sm font-bold">系统公告</h3>
+                <Badge variant="secondary" className="text-[10px] py-0 px-1.5">{announcements.length} 条</Badge>
+              </div>
+              <span className="text-[11px] text-muted-foreground">点击标题查看详细内容</span>
+            </div>
+            <div className="divide-y divide-border/60">
+              {announcements.map((a) => (
+                <div
+                  key={a.id}
+                  onClick={() => {
+                    setSelectedAnnouncement(a)
+                    setAnnouncementDialogOpen(true)
+                  }}
+                  className="py-2.5 flex items-center justify-between gap-3 hover:bg-muted/40 px-2 rounded-md transition cursor-pointer select-none group"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {a.is_pinned === 1 && (
+                      <Badge className="text-[10px] py-0 px-1.5 bg-rose-500/10 text-rose-600 border border-rose-500/20 shrink-0">
+                        置顶
+                      </Badge>
+                    )}
+                    <span className="text-xs font-medium text-foreground group-hover:text-primary transition-colors truncate">
+                      {a.title}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 text-muted-foreground">
+                    <span className="text-[11px] font-mono">
+                      {new Date(a.created_at * 1000).toLocaleDateString()}
+                    </span>
+                    <ChevronRight className="size-3.5 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* 常用客户端软件下载专区 */}
+        {clientApps.length > 0 && (
+          <Card className="p-4 sm:p-5 border shadow-sm space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Download className="size-4 text-emerald-500" />
+                  <h3 className="text-sm font-bold">常用客户端软件下载专区</h3>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  支持各主流操作系统翻墙软件，提供本地高速下载与官方镜像直链。
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
+              {clientApps.map((app) => (
+                <div key={app.id} className="p-3.5 rounded-lg border bg-muted/20 space-y-2.5 flex flex-col justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-foreground truncate">{app.name}</span>
+                      <Badge variant="outline" className="text-[10px] font-mono">
+                        {app.platform}
+                      </Badge>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      版本：{app.version || "最新版"}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2 border-t">
+                    {app.has_local_file === 1 && (
+                      <Button
+                        size="sm"
+                        asChild
+                        className="h-7 text-[11px] flex-1 bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                      >
+                        <a href={`/api/proxy/apps/download/${app.id}`} download>
+                          <Download className="size-3" /> 本地高速下载
+                        </a>
+                      </Button>
+                    )}
+                    {app.mirror_url && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        asChild
+                        className="h-7 text-[11px] flex-1 gap-1"
+                      >
+                        <a href={app.mirror_url} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink className="size-3" /> 官方镜像下载
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
 
         {/* 卡片 2：专属聚合订阅与一键导入 */}
         <Card className="p-4 sm:p-6 space-y-4 sm:space-y-5 border shadow-sm">
@@ -717,6 +872,66 @@ export function UserDashboard({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* 公告详细弹窗 */}
+      <Dialog open={announcementDialogOpen} onOpenChange={setAnnouncementDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              {selectedAnnouncement?.is_pinned === 1 && (
+                <Badge className="text-[10px] py-0 px-1.5 bg-rose-500/10 text-rose-600 border border-rose-500/20">
+                  置顶
+                </Badge>
+              )}
+              <DialogTitle className="text-base font-bold">{selectedAnnouncement?.title}</DialogTitle>
+            </div>
+            <DialogDescription className="text-[11px] text-muted-foreground font-mono">
+              发布时间：{selectedAnnouncement?.created_at ? new Date(selectedAnnouncement.created_at * 1000).toLocaleString() : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2 text-xs text-foreground whitespace-pre-wrap leading-relaxed max-h-[60vh] overflow-y-auto">
+            {selectedAnnouncement?.content}
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button size="sm" onClick={() => setAnnouncementDialogOpen(false)} className="h-8 text-xs">
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 登录全局自动弹窗通知 */}
+      {globalNotice && (
+        <Dialog open={globalNoticeOpen} onOpenChange={setGlobalNoticeOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <div className="flex items-center gap-2">
+                <Bell className="size-4 text-primary" />
+                <DialogTitle className="text-base font-bold">{globalNotice.title}</DialogTitle>
+              </div>
+            </DialogHeader>
+
+            <div className="py-2 text-xs text-foreground whitespace-pre-wrap leading-relaxed max-h-[60vh] overflow-y-auto">
+              {globalNotice.content}
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  sessionStorage.setItem("dismissed_notice_" + globalNotice.title, "1")
+                  setGlobalNoticeOpen(false)
+                }}
+                className="h-8 text-xs bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                我知道了
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

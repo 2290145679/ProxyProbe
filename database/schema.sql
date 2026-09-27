@@ -102,3 +102,44 @@ CREATE TABLE IF NOT EXISTS node_proxy_status (
   log TEXT,                                -- 被控端诊断信息 (包括网络、防火墙、进程等快照)
   last_seen INTEGER                        -- 最后同步心跳时间戳
 );
+
+-- 8. 【新增】VIP 套餐等级表
+CREATE TABLE IF NOT EXISTS proxy_tier (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tier_key TEXT UNIQUE NOT NULL,           -- 套餐标识，如 vip1, vip2
+  tier_id TEXT DEFAULT '',                 -- 别名兼容
+  name TEXT NOT NULL,                      -- 套餐显示名称
+  description TEXT DEFAULT '',             -- 套餐详细说明
+  speed_limit_mbps INTEGER DEFAULT 0,      -- 限速限制 (0为不限)
+  device_limit INTEGER DEFAULT 0,          -- 在线设备限制
+  sort_order INTEGER DEFAULT 0,            -- 排序权重
+  created_at INTEGER NOT NULL              -- 创建时间戳
+);
+
+-- 9. 【新增】系统公告表
+CREATE TABLE IF NOT EXISTS proxy_announcement (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,                     -- 公告标题
+  summary TEXT DEFAULT '',                 -- 公告概要
+  content TEXT NOT NULL,                   -- 公告正文内容
+  is_pinned INTEGER DEFAULT 0,             -- 是否置顶 (1=置顶, 0=正常)
+  enabled INTEGER DEFAULT 1,               -- 是否生效显示
+  created_at INTEGER NOT NULL,             -- 创建时间
+  updated_at INTEGER NOT NULL              -- 更新时间
+);
+
+-- 10. 【新增】客户端软件下载专区表
+CREATE TABLE IF NOT EXISTS proxy_app_download (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,                      -- 软件名称 (如 Clash Verge Rev)
+  platform TEXT DEFAULT 'all',             -- 适用平台 (windows / android / ios / mac / all)
+  version TEXT DEFAULT '',                 -- 软件版本号
+  description TEXT DEFAULT '',             -- 软件说明及安装指引
+  file_path TEXT DEFAULT '',               -- 本地二进制安装包存储物理路径
+  file_name TEXT DEFAULT '',               -- 上传的原文件名
+  file_size INTEGER DEFAULT 0,             -- 文件字节大小
+  external_url TEXT DEFAULT '',            -- 官方外部备用镜像下载链接
+  sort_order INTEGER DEFAULT 0,            -- 展示排序
+  enabled INTEGER DEFAULT 1,               -- 是否启用展示
+  created_at INTEGER NOT NULL              -- 创建时间
+);

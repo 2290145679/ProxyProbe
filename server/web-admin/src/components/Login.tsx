@@ -288,18 +288,16 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="password" className="text-xs">密码</Label>
-                    {authConfig.smtp_enabled && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setUserMode("reset")
-                          setError("")
-                        }}
-                        className="text-[11px] text-primary hover:underline"
-                      >
-                        忘记密码？
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserMode("reset")
+                        setError("")
+                      }}
+                      className="text-[11px] text-primary hover:underline"
+                    >
+                      忘记密码？
+                    </button>
                   </div>
                   <Input
                     id="password"
@@ -321,83 +319,106 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
                   {busy ? "登录中…" : "登录用户中心"}
                 </Button>
 
-                {authConfig.register_enabled && (
-                  <div className="pt-2 text-center">
-                    <span className="text-xs text-muted-foreground">还没有账号？</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUserMode("register")
-                        setError("")
-                      }}
-                      className="ml-1 text-xs text-primary font-semibold hover:underline"
-                    >
-                      立即邮箱注册
-                    </button>
-                  </div>
-                )}
+                <div className="pt-2 text-center">
+                  <span className="text-xs text-muted-foreground">还没有账号？</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserMode("register")
+                      setError("")
+                    }}
+                    className="ml-1 text-xs text-primary font-semibold hover:underline"
+                  >
+                    立即注册账号
+                  </button>
+                </div>
               </form>
             )}
 
             {userMode === "register" && (
-              <form onSubmit={handleRegister} className="space-y-3 pt-1">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">电子邮箱</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="email"
-                      placeholder="your_email@gmail.com"
-                      className="h-9 text-xs flex-1"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                      autoFocus
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleSendCode("register")}
-                      disabled={sendingCode || cooldown > 0 || !email}
-                      className="h-9 text-xs shrink-0 px-2.5"
-                    >
-                      {sendingCode ? "发送中..." : cooldown > 0 ? `${cooldown}s` : "获取验证码"}
-                    </Button>
+              <div className="space-y-3 pt-1">
+                {!authConfig.register_enabled ? (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-center space-y-2">
+                    <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                      ⚠️ 系统暂未开放自主注册
+                    </p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      当前管理员尚未开放新用户自主注册通道。如需开通节点加速账号，请联系站点管理员！
+                    </p>
+                    {authConfig.support_tg_enabled && authConfig.support_tg_url && (
+                      <div className="pt-1">
+                        <a
+                          href={authConfig.support_tg_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-sky-500 text-white hover:bg-sky-600 transition"
+                        >
+                          联系 Telegram 客服开通
+                        </a>
+                      </div>
+                    )}
                   </div>
-                </div>
+                ) : (
+                  <form onSubmit={handleRegister} className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">电子邮箱</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          type="email"
+                          placeholder="your_email@gmail.com"
+                          className="h-9 text-xs flex-1"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          required
+                          autoFocus
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSendCode("register")}
+                          disabled={sendingCode || cooldown > 0 || !email}
+                          className="h-9 text-xs shrink-0 px-2.5"
+                        >
+                          {sendingCode ? "发送中..." : cooldown > 0 ? `${cooldown}s` : "获取验证码"}
+                        </Button>
+                      </div>
+                    </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs">6 位数字验证码</Label>
-                  <Input
-                    type="text"
-                    maxLength={6}
-                    placeholder="请输入邮箱收到的 6 位验证码"
-                    className="h-9 text-xs font-mono tracking-widest text-center"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value.trim())}
-                    required
-                  />
-                </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">6 位数字验证码</Label>
+                      <Input
+                        type="text"
+                        maxLength={6}
+                        placeholder="请输入邮箱收到的 6 位验证码"
+                        className="h-9 text-xs font-mono tracking-widest text-center"
+                        value={code}
+                        onChange={(e) => setCode(e.target.value.trim())}
+                        required
+                      />
+                    </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs">设置登录密码</Label>
-                  <Input
-                    type="password"
-                    placeholder="密码长度至少 6 位"
-                    className="h-9 text-xs"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
-                </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">设置登录密码</Label>
+                      <Input
+                        type="password"
+                        placeholder="密码长度至少 6 位"
+                        className="h-9 text-xs"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                      />
+                    </div>
 
-                <Button
-                  type="submit"
-                  className="w-full h-9 text-xs font-medium"
-                  disabled={busy || !email || !code || !password}
-                >
-                  {busy ? "注册中…" : "完成注册并自动登录"}
-                </Button>
+                    <Button
+                      type="submit"
+                      className="w-full h-9 text-xs font-medium"
+                      disabled={busy || !email || !code || !password}
+                    >
+                      {busy ? "注册中…" : "完成注册并自动登录"}
+                    </Button>
+                  </form>
+                )}
 
                 <div className="pt-2 text-center">
                   <button
@@ -411,35 +432,58 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
                     <ArrowLeft className="size-3" /> 返回已有账号登录
                   </button>
                 </div>
-              </form>
+              </div>
             )}
 
             {userMode === "reset" && (
-              <form onSubmit={handleResetPassword} className="space-y-3 pt-1">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">注册邮箱</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="email"
-                      placeholder="请输入您的注册邮箱"
-                      className="h-9 text-xs flex-1"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                      autoFocus
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleSendCode("reset_password")}
-                      disabled={sendingCode || cooldown > 0 || !email}
-                      className="h-9 text-xs shrink-0 px-2.5"
-                    >
-                      {sendingCode ? "发送中..." : cooldown > 0 ? `${cooldown}s` : "获取验证码"}
-                    </Button>
+              <div className="space-y-3 pt-1">
+                {!authConfig.smtp_enabled ? (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-center space-y-2">
+                    <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                      ⚠️ 邮箱找回密码未开启
+                    </p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      当前系统管理员尚未配置或开启邮件发信服务，无法自动通过邮箱找回密码。请直接联系管理员帮您重置密码！
+                    </p>
+                    {authConfig.support_tg_enabled && authConfig.support_tg_url && (
+                      <div className="pt-1">
+                        <a
+                          href={authConfig.support_tg_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-sky-500 text-white hover:bg-sky-600 transition"
+                        >
+                          联系 Telegram 客服重置
+                        </a>
+                      </div>
+                    )}
                   </div>
-                </div>
+                ) : (
+                  <form onSubmit={handleResetPassword} className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">注册邮箱</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          type="email"
+                          placeholder="请输入您的注册邮箱"
+                          className="h-9 text-xs flex-1"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          required
+                          autoFocus
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSendCode("reset_password")}
+                          disabled={sendingCode || cooldown > 0 || !email}
+                          className="h-9 text-xs shrink-0 px-2.5"
+                        >
+                          {sendingCode ? "发送中..." : cooldown > 0 ? `${cooldown}s` : "获取验证码"}
+                        </Button>
+                      </div>
+                    </div>
 
                 <div className="space-y-1.5">
                   <Label className="text-xs">6 位数字验证码</Label>
@@ -473,23 +517,25 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
                 >
                   {busy ? "重置中…" : "确认重置密码"}
                 </Button>
-
-                <div className="pt-2 text-center">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUserMode("login")
-                      setError("")
-                    }}
-                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    <ArrowLeft className="size-3" /> 返回登录
-                  </button>
-                </div>
               </form>
             )}
+
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setUserMode("login")
+                  setError("")
+                }}
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="size-3" /> 返回登录
+              </button>
+            </div>
           </div>
-        ) : (
+        )}
+      </div>
+    ) : (
           <div className="space-y-3 pt-1">
             {github && (
               <>

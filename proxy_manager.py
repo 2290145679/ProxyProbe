@@ -1293,7 +1293,8 @@ def init_db():
             ("last_check_latency", "INTEGER DEFAULT 0"),
             ("last_check_time", "INTEGER DEFAULT 0"),
             ("last_check_error", "TEXT DEFAULT ''"),
-            ("bandwidth_limit_mbps", "INTEGER DEFAULT 0")
+            ("bandwidth_limit_mbps", "INTEGER DEFAULT 0"),
+            ("vip_levels", "TEXT DEFAULT ''")
         ]:
             try:
                 conn.execute(f"ALTER TABLE proxy_node ADD COLUMN {col_name} {col_type}")
@@ -1307,6 +1308,93 @@ def init_db():
 
         try:
             conn.execute("ALTER TABLE proxy_user ADD COLUMN bandwidth_limit_mbps INTEGER DEFAULT 0")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE proxy_user ADD COLUMN vip_level TEXT DEFAULT 'vip1'")
+        except Exception:
+            pass
+
+        # VIP 套餐等级表
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS proxy_tier (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tier_key TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            speed_limit_mbps INTEGER DEFAULT 0,
+            device_limit INTEGER DEFAULT 0,
+            sort_order INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL
+        )
+        """)
+        try:
+            cur_t = conn.execute("SELECT COUNT(*) FROM proxy_tier")
+            if cur_t.fetchone()[0] == 0:
+                now_init = int(time.time())
+                conn.execute("INSERT INTO proxy_tier (tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                             ("vip1", "VIP1 基础会员", "标准高速节点接入", 100, 3, 1, now_init))
+                conn.execute("INSERT INTO proxy_tier (tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                             ("vip2", "VIP2 进阶专线", "专线低延迟高速节点", 300, 5, 2, now_init))
+                conn.execute("INSERT INTO proxy_tier (tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                             ("vip3", "VIP3 旗舰尊享", "顶级全协议极速专线", 1000, 10, 3, now_init))
+        except Exception:
+            pass
+
+        # 系统公告表
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS proxy_announcement (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            summary TEXT DEFAULT '',
+            content TEXT NOT NULL,
+            is_pinned INTEGER DEFAULT 0,
+            enabled INTEGER DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+        """)
+
+        # 客户端下载专区表
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS proxy_app_download (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            platform TEXT DEFAULT 'all',
+            version TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            file_name TEXT DEFAULT '',
+            file_size INTEGER DEFAULT 0,
+            external_url TEXT DEFAULT '',
+            sort_order INTEGER DEFAULT 0,
+            enabled INTEGER DEFAULT 1,
+            created_at INTEGER NOT NULL
+        )
+        """)
+        try:
+            cur_a = conn.execute("SELECT COUNT(*) FROM proxy_app_download")
+            if cur_a.fetchone()[0] == 0:
+                now_init = int(time.time())
+                presets = [
+                    ("Clash Verge Rev", "windows", "v1.7.5", "支持分流规则与全协议的现代跨平台客户端 (Windows 推荐)", "", "", 0, "https://github.com/clash-verge-rev/clash-verge-rev/releases", 1, 1, now_init),
+                    ("NekoBox for Android", "android", "v1.3.1", "Android 平台强大通用的轻量级代理核心客户端", "", "", 0, "https://github.com/MatsuriDayo/NekoBoxForAndroid/releases", 2, 1, now_init),
+                    ("FLClash", "all", "v0.8.69", "颜值极高、功能现代的全平台 Clash 客户端 (Win/Mac/Android)", "", "", 0, "https://github.com/chen08209/FlClash/releases", 3, 1, now_init),
+                    ("Hiddify", "all", "v2.5.7", "全协议自适应、极致防识别的全平台通用客户端", "", "", 0, "https://github.com/hiddify/hiddify-app/releases", 4, 1, now_init),
+                    ("Shadowrocket (小火箭)", "ios", "最新版", "iOS / iPadOS 经典翻墙网络调试利器 (需非国区 AppStore 下载)", "", "", 0, "https://apps.apple.com/app/shadowrocket/id932747118", 5, 1, now_init),
+                    ("v2rayN", "windows", "v6.42", "Windows 经典全协议支持核心客户端 (内置 Xray / Sing-box)", "", "", 0, "https://github.com/2dust/v2rayN/releases", 6, 1, now_init)
+                ]
+                for p in presets:
+                    conn.execute("""
+                        INSERT INTO proxy_app_download (name, platform, version, description, file_path, file_name, file_size, external_url, sort_order, enabled, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, p)
+        except Exception:
+            pass
+
+        try:
+            os.makedirs("/opt/monitor/uploads/apps", exist_ok=True)
         except Exception:
             pass
 
@@ -1535,6 +1623,9 @@ def perform_telegram_backup(custom_chat_id=None):
     server_count = 0
     node_count = 0
     user_count = 0
+    tier_count = 0
+    anno_count = 0
+    app_count = 0
     try:
         conn = get_db()
         cur = conn.execute("SELECT COUNT(*) FROM node")
@@ -1543,6 +1634,12 @@ def perform_telegram_backup(custom_chat_id=None):
         node_count = cur.fetchone()[0]
         cur = conn.execute("SELECT COUNT(*) FROM proxy_user")
         user_count = cur.fetchone()[0]
+        try:
+            tier_count = conn.execute("SELECT COUNT(*) FROM proxy_tier").fetchone()[0]
+            anno_count = conn.execute("SELECT COUNT(*) FROM proxy_announcement").fetchone()[0]
+            app_count = conn.execute("SELECT COUNT(*) FROM proxy_app_download").fetchone()[0]
+        except Exception:
+            pass
         conn.close()
     except Exception:
         pass
@@ -1554,12 +1651,13 @@ def perform_telegram_backup(custom_chat_id=None):
     filename = f"monitor_backup_{file_time_str}.db.gz"
 
     caption = (
-        f"📦 ProxyProbe 数据库自动备份\n"
+        f"📦 ProxyProbe 数据库自动备份快照\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🌐 站点: {site_name}\n"
         f"📅 时间: {time_str}\n"
         f"💾 大小: {gz_size / 1024:.1f} KB (原始: {raw_size / 1024:.1f} KB)\n"
-        f"📊 资产: {server_count} 台服务器 · {node_count} 个代理节点 · {user_count} 位用户\n"
+        f"📊 资产: {server_count} 台服务器 · {node_count} 个节点 · {user_count} 位用户\n"
+        f"🏷 扩展: {tier_count} 个VIP套餐 · {anno_count} 条系统公告 · {app_count} 款下载软件\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"💡 还原说明:\n"
         f"登录管理后台「数据」->「备份」-> 点击「导入备份」上传此 .db.gz 文件即可一键无缝还原；亦可解压为 monitor.db 覆盖 /opt/monitor/data/monitor.db。"
@@ -1689,7 +1787,7 @@ def generate_verification_email_html(site_name, code, purpose_text):
     </div>
     """
 
-def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0):
+def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0, vip_levels=""):
     conn = get_db()
     try:
         # 0. 商业许可证/套餐配额检查
@@ -1750,11 +1848,11 @@ def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0):
                         INSERT INTO proxy_node (
                             server_id, server_name, server_host, name, protocol, port,
                             uuid, flow, sni, dest, public_key, private_key, short_id,
-                            bandwidth_limit_mbps, enabled, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                            bandwidth_limit_mbps, vip_levels, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                     """, (server_id, s_name, s_host, name, proto, port,
                           uuid_val, "xtls-rprx-vision", "www.apple.com", "www.apple.com:443", pub, priv, sid,
-                          bandwidth_limit_mbps, now))
+                          bandwidth_limit_mbps, vip_levels, now))
                     created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
 
                 elif proto == "vless_reality_xhttp":
@@ -1764,11 +1862,11 @@ def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0):
                         INSERT INTO proxy_node (
                             server_id, server_name, server_host, name, protocol, port,
                             uuid, flow, sni, dest, public_key, private_key, short_id, ws_path,
-                            bandwidth_limit_mbps, enabled, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                            bandwidth_limit_mbps, vip_levels, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                     """, (server_id, s_name, s_host, name, proto, port,
                           uuid_val, "", "www.apple.com", "www.apple.com:443", pub, priv, sid, "/xhttp",
-                          bandwidth_limit_mbps, now))
+                          bandwidth_limit_mbps, vip_levels, now))
                     created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
 
                 elif proto == "hysteria2":
@@ -1777,11 +1875,11 @@ def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0):
                         INSERT INTO proxy_node (
                             server_id, server_name, server_host, name, protocol, port,
                             uuid, password, sni,
-                            bandwidth_limit_mbps, enabled, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                            bandwidth_limit_mbps, vip_levels, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                     """, (server_id, s_name, s_host, name, proto, port,
                           uuid_val, pwd_val, "bing.com",
-                          bandwidth_limit_mbps, now))
+                          bandwidth_limit_mbps, vip_levels, now))
                     created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
 
                 elif proto == "anytls":
@@ -1790,11 +1888,11 @@ def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0):
                         INSERT INTO proxy_node (
                             server_id, server_name, server_host, name, protocol, port,
                             uuid, password, sni,
-                            bandwidth_limit_mbps, enabled, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                            bandwidth_limit_mbps, vip_levels, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                     """, (server_id, s_name, s_host, name, proto, port,
                           uuid_val, pwd_val, "www.bing.com",
-                          bandwidth_limit_mbps, now))
+                          bandwidth_limit_mbps, vip_levels, now))
                     created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
 
                 elif proto == "trojan":
@@ -1803,11 +1901,11 @@ def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0):
                         INSERT INTO proxy_node (
                             server_id, server_name, server_host, name, protocol, port,
                             uuid, password, sni,
-                            bandwidth_limit_mbps, enabled, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                            bandwidth_limit_mbps, vip_levels, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                     """, (server_id, s_name, s_host, name, proto, port,
                           uuid_val, pwd_val, "bing.com",
-                          bandwidth_limit_mbps, now))
+                          bandwidth_limit_mbps, vip_levels, now))
                     created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
 
                 elif proto == "ss2022":
@@ -1817,16 +1915,16 @@ def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0):
                         INSERT INTO proxy_node (
                             server_id, server_name, server_host, name, protocol, port,
                             uuid, password, method,
-                            bandwidth_limit_mbps, enabled, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                            bandwidth_limit_mbps, vip_levels, enabled, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                     """, (server_id, s_name, s_host, name, proto, port,
                           uuid_val, psk, "2022-blake3-aes-128-gcm",
-                          bandwidth_limit_mbps, now))
+                          bandwidth_limit_mbps, vip_levels, now))
                     created.append({"id": cur.lastrowid, "name": name, "protocol": proto, "port": port})
     finally:
         conn.close()
 
-    apply_all_configs()
+    threading.Thread(target=apply_all_configs, daemon=True).start()
     return created
 
 def telegram_backup_loop():
@@ -1866,6 +1964,105 @@ def telegram_backup_loop():
                     set_setting("backup_tg_last_status", f"失败 ({time.strftime('%Y-%m-%d %H:%M:%S')}: {str(e)[:80]})")
         except Exception as e:
             print(f"[Backup Worker Error] {e}")
+
+def check_server_expirations(force=False):
+    """
+    检查所有纳管服务器的到期时间并在到期前 N 天向 Telegram 推送续费提醒
+    """
+    enabled = get_setting("server_expire_remind_enabled", "1") == "1"
+    if not enabled and not force:
+        return False, "服务器到期提醒功能未启用"
+
+    token = get_setting("notify_telegram_token", "").strip()
+    chat_id = (get_setting("backup_tg_chat", "") or get_setting("notify_telegram_chat", "")).strip()
+    if not token or not chat_id:
+        return False, "尚未配置 Telegram Bot Token 或 Chat ID"
+
+    try:
+        remind_days = int(get_setting("server_expire_remind_days", "7"))
+    except ValueError:
+        remind_days = 7
+
+    today_str = time.strftime("%Y-%m-%d")
+    last_check_date = get_setting("server_expire_last_notify_date", "")
+    if not force and last_check_date == today_str:
+        return True, "今日已发送过到期提醒"
+
+    conn = get_db()
+    cur = conn.execute("SELECT id, name, ip, ipv4, expires_at FROM node WHERE expires_at IS NOT NULL AND expires_at != ''")
+    servers = [dict(r) for r in cur.fetchall()]
+    conn.close()
+
+    expiring_servers = []
+    now = int(time.time())
+
+    for s in servers:
+        exp_raw = str(s.get("expires_at") or "").strip()
+        if not exp_raw:
+            continue
+        exp_ts = 0
+        try:
+            if len(exp_raw) == 10 and exp_raw.count("-") == 2:
+                import datetime
+                p = [int(x) for x in exp_raw.split("-")]
+                dt = datetime.datetime(p[0], p[1], p[2], 23, 59, 59)
+                exp_ts = int(dt.timestamp())
+            elif exp_raw.isdigit():
+                exp_ts = int(exp_raw)
+        except Exception:
+            continue
+
+        if exp_ts > 0:
+            diff_sec = exp_ts - now
+            days_left = int(diff_sec / 86400)
+            if days_left <= remind_days:
+                s["days_left"] = days_left
+                expiring_servers.append(s)
+
+    if not expiring_servers:
+        if force:
+            return True, f"检测完成：当前没有在 {remind_days} 天内即将到期的服务器"
+        return True, "无到期服务器"
+
+    # 构造通知消息
+    site_name = get_setting("site_name", "HHUB-加速中心")
+    msg_lines = [
+        f"🚨 <b>【{site_name} 服务器到期续费提醒】</b>",
+        f"<i>系统检测到有 {len(expiring_servers)} 台探针服务器即将到期或已到期，请尽快前往对应服务商续费，防止服务中断！</i>\n"
+    ]
+    for s in expiring_servers:
+        dl = s["days_left"]
+        status_tag = f"⚠️ <b>仅剩 {dl} 天</b>" if dl > 0 else (f"🚨 <b>今天到期！</b>" if dl == 0 else f"❌ <b>已逾期 {abs(dl)} 天！</b>")
+        host = s.get("ipv4") or s.get("ip") or "未知IP"
+        msg_lines.append(f"• <b>{s['name']}</b> ({host})\n   📅 到期时间: <code>{s['expires_at']}</code> | 状态: {status_tag}")
+
+    msg_lines.append(f"\n💡 <i>提醒规则：提前 {remind_days} 天预警 | 发送时间: {time.strftime('%Y-%m-%d %H:%M:%S')}</i>")
+    text_content = "\n".join(msg_lines)
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": text_content,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-ServerExpiry/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            set_setting("server_expire_last_notify_date", today_str)
+            return True, f"成功推送 {len(expiring_servers)} 台服务器到期提醒至 Telegram"
+    except Exception as e:
+        return False, f"Telegram 发送异常: {e}"
+
+def server_expiry_check_loop():
+    while True:
+        try:
+            time.sleep(300)
+            check_server_expirations(force=False)
+        except Exception:
+            pass
+
+
 
 def hash_password(password, salt=None):
     if not salt:
@@ -3409,7 +3606,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.17"
+CURRENT_VERSION = "v2.5.18"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -5126,6 +5323,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
             server_country_map = {r["id"]: (r["country"] or "") for r in server_rows}
             conn.close()
 
+            # VIP 等级隔离：非管理员用户只能订阅其对应 VIP 等级的节点
+            if user.get("is_admin") != 1:
+                u_vip = str(user.get("vip_level") or "vip1").strip().lower()
+                filtered = []
+                for n in nodes:
+                    raw_vips = str(n.get("vip_levels") or "").strip().lower()
+                    if not raw_vips or raw_vips == "all":
+                        filtered.append(n)
+                    else:
+                        vips = [v.strip() for v in raw_vips.split(",") if v.strip()]
+                        if u_vip in vips:
+                            filtered.append(n)
+                nodes = filtered
+
             for n in nodes:
                 sid = n.get("server_id")
                 if sid in node_ip_map and is_private_ip(n.get("server_host")):
@@ -5299,7 +5510,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "enabled": user.get("enabled", 1),
                     "status": status_text,
                     "created_at": user.get("created_at", 0),
-                    "theme_style": user_theme or "default"
+                    "theme_style": user_theme or "default",
+                    "vip_level": user.get("vip_level", "vip1")
                 }
             })
             return
@@ -5310,20 +5522,174 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "未登录"}, 401)
                 return
             conn = get_db()
-            cur = conn.execute("SELECT id, server_id, name, protocol, server_name, server_host, port, enabled, bandwidth_limit_mbps FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
+            cur = conn.execute("SELECT id, server_id, name, protocol, server_name, server_host, port, enabled, bandwidth_limit_mbps, vip_levels FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
             nodes = [dict(r) for r in cur.fetchall()]
             cur_nodes = conn.execute("SELECT id, ip, ipv4, country FROM node")
             server_rows = cur_nodes.fetchall()
             node_ip_map = {r["id"]: resolve_server_host(dict(r)) for r in server_rows}
             server_country_map = {r["id"]: (r["country"] or "") for r in server_rows}
             conn.close()
+
+            # VIP 等级隔离：非管理员用户只能看到对应 VIP 等级的节点
+            if user.get("is_admin") != 1:
+                u_vip = str(user.get("vip_level") or "vip1").strip().lower()
+                filtered = []
+                for n in nodes:
+                    raw_vips = str(n.get("vip_levels") or "").strip().lower()
+                    if not raw_vips or raw_vips == "all":
+                        filtered.append(n)
+                    else:
+                        vips = [v.strip() for v in raw_vips.split(",") if v.strip()]
+                        if u_vip in vips:
+                            filtered.append(n)
+                nodes = filtered
+
             for n in nodes:
                 sid = n.get("server_id")
                 if sid in node_ip_map and is_private_ip(n.get("server_host")):
                     n["server_host"] = node_ip_map[sid]
                 n["flag"] = resolve_node_flag(n, server_country_map)
                 n["display_name"] = format_node_display_name(n, server_country_map)
-            self.send_json({"ok": True, "nodes": nodes})
+            self.send_json({"ok": True, "nodes": nodes, "user_vip_level": user.get("vip_level", "vip1")})
+            return
+
+        # VIP 套餐列表接口
+        if path == "/api/proxy/tiers":
+            conn = get_db()
+            cur = conn.execute("SELECT id, tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at FROM proxy_tier ORDER BY sort_order ASC, id ASC")
+            tiers = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["tier_id"] = d.get("tier_key", "")
+                tiers.append(d)
+            conn.close()
+            self.send_json({"ok": True, "tiers": tiers})
+            return
+
+        # 系统公告接口 (管理端)
+        if path == "/api/proxy/announcements":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            conn = get_db()
+            cur = conn.execute("SELECT id, title, summary, content, is_pinned, enabled, created_at, updated_at FROM proxy_announcement ORDER BY is_pinned DESC, id DESC")
+            announcements = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            self.send_json({"ok": True, "announcements": announcements})
+            return
+
+        # 系统公告列表 (用户端/公开)
+        if path == "/api/proxy/user/announcements":
+            conn = get_db()
+            cur = conn.execute("SELECT id, title, summary, is_pinned, created_at, updated_at FROM proxy_announcement WHERE enabled = 1 ORDER BY is_pinned DESC, id DESC")
+            announcements = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            self.send_json({"ok": True, "announcements": announcements})
+            return
+
+        # 系统公告详情 (用户端/公开)
+        m_user_anno = re.match(r"^/api/proxy/user/announcements/(\d+)$", path)
+        if m_user_anno:
+            anno_id = int(m_user_anno.group(1))
+            conn = get_db()
+            cur = conn.execute("SELECT id, title, summary, content, is_pinned, created_at, updated_at FROM proxy_announcement WHERE id = ? AND enabled = 1", (anno_id,))
+            row = cur.fetchone()
+            conn.close()
+            if not row:
+                self.send_json({"ok": False, "message": "公告不存在或已下架"}, 404)
+                return
+            self.send_json({"ok": True, "announcement": dict(row)})
+            return
+
+        # 全局登录弹窗通知 (管理端配置)
+        if path == "/api/proxy/settings/notification":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            self.send_json({
+                "ok": True,
+                "enabled": get_setting("global_notification_enabled", "0") == "1",
+                "title": get_setting("global_notification_title", "系统重要通知"),
+                "content": get_setting("global_notification_content", ""),
+                "updated_at": int(get_setting("global_notification_updated_at", "0"))
+            })
+            return
+
+        # 全局登录弹窗通知 (用户端读取)
+        if path == "/api/proxy/user/notification":
+            enabled = get_setting("global_notification_enabled", "0") == "1"
+            self.send_json({
+                "ok": True,
+                "enabled": enabled,
+                "title": get_setting("global_notification_title", "系统重要通知") if enabled else "",
+                "content": get_setting("global_notification_content", "") if enabled else "",
+                "updated_at": int(get_setting("global_notification_updated_at", "0")) if enabled else 0
+            })
+            return
+
+        # 客户端下载专区 (管理端)
+        if path == "/api/proxy/apps":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            conn = get_db()
+            cur = conn.execute("SELECT id, name, platform, version, description, file_path, file_name, file_size, external_url, sort_order, enabled, created_at FROM proxy_app_download ORDER BY sort_order ASC, id ASC")
+            apps = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            for a in apps:
+                a["has_local_file"] = 1 if (a.get("file_path") and os.path.exists(a["file_path"])) else 0
+            self.send_json({"ok": True, "apps": apps})
+            return
+
+        # 客户端下载专区 (用户端)
+        if path == "/api/proxy/user/apps":
+            conn = get_db()
+            cur = conn.execute("SELECT id, name, platform, version, description, file_name, file_size, external_url, sort_order, created_at, file_path FROM proxy_app_download WHERE enabled = 1 ORDER BY sort_order ASC, id ASC")
+            apps = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            for a in apps:
+                a["has_local_file"] = 1 if (a.get("file_path") and os.path.exists(a["file_path"])) else 0
+                a.pop("file_path", None)
+            self.send_json({"ok": True, "apps": apps})
+            return
+
+        # 客户端软件包直接流式下载
+        m_app_dl = re.match(r"^/api/proxy/apps/download/(\d+)$", path)
+        if m_app_dl:
+            app_id = int(m_app_dl.group(1))
+            conn = get_db()
+            cur = conn.execute("SELECT file_path, file_name FROM proxy_app_download WHERE id = ? AND enabled = 1", (app_id,))
+            row = cur.fetchone()
+            conn.close()
+            if not row or not row[0] or not os.path.exists(row[0]):
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"File not found on server")
+                return
+            f_path = row[0]
+            f_name = row[1] or os.path.basename(f_path)
+            f_size = os.path.getsize(f_path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(f_name)}")
+            self.send_header("Content-Length", str(f_size))
+            self.end_headers()
+            with open(f_path, "rb") as f_in:
+                shutil.copyfileobj(f_in, self.wfile)
+            return
+
+        # 服务器到期提醒设置 (管理端)
+        if path == "/api/proxy/settings/server-expiry":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            self.send_json({
+                "ok": True,
+                "enabled": get_setting("server_expire_remind_enabled", "1") == "1",
+                "days": int(get_setting("server_expire_remind_days", "7")),
+                "last_notify_date": get_setting("server_expire_last_notify_date", "")
+            })
             return
 
         if path.startswith("/api/proxy/nodes/") and path.endswith("/test"):
@@ -5586,9 +5952,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
             })
             return
 
-        if path in ("/api/proxy/system/update-check", "/api/proxy/system/update-check/", "/api/proxy/update-check", "/api/system/update-check"):
+        if path in ("/api/version", "/api/proxy/version", "/api/proxy/system/update-check", "/api/proxy/system/update-check/", "/api/proxy/update-check", "/api/system/update-check"):
             force = qs.get("force", ["0"])[0] in ("1", "true")
             res = check_system_update(force=force)
+            res["version"] = res.get("current_version", CURRENT_VERSION)
             self.send_json(res)
             return
 
@@ -6078,7 +6445,40 @@ class ProxyHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         length = int(self.headers.get("Content-Length", 0))
-        body_data = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+
+        # 客户端二进制包上传直接流式写入磁盘，避免解析 JSON 或内存溢出
+        if path == "/api/proxy/apps/upload":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            app_id = int(self.headers.get("X-App-Id", 0))
+            raw_filename = unquote(self.headers.get("X-Filename", "client_package.zip"))
+            safe_name = re.sub(r'[^a-zA-Z0-9_\-\.\u4e00-\u9fa5]', '_', raw_filename)
+            if not safe_name:
+                safe_name = f"app_{app_id}_{int(time.time())}.bin"
+            upload_dir = "/opt/monitor/uploads/apps"
+            os.makedirs(upload_dir, exist_ok=True)
+            target_path = os.path.join(upload_dir, f"{app_id}_{safe_name}")
+            
+            remaining = length
+            with open(target_path, "wb") as f_out:
+                chunk_size = 65536
+                while remaining > 0:
+                    chunk = self.rfile.read(min(remaining, chunk_size))
+                    if not chunk:
+                        break
+                    f_out.write(chunk)
+                    remaining -= len(chunk)
+            
+            file_size = os.path.getsize(target_path)
+            conn = get_db()
+            with conn:
+                conn.execute("UPDATE proxy_app_download SET file_path = ?, file_name = ?, file_size = ? WHERE id = ?", (target_path, safe_name, file_size, app_id))
+            conn.close()
+            self.send_json({"ok": True, "file_name": safe_name, "file_size": file_size, "message": "客户端安装包上传成功"})
+            return
+
+        body_data = self.rfile.read(length).decode("utf-8", errors="replace") if length > 0 else "{}"
         try:
             req = json.loads(body_data)
         except Exception:
@@ -6640,6 +7040,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             bandwidth_limit_mbps = int(req.get("bandwidth_limit_mbps", 0))
             expires_days = int(req.get("expires_days", 0))
             device_limit = int(req.get("device_limit", 0))
+            vip_level = (req.get("vip_level") or "vip1").strip()
 
             if not username:
                 self.send_json({"ok": False, "message": "用户名不能为空"}, 400)
@@ -6657,13 +7058,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
             try:
                 with conn:
                     cur = conn.execute("""
-                        INSERT INTO proxy_user (username, email, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit, bandwidth_limit_mbps)
-                        VALUES (?, ?, ?, ?, ?, 0, 0, ?, 1, 0, ?, ?, ?)
-                    """, (username, email, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time()), device_limit, bandwidth_limit_mbps))
+                        INSERT INTO proxy_user (username, email, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit, bandwidth_limit_mbps, vip_level)
+                        VALUES (?, ?, ?, ?, ?, 0, 0, ?, 1, 0, ?, ?, ?, ?)
+                    """, (username, email, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time()), device_limit, bandwidth_limit_mbps, vip_level))
                     new_id = cur.lastrowid
                 conn.close()
-                apply_all_configs()
-                self.send_json({"ok": True, "id": new_id, "sub_token": sub_token, "message": "用户创建成功"})
+                threading.Thread(target=apply_all_configs, daemon=True).start()
+                self.send_json({"ok": True, "id": new_id, "user_id": new_id, "sub_token": sub_token, "message": "用户创建成功"})
             except sqlite3.IntegrityError:
                 conn.close()
                 self.send_json({"ok": False, "message": "该用户名已存在"}, 400)
@@ -6708,6 +7109,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             device_limit = req.get("device_limit")
             bw_mbps = req.get("bandwidth_limit_mbps")
             email = req.get("email")
+            vip_level = req.get("vip_level")
             
             conn = get_db()
             with conn:
@@ -6722,10 +7124,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     conn.execute("UPDATE proxy_user SET bandwidth_limit_mbps = ? WHERE id = ?", (int(bw_mbps), user_id))
                 if email is not None:
                     conn.execute("UPDATE proxy_user SET email = ? WHERE id = ?", (str(email).strip(), user_id))
+                if vip_level is not None:
+                    conn.execute("UPDATE proxy_user SET vip_level = ? WHERE id = ?", (str(vip_level).strip() or "vip1", user_id))
                 if new_pwd:
                     conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (hash_password(new_pwd), user_id))
             conn.close()
-            apply_all_configs()
+            threading.Thread(target=apply_all_configs, daemon=True).start()
             self.send_json({"ok": True, "message": "用户信息已更新"})
             return
 
@@ -6922,6 +7326,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 password = gen_random_password(16)
 
             now = int(time.time())
+            vip_levels = (req.get("vip_levels") or "").strip()
             conn = get_db()
             with conn:
                 cur = conn.execute("""
@@ -6930,14 +7335,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     uuid, flow, sni, dest, public_key, private_key, short_id,
                     ws_path, method, password, username, extra_json,
                     is_relay, relay_server_id, relay_port, remote_host, remote_port, target_node_id,
-                    bandwidth_limit_mbps, enabled, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    bandwidth_limit_mbps, vip_levels, enabled, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """, (
                     server_id, server_name, server_host, name, protocol, port,
                     uuid, flow, sni, dest, pub_key, priv_key, short_id,
                     ws_path, method, password, username, extra_json,
                     is_relay, relay_server_id, port, remote_host, remote_port, target_node_id,
-                    bandwidth_limit_mbps, now
+                    bandwidth_limit_mbps, vip_levels, now
                 ))
                 new_id = cur.lastrowid
             conn.close()
@@ -6972,6 +7377,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "ok": ok,
                 "id": new_id,
                 "node_id": new_id,
+                "node": {"id": new_id, "name": name, "protocol": protocol, "port": port},
                 "message": msg,
                 "test_result": {
                     "ok": test_ok,
@@ -7052,17 +7458,43 @@ class ProxyHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self.send_json({"ok": False, "message": "无效的节点 ID"}, 400)
                 return
+
             name = (req.get("name") or "").strip()
+            port = req.get("port")
+            uuid_val = req.get("uuid")
+            pwd_val = req.get("password")
+            sni = req.get("sni")
             bw = req.get("bandwidth_limit_mbps")
+            vip_levels = req.get("vip_levels")
+            enabled = req.get("enabled")
+
             conn = get_db()
             with conn:
+                if port is not None:
+                    port_num = int(port)
+                    chk = conn.execute("SELECT id FROM proxy_node WHERE port = ? AND id != ?", (port_num, node_id)).fetchone()
+                    if chk:
+                        conn.close()
+                        self.send_json({"ok": False, "message": f"端口 {port_num} 已被其他节点占用，请更换端口！"}, 400)
+                        return
+                    conn.execute("UPDATE proxy_node SET port = ? WHERE id = ?", (port_num, node_id))
                 if name:
                     conn.execute("UPDATE proxy_node SET name = ? WHERE id = ?", (name, node_id))
+                if uuid_val is not None:
+                    conn.execute("UPDATE proxy_node SET uuid = ? WHERE id = ?", (str(uuid_val).strip(), node_id))
+                if pwd_val is not None:
+                    conn.execute("UPDATE proxy_node SET password = ? WHERE id = ?", (str(pwd_val).strip(), node_id))
+                if sni is not None:
+                    conn.execute("UPDATE proxy_node SET sni = ? WHERE id = ?", (str(sni).strip(), node_id))
                 if bw is not None:
                     conn.execute("UPDATE proxy_node SET bandwidth_limit_mbps = ? WHERE id = ?", (int(bw), node_id))
+                if vip_levels is not None:
+                    conn.execute("UPDATE proxy_node SET vip_levels = ? WHERE id = ?", (str(vip_levels).strip(), node_id))
+                if enabled is not None:
+                    conn.execute("UPDATE proxy_node SET enabled = ? WHERE id = ?", (int(enabled), node_id))
             conn.close()
-            apply_all_configs()
-            self.send_json({"ok": True, "message": "节点配置已更新"})
+            threading.Thread(target=apply_all_configs, daemon=True).start()
+            self.send_json({"ok": True, "message": "节点配置已更新并已生效"})
             return
 
         elif path == "/api/proxy/nodes/batch-create":
@@ -7072,8 +7504,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             server_id = int(req.get("server_id", 0))
             protocols = req.get("protocols") or ["vless_reality", "hysteria2", "anytls", "trojan", "ss2022"]
             bandwidth_limit_mbps = int(req.get("bandwidth_limit_mbps", 0))
+            vip_levels = (req.get("vip_levels") or "").strip()
             try:
-                created = batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps)
+                created = batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps, vip_levels=vip_levels)
                 self.send_json({
                     "ok": True,
                     "created": created,
@@ -7135,7 +7568,147 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": f"测试发信失败: {err}"}, 500)
             return
 
+        elif path == "/api/proxy/tiers":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            t_id = req.get("id")
+            tier_key = (req.get("tier_key") or req.get("tier_id") or "").strip().lower()
+            name = (req.get("name") or "").strip()
+            description = (req.get("description") or "").strip()
+            speed_limit = int(req.get("speed_limit_mbps", 0))
+            device_limit = int(req.get("device_limit", 0))
+            sort_order = int(req.get("sort_order", 0))
 
+            if not tier_key:
+                self.send_json({"ok": False, "message": "套餐标识（tier_key / tier_id）不能为空"}, 400)
+                return
+            if not name:
+                self.send_json({"ok": False, "message": "套餐名称不能为空"}, 400)
+                return
+
+            conn = get_db()
+            with conn:
+                if t_id:
+                    conn.execute("""
+                        UPDATE proxy_tier
+                        SET tier_key = ?, name = ?, description = ?, speed_limit_mbps = ?, device_limit = ?, sort_order = ?
+                        WHERE id = ?
+                    """, (tier_key, name, description, speed_limit, device_limit, sort_order, int(t_id)))
+                    saved_id = int(t_id)
+                else:
+                    cur = conn.execute("""
+                        INSERT INTO proxy_tier (tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (tier_key, name, description, speed_limit, device_limit, sort_order, int(time.time())))
+                    saved_id = cur.lastrowid
+            conn.close()
+            self.send_json({"ok": True, "id": saved_id, "tier_id": saved_id, "message": "VIP 套餐已成功保存"})
+            return
+
+        elif path == "/api/proxy/announcements":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            a_id = req.get("id")
+            title = (req.get("title") or "").strip()
+            summary = (req.get("summary") or "").strip()
+            content = (req.get("content") or "").strip()
+            is_pinned = 1 if req.get("is_pinned") else 0
+            enabled = 1 if req.get("enabled", True) else 0
+            now = int(time.time())
+
+            if not title:
+                self.send_json({"ok": False, "message": "公告标题不能为空"}, 400)
+                return
+
+            conn = get_db()
+            with conn:
+                if a_id:
+                    conn.execute("""
+                        UPDATE proxy_announcement
+                        SET title = ?, summary = ?, content = ?, is_pinned = ?, enabled = ?, updated_at = ?
+                        WHERE id = ?
+                    """, (title, summary, content, is_pinned, enabled, now, int(a_id)))
+                    saved_id = int(a_id)
+                else:
+                    cur = conn.execute("""
+                        INSERT INTO proxy_announcement (title, summary, content, is_pinned, enabled, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (title, summary, content, is_pinned, enabled, now, now))
+                    saved_id = cur.lastrowid
+            conn.close()
+            self.send_json({"ok": True, "id": saved_id, "announcement_id": saved_id, "message": "系统公告已成功保存"})
+            return
+
+        elif path == "/api/proxy/settings/notification":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            enabled = "1" if req.get("enabled") else "0"
+            title = (req.get("title") or "").strip()
+            content = (req.get("content") or "").strip()
+            set_setting("global_notification_enabled", enabled)
+            set_setting("global_notification_title", title)
+            set_setting("global_notification_content", content)
+            set_setting("global_notification_updated_at", str(int(time.time())))
+            self.send_json({"ok": True, "message": "全局登录通知已成功保存"})
+            return
+
+        elif path == "/api/proxy/apps":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            app_id = req.get("id")
+            name = (req.get("name") or "").strip()
+            platform = (req.get("platform") or "all").strip()
+            version = (req.get("version") or "").strip()
+            description = (req.get("description") or "").strip()
+            external_url = (req.get("external_url") or req.get("mirror_url") or "").strip()
+            sort_order = int(req.get("sort_order", 0))
+            enabled = 1 if req.get("enabled", True) else 0
+
+            if not name:
+                self.send_json({"ok": False, "message": "客户端软件名称不能为空"}, 400)
+                return
+
+            conn = get_db()
+            with conn:
+                if app_id:
+                    conn.execute("""
+                        UPDATE proxy_app_download
+                        SET name = ?, platform = ?, version = ?, description = ?, external_url = ?, sort_order = ?, enabled = ?
+                        WHERE id = ?
+                    """, (name, platform, version, description, external_url, sort_order, enabled, int(app_id)))
+                    saved_id = int(app_id)
+                else:
+                    cur = conn.execute("""
+                        INSERT INTO proxy_app_download (name, platform, version, description, external_url, sort_order, enabled, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (name, platform, version, description, external_url, sort_order, enabled, int(time.time())))
+                    saved_id = cur.lastrowid
+            conn.close()
+            self.send_json({"ok": True, "id": saved_id, "app_id": saved_id, "message": "软件配置已成功保存"})
+            return
+
+        elif path == "/api/proxy/settings/server-expiry":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            enabled = "1" if req.get("enabled") else "0"
+            days = str(int(req.get("days") or req.get("remind_days_before") or 7))
+            set_setting("server_expire_remind_enabled", enabled)
+            set_setting("server_expire_remind_days", days)
+            self.send_json({"ok": True, "message": "服务器到期提醒设置已成功保存"})
+            return
+
+        elif path == "/api/proxy/server-expiry/test-notify":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            ok, msg = check_server_expirations(force=True)
+            self.send_json({"ok": ok, "message": msg})
+            return
 
         self.send_json({"error": "Not Found"}, 404)
 
@@ -7154,10 +7727,51 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 cur = conn.execute("SELECT server_id, server_host, server_name FROM proxy_node WHERE id = ?", (node_id,))
                 row = cur.fetchone()
                 conn.execute("DELETE FROM proxy_node WHERE id = ?", (node_id,))
-                if row and is_local_node(dict(row)):
-                    apply_all_configs()
+                try:
+                    conn.execute("DELETE FROM proxy_node_latency WHERE node_id = ?", (node_id,))
+                except Exception:
+                    pass
             conn.close()
-            self.send_json({"ok": True})
+            if row and is_local_node(dict(row)):
+                threading.Thread(target=apply_all_configs, daemon=True).start()
+            self.send_json({"ok": True, "message": "节点已成功删除"})
+            return
+
+        m_tier = re.match(r"^/api/proxy/tiers/(\d+)$", path)
+        if m_tier:
+            t_id = int(m_tier.group(1))
+            conn = get_db()
+            with conn:
+                conn.execute("DELETE FROM proxy_tier WHERE id = ?", (t_id,))
+            conn.close()
+            self.send_json({"ok": True, "message": "套餐已删除"})
+            return
+
+        m_anno = re.match(r"^/api/proxy/announcements/(\d+)$", path)
+        if m_anno:
+            a_id = int(m_anno.group(1))
+            conn = get_db()
+            with conn:
+                conn.execute("DELETE FROM proxy_announcement WHERE id = ?", (a_id,))
+            conn.close()
+            self.send_json({"ok": True, "message": "公告已删除"})
+            return
+
+        m_app = re.match(r"^/api/proxy/apps/(\d+)$", path)
+        if m_app:
+            app_id = int(m_app.group(1))
+            conn = get_db()
+            with conn:
+                cur = conn.execute("SELECT file_path FROM proxy_app_download WHERE id = ?", (app_id,))
+                row = cur.fetchone()
+                if row and row[0] and os.path.exists(row[0]):
+                    try:
+                        os.remove(row[0])
+                    except Exception:
+                        pass
+                conn.execute("DELETE FROM proxy_app_download WHERE id = ?", (app_id,))
+            conn.close()
+            self.send_json({"ok": True, "message": "客户端软件已删除"})
             return
 
         m_user = re.match(r"^/api/proxy/users/(\d+)$", path)
@@ -7171,7 +7785,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 conn.execute("DELETE FROM proxy_user WHERE id = ?", (user_id,))
                 conn.execute("DELETE FROM proxy_session_user WHERE user_id = ?", (user_id,))
             conn.close()
-            apply_all_configs()
+            threading.Thread(target=apply_all_configs, daemon=True).start()
             self.send_json({"ok": True, "message": "用户已删除"})
             return
 
@@ -7180,15 +7794,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
             server_id = int(m_server.group(1))
             conn = get_db()
             with conn:
-                cur_nodes = conn.execute("SELECT id FROM proxy_node WHERE server_id = ?", (server_id,)).fetchall()
-                del_node_ids = [r["id"] for r in cur_nodes]
+                cur_nodes = conn.execute("SELECT id FROM proxy_node WHERE server_id = ?", (server_id,))
+                del_node_ids = [r[0] for r in cur_nodes.fetchall()]
                 if del_node_ids:
                     conn.execute(f"DELETE FROM proxy_node WHERE id IN ({','.join('?' for _ in del_node_ids)})", del_node_ids)
-                    conn.execute(f"DELETE FROM proxy_node_latency WHERE node_id IN ({','.join('?' for _ in del_node_ids)})", del_node_ids)
+                    try:
+                        conn.execute(f"DELETE FROM proxy_node_latency WHERE node_id IN ({','.join('?' for _ in del_node_ids)})", del_node_ids)
+                    except Exception:
+                        pass
                 conn.execute("DELETE FROM node_proxy_status WHERE node_id = ?", (server_id,))
                 conn.execute("DELETE FROM node WHERE id = ?", (server_id,))
             conn.close()
-            apply_all_configs()
+            threading.Thread(target=apply_all_configs, daemon=True).start()
             self.send_json({"ok": True, "message": f"服务器及关联的 {len(del_node_ids)} 个节点已彻底清除"})
             return
 
@@ -7207,6 +7824,8 @@ if __name__ == "__main__":
     t_health.start()
     t_tg_cmd = threading.Thread(target=telegram_bot_command_loop, daemon=True)
     t_tg_cmd.start()
+    t_expiry = threading.Thread(target=server_expiry_check_loop, daemon=True)
+    t_expiry.start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), ProxyHandler)
     print(f"ProxyManager daemon listening on 127.0.0.1:{PORT}")
     server.serve_forever()

@@ -32,6 +32,7 @@ export type ManagedUser = {
   id: number
   username: string
   is_admin: number
+  vip_level?: string
   sub_token: string
   sub_url: string
   traffic_limit_bytes: number
@@ -63,6 +64,7 @@ function formatDate(ts: number) {
 export function ProxyUsers() {
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [loading, setLoading] = useState(false)
+  const [vipTiers, setVipTiers] = useState<Array<{ id: number; tier_id: string; name: string }>>([])
 
   // 新建用户弹窗状态
   const [licenseStatus, setLicenseStatus] = useState<any>(() => {
@@ -76,6 +78,7 @@ export function ProxyUsers() {
   const [createForm, setCreateForm] = useState({
     username: "",
     password: "",
+    vip_level: "vip1",
     traffic_limit_gb: "200",
     expires_days: "30",
     device_limit: "0",
@@ -86,6 +89,7 @@ export function ProxyUsers() {
   const [editOpen, setEditOpen] = useState(false)
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null)
   const [editForm, setEditForm] = useState({
+    vip_level: "vip1",
     traffic_limit_gb: "",
     expires_date: "",
     password: "",
@@ -101,6 +105,10 @@ export function ProxyUsers() {
       if (data.ok && Array.isArray(data.users)) {
         setUsers(data.users)
       }
+      fetch("/api/proxy/tiers")
+        .then(r => r.json())
+        .then(d => { if (d.ok && Array.isArray(d.tiers)) setVipTiers(d.tiers) })
+        .catch(() => {})
       try {
         const licRes = await fetch("/api/proxy/license/status")
         if (licRes.ok) {
@@ -144,6 +152,7 @@ export function ProxyUsers() {
         body: JSON.stringify({
           username: createForm.username,
           password: createForm.password,
+          vip_level: createForm.vip_level || "vip1",
           traffic_limit_gb: parseFloat(createForm.traffic_limit_gb) || 200,
           expires_days: parseInt(createForm.expires_days) || 0,
           device_limit: parseInt(createForm.device_limit) || 0,
@@ -153,7 +162,7 @@ export function ProxyUsers() {
       if (data.ok) {
         toast.success("用户创建成功！")
         setCreateOpen(false)
-        setCreateForm({ username: "", password: "", traffic_limit_gb: "200", expires_days: "30", device_limit: "0" })
+        setCreateForm({ username: "", password: "", vip_level: "vip1", traffic_limit_gb: "200", expires_days: "30", device_limit: "0" })
         loadUsers()
       } else {
         toast.error(data.message || "创建失败")
@@ -171,6 +180,7 @@ export function ProxyUsers() {
     const limitGb = user.traffic_limit_bytes > 0 ? (user.traffic_limit_bytes / (1024 * 1024 * 1024)).toFixed(0) : "0"
     const dateStr = user.expires_at > 0 ? new Date(user.expires_at * 1000).toISOString().split("T")[0] : ""
     setEditForm({
+      vip_level: user.vip_level || "vip1",
       traffic_limit_gb: limitGb,
       expires_date: dateStr,
       password: "",
@@ -193,6 +203,7 @@ export function ProxyUsers() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          vip_level: editForm.vip_level || "vip1",
           traffic_limit_gb: parseFloat(editForm.traffic_limit_gb) || 0,
           expires_at: expTs,
           password: editForm.password,
@@ -373,7 +384,7 @@ export function ProxyUsers() {
                     <td className="py-3.5 px-4 font-mono text-muted-foreground">{u.id}</td>
 
                     <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-semibold">{u.username}</span>
                         {Boolean(u.is_admin) ? (
                           <Badge variant="outline" className="text-[10px] py-0 px-1 text-primary border-primary/40">
@@ -384,6 +395,9 @@ export function ProxyUsers() {
                             普通用户
                           </Badge>
                         )}
+                        <Badge className="text-[10px] py-0 px-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 uppercase font-mono font-bold">
+                          {u.vip_level || "vip1"}
+                        </Badge>
                       </div>
                     </td>
 
@@ -549,6 +563,26 @@ export function ProxyUsers() {
               />
             </div>
 
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">VIP 套餐等级</Label>
+                <span className="text-[10px] text-muted-foreground font-mono">如: vip1, vip2</span>
+              </div>
+              <Input
+                list="vip-tier-list"
+                className="text-xs h-9 font-mono"
+                placeholder="默认 vip1 (用于匹配对应 VIP 节点)"
+                value={createForm.vip_level}
+                onChange={e => setCreateForm(prev => ({ ...prev, vip_level: e.target.value }))}
+                required
+              />
+              <datalist id="vip-tier-list">
+                {vipTiers.map(t => (
+                  <option key={t.id} value={t.tier_id}>{t.name}</option>
+                ))}
+              </datalist>
+            </div>
+
             <div className="grid grid-cols-3 gap-2">
               <div className="space-y-1.5">
                 <Label className="text-xs">流量限额 (GB)</Label>
@@ -656,6 +690,20 @@ export function ProxyUsers() {
                 className="text-xs h-9"
                 value={editForm.expires_date}
                 onChange={e => setEditForm(prev => ({ ...prev, expires_date: e.target.value }))}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">VIP 套餐等级</Label>
+                <span className="text-[10px] text-muted-foreground font-mono">如: vip1, vip2</span>
+              </div>
+              <Input
+                className="text-xs h-9 font-mono"
+                placeholder="默认 vip1 (用于匹配对应 VIP 节点)"
+                value={editForm.vip_level}
+                onChange={e => setEditForm(prev => ({ ...prev, vip_level: e.target.value }))}
+                required
               />
             </div>
 

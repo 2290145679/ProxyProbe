@@ -2010,12 +2010,911 @@ function SettingsTab({
         </div>
       </Card>
 
+      {/* VIP 等级套餐管理 */}
+      <VipTierSettingsCard />
+
+      {/* 服务器到期 Telegram 自动推送提醒设置 */}
+      <ServerExpirySettingsCard />
+
+      {/* 系统公告管理 */}
+      <AnnouncementSettingsCard />
+
+      {/* 全局登录弹窗通知设置 */}
+      <GlobalNotificationSettingsCard />
+
+      {/* 客户端软件下载与上传专区设置 */}
+      <ClientAppsSettingsCard />
+
       {/* 客服支持与 Telegram 联系渠道设置 */}
       <TelegramSupportSettingsCard />
 
       {/* 用户邮箱注册与 SMTP 邮件发信服务设置 */}
       <SmtpSettingsCard />
     </div>
+  )
+}
+
+function VipTierSettingsCard() {
+  const [tiers, setTiers] = useState<any[]>([])
+  const [createOpen, setCreateOpen] = useState(false)
+  const [form, setForm] = useState({
+    tier_id: "",
+    name: "",
+    price: "0",
+    traffic_gb: "200",
+    device_limit: "0",
+    description: "",
+  })
+  const [saving, setSaving] = useState(false)
+
+  const loadTiers = async () => {
+    try {
+      const res = await fetch("/api/proxy/tiers")
+      const d = await res.json()
+      if (d.ok && Array.isArray(d.tiers)) setTiers(d.tiers)
+    } catch {}
+  }
+
+  useEffect(() => { loadTiers() }, [])
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/tiers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tier_id: form.tier_id.trim().toLowerCase(),
+          name: form.name.trim(),
+          price: parseFloat(form.price) || 0,
+          traffic_gb: parseFloat(form.traffic_gb) || 0,
+          device_limit: parseInt(form.device_limit) || 0,
+          description: form.description.trim(),
+        }),
+      })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(d.message || "VIP 套餐添加成功！")
+        setCreateOpen(false)
+        setForm({ tier_id: "", name: "", price: "0", traffic_gb: "200", device_limit: "0", description: "" })
+        loadTiers()
+      } else {
+        toast.error(d.message || "添加失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async (id: number, name: string) => {
+    if (!confirm(`确定要删除 VIP 套餐【${name}】吗？`)) return
+    try {
+      const res = await fetch(`/api/proxy/tiers/${id}`, { method: "DELETE" })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success("VIP 套餐已删除")
+        loadTiers()
+      } else {
+        toast.error(d.message || "删除失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    }
+  }
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Sparkles className="size-4 text-amber-500" /> VIP 等级套餐与节点物理隔离
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            自定义 VIP 权限等级（如 vip1, vip2）。在节点上标记对应等级后，只有该等级的用户可以获取与订阅，不同等级节点物理隔离不可见。
+          </p>
+        </div>
+        <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 text-xs h-8">
+          <Plus className="size-3.5" /> 添加 VIP 套餐
+        </Button>
+      </div>
+
+      <div className="pt-2">
+        {tiers.length === 0 ? (
+          <div className="p-6 text-center text-xs text-muted-foreground">
+            暂未添加自定义 VIP 套餐，默认所有节点全员可访问。
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+            {tiers.map((t) => (
+              <div key={t.id} className="p-3.5 rounded-lg border bg-muted/20 space-y-2 flex flex-col justify-between">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 uppercase font-mono font-bold text-xs">
+                      {t.tier_id}
+                    </Badge>
+                    <span className="font-semibold text-xs text-foreground">{t.name}</span>
+                  </div>
+                  {t.description && (
+                    <p className="text-[11px] text-muted-foreground line-clamp-2">{t.description}</p>
+                  )}
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono pt-1">
+                    <span>流量: {t.traffic_gb > 0 ? `${t.traffic_gb}GB` : "不限"}</span>
+                    <span>·</span>
+                    <span>设备: {t.device_limit > 0 ? `${t.device_limit}台` : "不限"}</span>
+                  </div>
+                </div>
+                <div className="flex justify-end pt-2 border-t">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(t.id, t.name)}
+                    className="h-6 px-2 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-[11px] gap-1"
+                  >
+                    <Trash2 className="size-3" /> 删除
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Plus className="size-4 text-primary" /> 新增 VIP 等级套餐
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              定义 VIP 标识，创建后可在节点管理中标记节点权限，并分配给目标用户。
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreate} className="space-y-4 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">套餐标识 (英文数字代号)</Label>
+                <Input
+                  className="text-xs h-9 font-mono"
+                  placeholder="如: vip1, vip2"
+                  value={form.tier_id}
+                  onChange={e => setForm(prev => ({ ...prev, tier_id: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">展示名称</Label>
+                <Input
+                  className="text-xs h-9"
+                  placeholder="如: VIP1 黄金会员"
+                  value={form.name}
+                  onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">默认流量配额 (GB)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  className="text-xs h-9 font-mono"
+                  value={form.traffic_gb}
+                  onChange={e => setForm(prev => ({ ...prev, traffic_gb: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">允许同时在线设备 (台)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  className="text-xs h-9 font-mono"
+                  value={form.device_limit}
+                  onChange={e => setForm(prev => ({ ...prev, device_limit: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">套餐说明描述 (可选)</Label>
+              <Input
+                className="text-xs h-9"
+                placeholder="如: 包含香港/日本节点，高速低延迟"
+                value={form.description}
+                onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))}
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)} className="h-8 text-xs">
+                取消
+              </Button>
+              <Button type="submit" size="sm" disabled={saving} className="h-8 text-xs">
+                {saving ? "创建中..." : "确认添加"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  )
+}
+
+function ServerExpirySettingsCard() {
+  const [enabled, setEnabled] = useState(false)
+  const [remindDays, setRemindDays] = useState(3)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch("/api/proxy/settings/server-expiry")
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          setEnabled(Boolean(d.enabled))
+          if (d.remind_days_before !== undefined) setRemindDays(d.remind_days_before)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/settings/server-expiry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: enabled ? 1 : 0,
+          remind_days_before: parseInt(String(remindDays)) || 3,
+        }),
+      })
+      const d = await res.json()
+      if (d.ok) toast.success(d.message || "服务器到期提醒设置已保存")
+      else toast.error(d.message || "保存失败")
+    } catch {
+      toast.error("网络请求错误")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleTestNotify = async () => {
+    setTesting(true)
+    try {
+      const res = await fetch("/api/proxy/server-expiry/test-notify", { method: "POST" })
+      const d = await res.json()
+      if (d.ok) toast.success(d.message || "已执行到期检测与 TG 推送！")
+      else toast.error(d.message || "推送未成功，请检查 TG Bot 配置")
+    } catch {
+      toast.error("网络请求错误")
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <CalendarClock className="size-4 text-rose-500" /> 服务器到期提醒与 TG 自动推送
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            自动扫描各服务器的到期时间（expires_at）。在服务器到期前 N 天自动向管理员 Telegram 发送警报通知，防止漏续费导致业务中断。
+          </p>
+        </div>
+        <Badge variant={enabled ? "secondary" : "outline"} className={enabled ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" : ""}>
+          {enabled ? "监控中" : "已关闭"}
+        </Badge>
+      </div>
+
+      <div className="space-y-4 pt-1">
+        <div className="flex items-center gap-2 text-sm">
+          <Switch checked={enabled} onCheckedChange={setEnabled} id="server-expiry-toggle" />
+          <Label htmlFor="server-expiry-toggle" className="cursor-pointer text-xs font-medium">
+            开启服务器到期 Telegram 自动推送提醒
+          </Label>
+        </div>
+
+        {enabled && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">提前提醒天数</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min="1"
+                  max="60"
+                  value={remindDays}
+                  onChange={e => setRemindDays(parseInt(e.target.value) || 3)}
+                  className="text-xs h-9 font-mono w-28"
+                />
+                <span className="text-xs text-muted-foreground">天 (在到期日前持续发送 TG 告警)</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 pt-1">
+          <Button size="sm" onClick={handleSave} disabled={saving || loading} className="text-xs h-8">
+            {saving ? "保存中..." : "保存到期提醒配置"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleTestNotify} disabled={testing} className="text-xs h-8 gap-1.5">
+            <Send className="size-3.5" /> {testing ? "检测中..." : "立即检测并测试 TG 推送"}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function AnnouncementSettingsCard() {
+  const [announcements, setAnnouncements] = useState<any[]>([])
+  const [createOpen, setCreateOpen] = useState(false)
+  const [title, setTitle] = useState("")
+  const [content, setContent] = useState("")
+  const [isPinned, setIsPinned] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const loadAnnouncements = async () => {
+    try {
+      const res = await fetch("/api/proxy/announcements")
+      const d = await res.json()
+      if (d.ok && Array.isArray(d.announcements)) setAnnouncements(d.announcements)
+    } catch {}
+  }
+
+  useEffect(() => { loadAnnouncements() }, [])
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/announcements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title.trim(),
+          content: content.trim(),
+          is_pinned: isPinned ? 1 : 0,
+        }),
+      })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success("系统公告发布成功！")
+        setCreateOpen(false)
+        setTitle("")
+        setContent("")
+        setIsPinned(false)
+        loadAnnouncements()
+      } else {
+        toast.error(d.message || "发布失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("确定删除此条公告吗？")) return
+    try {
+      const res = await fetch(`/api/proxy/announcements/${id}`, { method: "DELETE" })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success("公告已删除")
+        loadAnnouncements()
+      } else {
+        toast.error(d.message || "删除失败")
+      }
+    } catch {
+      toast.error("网络错误")
+    }
+  }
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Bell className="size-4 text-primary" /> 系统公告栏管理
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            发布全站公告（通知更新、维护、线路新增）。用户登录后可在公告栏查看标题，点击进入展开查看详细图文内容。
+          </p>
+        </div>
+        <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 text-xs h-8">
+          <Plus className="size-3.5" /> 发布新公告
+        </Button>
+      </div>
+
+      <div className="pt-2">
+        {announcements.length === 0 ? (
+          <div className="p-6 text-center text-xs text-muted-foreground">
+            暂未发布任何公告，点击右上角【发布新公告】即可发布。
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {announcements.map((a) => (
+              <div key={a.id} className="p-3 rounded-lg border bg-muted/20 flex items-center justify-between gap-3">
+                <div className="space-y-1 min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    {a.is_pinned === 1 && (
+                      <Badge className="text-[10px] bg-rose-500/10 text-rose-600 border border-rose-500/30">
+                        置顶
+                      </Badge>
+                    )}
+                    <span className="font-semibold text-xs text-foreground truncate">{a.title}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground line-clamp-1">{a.content}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[10px] text-muted-foreground font-mono">
+                    {new Date(a.created_at * 1000).toLocaleDateString()}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(a.id)}
+                    className="h-7 w-7 p-0 text-rose-500 hover:text-rose-600"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Plus className="size-4 text-primary" /> 发布系统公告
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              在客户端用户中心首页公告栏展示此条通知。
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreate} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">公告标题</Label>
+              <Input
+                className="text-xs h-9"
+                placeholder="如: 关于新增香港/新加坡 IPLC 专线节点的通知"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">详细内容 (支持多行文本与说明)</Label>
+              <textarea
+                className="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-xs shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 h-32"
+                placeholder="填写完整的公告内容..."
+                value={content}
+                onChange={e => setContent(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Switch checked={isPinned} onCheckedChange={setIsPinned} id="pinned-toggle" />
+              <Label htmlFor="pinned-toggle" className="cursor-pointer text-xs font-medium">
+                置顶该公告 (显示在最前列)
+              </Label>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)} className="h-8 text-xs">
+                取消
+              </Button>
+              <Button type="submit" size="sm" disabled={saving} className="h-8 text-xs">
+                {saving ? "发布中..." : "立即发布"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  )
+}
+
+function GlobalNotificationSettingsCard() {
+  const [enabled, setEnabled] = useState(false)
+  const [title, setTitle] = useState("")
+  const [content, setContent] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch("/api/proxy/settings/notification")
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          setEnabled(Boolean(d.enabled))
+          setTitle(d.title || "")
+          setContent(d.content || "")
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/settings/notification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: enabled ? 1 : 0,
+          title: title.trim(),
+          content: content.trim(),
+        }),
+      })
+      const d = await res.json()
+      if (d.ok) toast.success(d.message || "登录全局通知设置已保存")
+      else toast.error(d.message || "保存失败")
+    } catch {
+      toast.error("网络请求错误")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Radio className="size-4 text-purple-500" /> 用户登录后全局自动弹窗通知
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            设置后，用户每次或首次登录用户控制台时，将自动以弹窗浮层形式强提示通知内容。
+          </p>
+        </div>
+        <Badge variant={enabled ? "secondary" : "outline"} className={enabled ? "bg-purple-500/10 text-purple-600 border-purple-500/30" : ""}>
+          {enabled ? "已开启弹窗" : "已停用"}
+        </Badge>
+      </div>
+
+      <div className="space-y-4 pt-1">
+        <div className="flex items-center gap-2 text-sm">
+          <Switch checked={enabled} onCheckedChange={setEnabled} id="notice-toggle" />
+          <Label htmlFor="notice-toggle" className="cursor-pointer text-xs font-medium">
+            开启登录自动弹窗通知
+          </Label>
+        </div>
+
+        {enabled && (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">通知标题</Label>
+              <Input
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="如: 重要安全提醒 / 最新更新通报"
+                className="text-xs h-9"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">弹窗通知正文</Label>
+              <textarea
+                className="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-xs shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 h-28"
+                placeholder="输入展示给用户的详细弹窗说明..."
+                value={content}
+                onChange={e => setContent(e.target.value)}
+              />
+            </div>
+          </div>
+        )}
+
+        <div>
+          <Button size="sm" onClick={handleSave} disabled={saving || loading} className="text-xs h-8">
+            {saving ? "保存中..." : "保存通知配置"}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function ClientAppsSettingsCard() {
+  const [apps, setApps] = useState<any[]>([])
+  const [createOpen, setCreateOpen] = useState(false)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [form, setForm] = useState({
+    name: "Clash Verge",
+    platform: "Windows",
+    version: "v1.7.5",
+    mirror_url: "",
+    description: "",
+  })
+  const [submitting, setSubmitting] = useState(false)
+
+  const PRESET_APPS = [
+    { name: "Clash Verge Rev", platform: "Windows", mirror_url: "https://github.com/clash-verge-rev/clash-verge-rev/releases" },
+    { name: "FLClash", platform: "Android", mirror_url: "https://github.com/chen08209/FlClash/releases" },
+    { name: "NekoBox", platform: "Android", mirror_url: "https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" },
+    { name: "Hiddify", platform: "Windows", mirror_url: "https://github.com/hiddify/hiddify-next/releases" },
+    { name: "Sing-box", platform: "macOS", mirror_url: "https://github.com/SagerNet/sing-box/releases" },
+    { name: "Shadowrocket", platform: "iOS", mirror_url: "https://apps.apple.com/app/shadowrocket/id932747118" },
+  ]
+
+  const loadApps = async () => {
+    try {
+      const res = await fetch("/api/proxy/apps")
+      const d = await res.json()
+      if (d.ok && Array.isArray(d.apps)) setApps(d.apps)
+    } catch {}
+  }
+
+  useEffect(() => { loadApps() }, [])
+
+  const handleSelectPreset = (p: typeof PRESET_APPS[0]) => {
+    setForm(prev => ({
+      ...prev,
+      name: p.name,
+      platform: p.platform,
+      mirror_url: p.mirror_url,
+    }))
+  }
+
+  const handleCreateApp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSubmitting(true)
+    try {
+      const res = await fetch("/api/proxy/apps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name.trim(),
+          platform: form.platform,
+          version: form.version.trim(),
+          mirror_url: form.mirror_url.trim(),
+          description: form.description.trim(),
+        }),
+      })
+      const d = await res.json()
+      if (!res.ok || !d.ok) throw new Error(d.message || "创建软件条目失败")
+
+      const appId = d.app_id
+      if (uploadFile && appId) {
+        toast.info("正在将安装包上传到本地服务器...")
+        const upRes = await fetch("/api/proxy/apps/upload", {
+          method: "POST",
+          headers: {
+            "X-App-Id": String(appId),
+            "X-Filename": encodeURIComponent(uploadFile.name),
+            "Content-Type": "application/octet-stream",
+          },
+          body: uploadFile,
+        })
+        const upData = await upRes.json()
+        if (upData.ok) {
+          toast.success("文件包已成功上传到服务器！")
+        } else {
+          toast.error(upData.message || "文件包上传失败")
+        }
+      }
+
+      toast.success("客户端软件添加成功！")
+      setCreateOpen(false)
+      setUploadFile(null)
+      loadApps()
+    } catch (err: any) {
+      toast.error(err.message || "添加软件出错")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("确定删除该客户端软件吗？")) return
+    try {
+      const res = await fetch(`/api/proxy/apps/${id}`, { method: "DELETE" })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success("软件已移除")
+        loadApps()
+      } else {
+        toast.error(d.message || "删除失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    }
+  }
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Download className="size-4 text-emerald-500" /> 客户端软件下载与上传专区
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            上传翻墙客户端安装包或提供镜像外链，预设 Clash、NekoBox、FLClash、Hiddify 等。用户在中心专区可自主选择「本地服务器高速下载」或「官方镜像直链下载」。
+          </p>
+        </div>
+        <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 text-xs h-8">
+          <Plus className="size-3.5" /> 上传 / 添加软件
+        </Button>
+      </div>
+
+      <div className="pt-2">
+        {apps.length === 0 ? (
+          <div className="p-6 text-center text-xs text-muted-foreground">
+            暂无已添加的软件，点击右上角【上传 / 添加软件】添加翻墙客户端。
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+            {apps.map((app) => (
+              <div key={app.id} className="p-3.5 rounded-lg border bg-muted/20 space-y-2 flex flex-col justify-between">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-foreground truncate">{app.name}</span>
+                    <Badge variant="outline" className="text-[10px] font-mono">
+                      {app.platform}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span>版本: {app.version || "最新版"}</span>
+                    <span>·</span>
+                    <span>下载: {app.downloads || 0} 次</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {app.has_local_file === 1 ? (
+                      <Badge className="text-[10px] bg-emerald-500/10 text-emerald-600 border border-emerald-500/30">
+                        ⚡ 本地高速安装包
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                        仅外链直链
+                      </Badge>
+                    )}
+                    {app.mirror_url && (
+                      <Badge className="text-[10px] bg-blue-500/10 text-blue-600 border border-blue-500/30">
+                        🌐 官方镜像外链
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2 border-t">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(app.id)}
+                    className="h-6 px-2 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-[11px] gap-1"
+                  >
+                    <Trash2 className="size-3" /> 删除
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Upload className="size-4 text-primary" /> 添加客户端软件
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              支持上传安装包二进制文件至本地服务器，亦可填写官方镜像下载外链。
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreateApp} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">预设常用软件快速填入</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {PRESET_APPS.map(p => (
+                  <Button
+                    key={p.name}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[11px] px-2"
+                    onClick={() => handleSelectPreset(p)}
+                  >
+                    {p.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">软件名称</Label>
+                <Input
+                  className="text-xs h-9"
+                  placeholder="如: Clash Verge"
+                  value={form.name}
+                  onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">适用系统</Label>
+                <Select value={form.platform} onValueChange={v => setForm(prev => ({ ...prev, platform: v }))}>
+                  <SelectTrigger className="text-xs h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Windows">Windows</SelectItem>
+                    <SelectItem value="Android">Android</SelectItem>
+                    <SelectItem value="macOS">macOS</SelectItem>
+                    <SelectItem value="iOS">iOS</SelectItem>
+                    <SelectItem value="Linux">Linux</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">版本号</Label>
+              <Input
+                className="text-xs h-9 font-mono"
+                placeholder="如: v1.7.5"
+                value={form.version}
+                onChange={e => setForm(prev => ({ ...prev, version: e.target.value }))}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">官方下载外链 (可选)</Label>
+              <Input
+                className="text-xs h-9 font-mono"
+                placeholder="https://github.com/.../releases"
+                value={form.mirror_url}
+                onChange={e => setForm(prev => ({ ...prev, mirror_url: e.target.value }))}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">上传本地安装包文件至服务器 (可选)</Label>
+              <input
+                type="file"
+                className="text-xs border rounded p-1.5 w-full bg-background"
+                onChange={e => {
+                  if (e.target.files && e.target.files[0]) {
+                    setUploadFile(e.target.files[0])
+                  }
+                }}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                直接上传 .apk / .exe / .dmg / .zip，用户可直接从服务器极速下载。
+              </p>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)} className="h-8 text-xs">
+                取消
+              </Button>
+              <Button type="submit" size="sm" disabled={submitting} className="h-8 text-xs">
+                {submitting ? "正在保存与上传..." : "确认添加"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </Card>
   )
 }
 
