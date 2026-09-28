@@ -2,6 +2,16 @@
 
 本文档记录 **ProxyProbe** 的所有主要版本演进、核心功能迭代与 Bug 修复历史。
 
+## 🌟 [v2.5.20] - 2026-09-28
+
+### 📊 全协议流量统计覆盖 (Full-Protocol Traffic Statistics Support)
+- **Sing-box 核心原生流量监控**：全面支持 Hysteria 2、AnyTLS、TUIC 等基于 Sing-box 核心协议的双向上传与下载流量实时统计。通过 Sing-box Clash API 与连接生命周期算法，无缝捕获长连接与突发短连接数据量，彻底告别以往 Sing-box 仅能统计在线设备而无流量数据的限制。
+- **精准用户与节点归因**：结合 Sing-box 访问日志、源 IP 端口映射与用户活动追踪，将 Sing-box 产生的流量精准归集到对应用户 (`proxy_user`)、节点 (`proxy_node`) 以及小时级流量趋势图 (`proxy_traffic_hourly`)。
+- **中转中继链路流量同步 (Relay Traffic Synchronization)**：针对 Realm 等中继节点 (`is_relay = 1`)，实现与目标落地节点 (`target_node_id`) 的上传/下载流量自动同步与级联递增，无论是本地直连还是远程 Agent 同步节点均能准确反映中继节点吞吐量。
+- **分布式 Agent 同步升级**：更新 `PROXY_AGENT_PY` 守护代理，使分布式被控节点上的 Sing-box 协议流量与中继链路流量同步上报至主控端。
+
+---
+
 ## 🌟 [v2.5.19] - 2026-09-28
 
 ### 💳 套餐管理、财务中心与多支付网关 (Billing, Store & Payment Gateways)

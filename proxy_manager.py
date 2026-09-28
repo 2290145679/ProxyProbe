@@ -992,7 +992,12 @@ def sync_step(server, token, last_hash):
                 allow_ports(sb_ports)
             os.makedirs("/var/log/sing-box", exist_ok=True)
             sb_config = {
-                "log": { "level": "warn", "output": "/var/log/sing-box/access.log" },
+                "log": { "level": "info", "output": "/var/log/sing-box/access.log" },
+                "experimental": {
+                    "clash_api": {
+                        "external_controller": "127.0.0.1:9095"
+                    }
+                },
                 "inbounds": singbox_inbounds,
                 "outbounds": [{ "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" }]
             }
@@ -1113,6 +1118,10 @@ def sync_step(server, token, last_hash):
             realm_running = service_is_active("realm")
 
     user_stats = []
+    node_stats = []
+    user_traffic = {}
+    node_traffic = {}
+
     if xr_running:
         try:
             res = subprocess.run(
@@ -1122,8 +1131,6 @@ def sync_step(server, token, last_hash):
             if res.returncode == 0 and res.stdout:
                 st_data = json.loads(res.stdout)
                 raw_stats = st_data.get("stat") or []
-                user_traffic = {}
-                node_traffic = {}
                 for item in raw_stats:
                     name = item.get("name", "")
                     val = int(item.get("value", 0))
@@ -1164,11 +1171,98 @@ def sync_step(server, token, last_hash):
                                 node_traffic[nid]["upload"] += val
                             elif direction == "downlink":
                                 node_traffic[nid]["download"] += val
-                if user_traffic:
-                    user_stats = list(user_traffic.values())
-                node_stats = list(node_traffic.values()) if node_traffic else []
         except Exception:
             pass
+
+    if sb_running:
+        try:
+            req_sb = urllib.request.Request("http://127.0.0.1:9095/connections")
+            with urllib.request.urlopen(req_sb, timeout=3) as resp_sb:
+                sb_data = json.loads(resp_sb.read().decode("utf-8"))
+                curr_sb_up = int(sb_data.get("uploadTotal", 0))
+                curr_sb_down = int(sb_data.get("downloadTotal", 0))
+
+                global _last_agent_sb_up, _last_agent_sb_down, _agent_sb_conns, _agent_last_sb_user, _agent_last_sb_node
+                if '_last_agent_sb_up' not in globals():
+                    _last_agent_sb_up = curr_sb_up
+                    _last_agent_sb_down = curr_sb_down
+                    _agent_sb_conns = {}
+                    _agent_last_sb_user = 1
+                    _agent_last_sb_node = None
+
+                if curr_sb_up < _last_agent_sb_up or curr_sb_down < _last_agent_sb_down:
+                    delta_sb_up = curr_sb_up
+                    delta_sb_down = curr_sb_down
+                    _agent_sb_conns.clear()
+                else:
+                    delta_sb_up = max(0, curr_sb_up - _last_agent_sb_up)
+                    delta_sb_down = max(0, curr_sb_down - _last_agent_sb_down)
+                _last_agent_sb_up = curr_sb_up
+                _last_agent_sb_down = curr_sb_down
+
+                conns = sb_data.get("connections", [])
+                curr_conn_ids = set()
+                sum_active_up = 0
+                sum_active_down = 0
+
+                for c in conns:
+                    cid = c.get("id")
+                    if not cid:
+                        continue
+                    curr_conn_ids.add(cid)
+                    c_up = int(c.get("upload", 0))
+                    c_down = int(c.get("download", 0))
+                    meta = c.get("metadata", {})
+                    inb_type = meta.get("type", "")
+                    m_nid = re.search(r'in-(\\d+)', inb_type)
+                    nid = int(m_nid.group(1)) if m_nid else _agent_last_sb_node
+                    if nid:
+                        _agent_last_sb_node = nid
+
+                    uid = _agent_last_sb_user or 1
+
+                    prev_up, prev_down, _, _ = _agent_sb_conns.get(cid, (0, 0, uid, nid))
+                    d_up = max(0, c_up - prev_up)
+                    d_down = max(0, c_down - prev_down)
+                    _agent_sb_conns[cid] = (c_up, c_down, uid, nid)
+
+                    if d_up > 0 or d_down > 0:
+                        sum_active_up += d_up
+                        sum_active_down += d_down
+                        if uid not in user_traffic:
+                            user_traffic[uid] = {"user_id": uid, "upload": 0, "download": 0}
+                        user_traffic[uid]["upload"] += d_up
+                        user_traffic[uid]["download"] += d_down
+                        if nid:
+                            if nid not in node_traffic:
+                                node_traffic[nid] = {"node_id": nid, "upload": 0, "download": 0}
+                            node_traffic[nid]["upload"] += d_up
+                            node_traffic[nid]["download"] += d_down
+
+                for closed_id in set(_agent_sb_conns.keys()) - curr_conn_ids:
+                    _agent_sb_conns.pop(closed_id, None)
+
+                rem_up = max(0, delta_sb_up - sum_active_up)
+                rem_down = max(0, delta_sb_down - sum_active_down)
+                if rem_up > 0 or rem_down > 0:
+                    uid = _agent_last_sb_user or 1
+                    nid = _agent_last_sb_node
+                    if uid not in user_traffic:
+                        user_traffic[uid] = {"user_id": uid, "upload": 0, "download": 0}
+                    user_traffic[uid]["upload"] += rem_up
+                    user_traffic[uid]["download"] += rem_down
+                    if nid:
+                        if nid not in node_traffic:
+                            node_traffic[nid] = {"node_id": nid, "upload": 0, "download": 0}
+                        node_traffic[nid]["upload"] += rem_up
+                        node_traffic[nid]["download"] += rem_down
+        except Exception:
+            pass
+
+    if user_traffic:
+        user_stats = list(user_traffic.values())
+    if node_traffic:
+        node_stats = list(node_traffic.values())
 
     post_url = f"{server}/api/proxy/agent-sync"
     payload = json.dumps({
@@ -2514,11 +2608,13 @@ def ensure_user_credentials(user):
     return u_uuid, u_pwd
 
 _user_active_ips = {}  # { user_id: { ip_str: last_seen_epoch } }
+_sb_ip_to_user = {}    # { ip_str: user_id }
+_sb_ipport_to_user = {} # { "ip:port": user_id }
 _last_xray_log_offset = 0
 _last_singbox_log_offset = 0
 
 def update_device_tracker():
-    global _user_active_ips, _last_xray_log_offset, _last_singbox_log_offset
+    global _user_active_ips, _sb_ip_to_user, _sb_ipport_to_user, _last_xray_log_offset, _last_singbox_log_offset
     now = int(time.time())
 
     # 1. Parse Xray access log
@@ -2566,12 +2662,28 @@ def update_device_tracker():
                 lines = f.readlines()
                 _last_singbox_log_offset = f.tell()
                 for line in lines:
-                    m_ip = re.search(r'\[([\d\.:a-fA-F]+):\d+\s*->', line)
+                    m_ip = re.search(r'\[([\d\.:a-fA-F]+):(\d+)\s*->', line)
                     m_user = re.search(r'user:\s*([^\s\)]+)', line)
+                    m_conn = re.search(r'inbound connection from ([\d\.:a-fA-F]+):(\d+)', line)
+                    m_u_bracket = re.search(r':\s*\[(user_\d+|default)\]', line)
+
+                    ip = None
+                    port = None
+                    u_name = None
                     if m_ip and m_user:
                         ip = m_ip.group(1).strip()
+                        port = m_ip.group(2).strip()
                         u_name = m_user.group(1).strip()
-                        uid = None
+                    elif m_conn:
+                        ip = m_conn.group(1).strip()
+                        port = m_conn.group(2).strip()
+                        if m_u_bracket:
+                            u_name = m_u_bracket.group(1).strip()
+                    elif m_u_bracket:
+                        u_name = m_u_bracket.group(1).strip()
+
+                    uid = None
+                    if u_name:
                         if u_name.startswith("user_"):
                             try:
                                 uid = int(u_name.split("_")[1])
@@ -2579,10 +2691,13 @@ def update_device_tracker():
                                 pass
                         elif u_name == "default":
                             uid = 1
-                        if uid is not None and ip not in ("127.0.0.1", "::1"):
-                            if uid not in _user_active_ips:
-                                _user_active_ips[uid] = {}
-                            _user_active_ips[uid][ip] = now
+                    if uid is not None and ip and ip not in ("127.0.0.1", "::1"):
+                        _sb_ip_to_user[ip] = uid
+                        if port:
+                            _sb_ipport_to_user[f"{ip}:{port}"] = uid
+                        if uid not in _user_active_ips:
+                            _user_active_ips[uid] = {}
+                        _user_active_ips[uid][ip] = now
         except Exception:
             pass
 
@@ -2623,9 +2738,14 @@ def get_active_users():
     return active
 
 _last_active_user_ids = set()
+_last_sb_global_up = 0
+_last_sb_global_down = 0
+_last_sb_conns = {}  # { conn_id: (up, down, user_id, node_id) }
+_last_active_sb_user = 1
+_last_active_sb_node = None
 
 def traffic_collector_loop():
-    global _last_active_user_ids
+    global _last_active_user_ids, _last_sb_global_up, _last_sb_global_down, _last_sb_conns, _last_active_sb_user, _last_active_sb_node
     time.sleep(3)
     try:
         _last_active_user_ids = {u["id"] for u in get_active_users()}
@@ -2638,20 +2758,21 @@ def traffic_collector_loop():
             # 0. Update device tracker from logs
             update_device_tracker()
 
+            user_traffic = {}
+            node_traffic = {}
+            tot_up = 0
+            tot_down = 0
+
             # 1. Query Xray StatsService via local API
             if os.path.exists(XRAY_BIN):
-                res = subprocess.run(
-                    [XRAY_BIN, "api", "statsquery", "--server=127.0.0.1:10085", "-reset=true"],
-                    capture_output=True, text=True, timeout=5
-                )
-                if res.returncode == 0 and res.stdout:
-                    try:
+                try:
+                    res = subprocess.run(
+                        [XRAY_BIN, "api", "statsquery", "--server=127.0.0.1:10085", "-reset=true"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if res.returncode == 0 and res.stdout:
                         data = json.loads(res.stdout)
                         stats = data.get("stat") or []
-                        user_traffic = {}
-                        node_traffic = {}
-                        tot_up = 0
-                        tot_down = 0
                         for item in stats:
                             name = item.get("name", "")
                             val = int(item.get("value", 0))
@@ -2695,34 +2816,147 @@ def traffic_collector_loop():
                                         node_traffic[nid]["up"] += val
                                     elif direction == "downlink":
                                         node_traffic[nid]["down"] += val
-                        
-                        if user_traffic or node_traffic:
-                            conn = get_db()
-                            with conn:
-                                for uid, tf in user_traffic.items():
-                                    conn.execute("""
-                                        UPDATE proxy_user
-                                        SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
-                                        WHERE id = ?
-                                    """, (tf["up"], tf["down"], uid))
-                                for nid, tf in node_traffic.items():
-                                    conn.execute("""
-                                        UPDATE proxy_node
-                                        SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
-                                        WHERE id = ?
-                                    """, (tf["up"], tf["down"], nid))
-                                if tot_up > 0 or tot_down > 0:
-                                    tb = (int(time.time()) // 3600) * 3600
-                                    conn.execute("""
-                                        INSERT INTO proxy_traffic_hourly (time_bucket, upload_bytes, download_bytes)
-                                        VALUES (?, ?, ?)
-                                        ON CONFLICT(time_bucket) DO UPDATE SET
-                                            upload_bytes = upload_bytes + excluded.upload_bytes,
-                                            download_bytes = download_bytes + excluded.download_bytes
-                                    """, (tb, tot_up, tot_down))
-                            conn.close()
-                    except Exception as e:
-                        pass
+                except Exception:
+                    pass
+
+            # 2. Query Sing-box Clash API for Hysteria 2 / AnyTLS / TUIC
+            if os.path.exists(SINGBOX_BIN):
+                try:
+                    req_sb = urllib.request.Request("http://127.0.0.1:9095/connections")
+                    with urllib.request.urlopen(req_sb, timeout=3) as resp_sb:
+                        sb_data = json.loads(resp_sb.read().decode("utf-8"))
+                        curr_sb_up = int(sb_data.get("uploadTotal", 0))
+                        curr_sb_down = int(sb_data.get("downloadTotal", 0))
+
+                        if _last_sb_global_up == 0 and _last_sb_global_down == 0:
+                            _last_sb_global_up = curr_sb_up
+                            _last_sb_global_down = curr_sb_down
+
+                        if curr_sb_up < _last_sb_global_up or curr_sb_down < _last_sb_global_down:
+                            delta_sb_up = curr_sb_up
+                            delta_sb_down = curr_sb_down
+                            _last_sb_conns.clear()
+                        else:
+                            delta_sb_up = max(0, curr_sb_up - _last_sb_global_up)
+                            delta_sb_down = max(0, curr_sb_down - _last_sb_global_down)
+
+                        _last_sb_global_up = curr_sb_up
+                        _last_sb_global_down = curr_sb_down
+
+                        conns = sb_data.get("connections", [])
+                        curr_conn_ids = set()
+                        sum_active_up = 0
+                        sum_active_down = 0
+
+                        for c in conns:
+                            cid = c.get("id")
+                            if not cid:
+                                continue
+                            curr_conn_ids.add(cid)
+                            c_up = int(c.get("upload", 0))
+                            c_down = int(c.get("download", 0))
+                            meta = c.get("metadata", {})
+                            inb_type = meta.get("type", "")
+                            
+                            m_nid = re.search(r'in-(\d+)', inb_type)
+                            nid = int(m_nid.group(1)) if m_nid else _last_active_sb_node
+                            if nid:
+                                _last_active_sb_node = nid
+
+                            src_ip = meta.get("sourceIP", "")
+                            src_port = meta.get("sourcePort", "")
+                            uid = _sb_ipport_to_user.get(f"{src_ip}:{src_port}") or _sb_ip_to_user.get(src_ip)
+                            if not uid and src_ip:
+                                for u_k, ips in _user_active_ips.items():
+                                    if src_ip in ips:
+                                        uid = u_k
+                                        break
+                            if not uid:
+                                uid = _last_active_sb_user or 1
+                            else:
+                                _last_active_sb_user = uid
+
+                            prev_up, prev_down, _, _ = _last_sb_conns.get(cid, (0, 0, uid, nid))
+                            d_up = max(0, c_up - prev_up)
+                            d_down = max(0, c_down - prev_down)
+                            _last_sb_conns[cid] = (c_up, c_down, uid, nid)
+
+                            if d_up > 0 or d_down > 0:
+                                sum_active_up += d_up
+                                sum_active_down += d_down
+                                if uid not in user_traffic:
+                                    user_traffic[uid] = {"up": 0, "down": 0}
+                                user_traffic[uid]["up"] += d_up
+                                user_traffic[uid]["down"] += d_down
+                                if nid:
+                                    if nid not in node_traffic:
+                                        node_traffic[nid] = {"up": 0, "down": 0}
+                                    node_traffic[nid]["up"] += d_up
+                                    node_traffic[nid]["down"] += d_down
+
+                        for closed_id in set(_last_sb_conns.keys()) - curr_conn_ids:
+                            _last_sb_conns.pop(closed_id, None)
+
+                        rem_up = max(0, delta_sb_up - sum_active_up)
+                        rem_down = max(0, delta_sb_down - sum_active_down)
+                        if rem_up > 0 or rem_down > 0:
+                            fallback_uid = _last_active_sb_user or 1
+                            fallback_nid = _last_active_sb_node
+                            if not fallback_nid:
+                                try:
+                                    conn_sb = get_db()
+                                    r_sb = conn_sb.execute("SELECT id FROM proxy_node WHERE protocol IN ('hysteria2', 'anytls', 'tuic') AND enabled = 1 AND is_relay = 0 ORDER BY id ASC LIMIT 1").fetchone()
+                                    conn_sb.close()
+                                    if r_sb:
+                                        fallback_nid = r_sb[0]
+                                        _last_active_sb_node = fallback_nid
+                                except Exception:
+                                    pass
+                            if fallback_uid not in user_traffic:
+                                user_traffic[fallback_uid] = {"up": 0, "down": 0}
+                            user_traffic[fallback_uid]["up"] += rem_up
+                            user_traffic[fallback_uid]["down"] += rem_down
+                            if fallback_nid:
+                                if fallback_nid not in node_traffic:
+                                    node_traffic[fallback_nid] = {"up": 0, "down": 0}
+                                node_traffic[fallback_nid]["up"] += rem_up
+                                node_traffic[fallback_nid]["down"] += rem_down
+
+                        tot_up += delta_sb_up
+                        tot_down += delta_sb_down
+                except Exception:
+                    pass
+
+            if user_traffic or node_traffic:
+                conn = get_db()
+                with conn:
+                    for uid, tf in user_traffic.items():
+                        conn.execute("""
+                            UPDATE proxy_user
+                            SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                            WHERE id = ?
+                        """, (tf["up"], tf["down"], uid))
+                    for nid, tf in node_traffic.items():
+                        conn.execute("""
+                            UPDATE proxy_node
+                            SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                            WHERE id = ?
+                        """, (tf["up"], tf["down"], nid))
+                        conn.execute("""
+                            UPDATE proxy_node
+                            SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                            WHERE target_node_id = ?
+                        """, (tf["up"], tf["down"], nid))
+                    if tot_up > 0 or tot_down > 0:
+                        tb = (int(time.time()) // 3600) * 3600
+                        conn.execute("""
+                            INSERT INTO proxy_traffic_hourly (time_bucket, upload_bytes, download_bytes)
+                            VALUES (?, ?, ?)
+                            ON CONFLICT(time_bucket) DO UPDATE SET
+                                upload_bytes = upload_bytes + excluded.upload_bytes,
+                                download_bytes = download_bytes + excluded.download_bytes
+                        """, (tb, tot_up, tot_down))
+                conn.close()
 
             # 2. Check if active user set changed (e.g. user reached quota or renewed/restored)
             curr_active_users = get_active_users()
@@ -4824,9 +5058,14 @@ def apply_singbox_config():
     os.makedirs("/var/log/sing-box", exist_ok=True)
     config = {
         "log": {
-            "level": "warn",
+            "level": "info",
             "timestamp": True,
             "output": "/var/log/sing-box/access.log"
+        },
+        "experimental": {
+            "clash_api": {
+                "external_controller": "127.0.0.1:9095"
+            }
         },
         "inbounds": inbounds,
         "outbounds": [
@@ -6682,6 +6921,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
                                 UPDATE proxy_node
                                 SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
                                 WHERE id = ?
+                            """, (up, down, nid))
+                            conn.execute("""
+                                UPDATE proxy_node
+                                SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                                WHERE target_node_id = ?
                             """, (up, down, nid))
                             tot_up += up
                             tot_down += down
