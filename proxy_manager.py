@@ -1342,6 +1342,52 @@ def init_db():
         except Exception:
             pass
 
+        # VIP 套餐扩展字段与默认价格
+        for col_name, col_def in [
+            ("tier_id", "TEXT DEFAULT ''"),
+            ("price_monthly", "REAL DEFAULT 0"),
+            ("price_quarterly", "REAL DEFAULT 0"),
+            ("price_yearly", "REAL DEFAULT 0"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE proxy_tier ADD COLUMN {col_name} {col_def}")
+            except Exception:
+                pass
+
+        try:
+            conn.execute("UPDATE proxy_tier SET tier_id = tier_key WHERE tier_id = '' OR tier_id IS NULL")
+            conn.execute("UPDATE proxy_tier SET price_monthly = 15.0, price_quarterly = 40.0, price_yearly = 150.0 WHERE tier_key = 'vip1' AND (price_monthly = 0 OR price_monthly IS NULL)")
+            conn.execute("UPDATE proxy_tier SET price_monthly = 30.0, price_quarterly = 80.0, price_yearly = 300.0 WHERE tier_key = 'vip2' AND (price_monthly = 0 OR price_monthly IS NULL)")
+            conn.execute("UPDATE proxy_tier SET price_monthly = 60.0, price_quarterly = 160.0, price_yearly = 600.0 WHERE tier_key = 'vip3' AND (price_monthly = 0 OR price_monthly IS NULL)")
+        except Exception:
+            pass
+
+        # 用户表扩展余额字段
+        try:
+            conn.execute("ALTER TABLE proxy_user ADD COLUMN balance REAL DEFAULT 0.0")
+        except Exception:
+            pass
+
+        # 订单与支付记录表
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS proxy_order (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_no TEXT UNIQUE NOT NULL,
+            user_id INTEGER NOT NULL,
+            username TEXT NOT NULL,
+            tier_id INTEGER DEFAULT 0,
+            tier_key TEXT DEFAULT '',
+            tier_name TEXT NOT NULL,
+            period TEXT NOT NULL,
+            amount REAL NOT NULL,
+            pay_method TEXT DEFAULT 'balance',
+            status TEXT DEFAULT 'pending',
+            note TEXT DEFAULT '',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+        """)
+
         # 系统公告表
         conn.execute("""
         CREATE TABLE IF NOT EXISTS proxy_announcement (
@@ -2413,7 +2459,7 @@ def get_current_user(headers):
                     session_token = b_tok
                     conn.close()
                 else:
-                    u_row = conn.execute("SELECT * FROM proxy_user WHERE sub_token = ? AND is_admin = 1", (b_tok,)).fetchone()
+                    u_row = conn.execute("SELECT * FROM proxy_user WHERE sub_token = ?", (b_tok,)).fetchone()
                     conn.close()
                     if u_row:
                         return dict(u_row)
@@ -5511,7 +5557,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "status": status_text,
                     "created_at": user.get("created_at", 0),
                     "theme_style": user_theme or "default",
-                    "vip_level": user.get("vip_level", "vip1")
+                    "vip_level": user.get("vip_level", "vip1"),
+                    "balance": round(float(user.get("balance") or 0.0), 2)
                 }
             })
             return
@@ -5553,17 +5600,97 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "nodes": nodes, "user_vip_level": user.get("vip_level", "vip1")})
             return
 
-        # VIP 套餐列表接口
+        # VIP 套餐列表接口 (公开/用户端与管理端通用)
         if path == "/api/proxy/tiers":
             conn = get_db()
-            cur = conn.execute("SELECT id, tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at FROM proxy_tier ORDER BY sort_order ASC, id ASC")
+            cur = conn.execute("SELECT id, tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at, tier_id, price_monthly, price_quarterly, price_yearly FROM proxy_tier ORDER BY sort_order ASC, id ASC")
             tiers = []
             for r in cur.fetchall():
                 d = dict(r)
-                d["tier_id"] = d.get("tier_key", "")
+                if not d.get("tier_id"):
+                    d["tier_id"] = d.get("tier_key", "")
+                d["price_monthly"] = round(float(d.get("price_monthly") or 0.0), 2)
+                d["price_quarterly"] = round(float(d.get("price_quarterly") or 0.0), 2)
+                d["price_yearly"] = round(float(d.get("price_yearly") or 0.0), 2)
                 tiers.append(d)
             conn.close()
             self.send_json({"ok": True, "tiers": tiers})
+            return
+
+        # 支付网关配置接口 (管理端)
+        if path == "/api/proxy/settings/payment":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            pay_on = get_setting("pay_enabled", "1") == "1"
+            usdt = get_setting("pay_usdt_trc20", "")
+            ali = get_setting("pay_alipay_qr", "")
+            wx = get_setting("pay_wechat_qr", "")
+            tg = get_setting("pay_tg_contact", "")
+            notes = get_setting("pay_notes", "转账付款后请备注您的登录用户名或将交易单号发送给在线客服完成开通。")
+            self.send_json({
+                "ok": True,
+                "enabled": pay_on,
+                "pay_enabled": pay_on,
+                "usdt_trc20": usdt,
+                "pay_usdt_trc20": usdt,
+                "alipay_qr": ali,
+                "pay_alipay_qr": ali,
+                "wechat_qr": wx,
+                "pay_wechat_qr": wx,
+                "tg_support": tg,
+                "pay_tg_contact": tg,
+                "pay_notes": notes,
+            })
+            return
+
+        # 支付网关配置 (用户端公开)
+        if path == "/api/proxy/user/payment-config":
+            pay_on = get_setting("pay_enabled", "1") == "1"
+            usdt = get_setting("pay_usdt_trc20", "")
+            ali = get_setting("pay_alipay_qr", "")
+            wx = get_setting("pay_wechat_qr", "")
+            tg = get_setting("pay_tg_contact", "")
+            notes = get_setting("pay_notes", "转账付款后请备注您的登录用户名或将交易单号发送给在线客服完成开通。")
+            self.send_json({
+                "ok": True,
+                "enabled": pay_on,
+                "pay_enabled": pay_on,
+                "usdt_trc20": usdt,
+                "pay_usdt_trc20": usdt,
+                "alipay_qr": ali,
+                "pay_alipay_qr": ali,
+                "wechat_qr": wx,
+                "pay_wechat_qr": wx,
+                "tg_support": tg,
+                "pay_tg_contact": tg,
+                "pay_notes": notes,
+            })
+            return
+
+        # 订单记录列表接口 (管理端)
+        if path == "/api/proxy/orders":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            conn = get_db()
+            cur = conn.execute("SELECT * FROM proxy_order ORDER BY id DESC LIMIT 500")
+            orders = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            self.send_json({"ok": True, "orders": orders})
+            return
+
+        # 用户个人订单记录列表 (用户端)
+        if path == "/api/proxy/user/orders":
+            user = get_current_user(self.headers)
+            if not user:
+                self.send_json({"ok": False, "error": "未登录"}, 401)
+                return
+            conn = get_db()
+            cur = conn.execute("SELECT * FROM proxy_order WHERE user_id = ? ORDER BY id DESC LIMIT 50", (user["id"],))
+            orders = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            self.send_json({"ok": True, "orders": orders})
             return
 
         # 系统公告接口 (管理端)
@@ -6891,6 +7018,111 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "message": "密码重置成功，请使用新密码登录"})
             return
 
+        if path == "/api/proxy/orders":
+            user = get_current_user(self.headers)
+            if not user:
+                if not check_auth(self.headers):
+                    self.send_json({"ok": False, "message": "未登录"}, 401)
+                    return
+                target_user_id = req.get("user_id")
+                if not target_user_id:
+                    self.send_json({"ok": False, "message": "请指定目标用户 ID"}, 400)
+                    return
+                conn = get_db()
+                cur = conn.execute("SELECT * FROM proxy_user WHERE id = ?", (target_user_id,))
+                row = cur.fetchone()
+                conn.close()
+                if not row:
+                    self.send_json({"ok": False, "message": "指定用户不存在"}, 404)
+                    return
+                user = dict(row)
+            
+            user_id = user["id"]
+            username = user["username"]
+            tier_key = str(req.get("tier_key") or req.get("tier_id") or "").strip().lower()
+            period = str(req.get("period") or "monthly").strip().lower()
+            pay_method = str(req.get("pay_method") or "balance").strip().lower()
+            user_note = str(req.get("note") or "").strip()
+
+            conn = get_db()
+            cur = conn.execute("SELECT * FROM proxy_tier WHERE tier_key = ? OR tier_id = ?", (tier_key, tier_key))
+            tier_row = cur.fetchone()
+            if not tier_row:
+                conn.close()
+                self.send_json({"ok": False, "message": "所选 VIP 套餐不存在"}, 400)
+                return
+            tier = dict(tier_row)
+
+            if period == "yearly":
+                amount = float(tier.get("price_yearly") or 0.0)
+                days_add = 365
+            elif period == "quarterly":
+                amount = float(tier.get("price_quarterly") or 0.0)
+                days_add = 90
+            else:
+                period = "monthly"
+                amount = float(tier.get("price_monthly") or 0.0)
+                days_add = 30
+
+            order_no = f"ORD{int(time.time())}{secrets.token_hex(3).upper()}"
+            now_ts = int(time.time())
+
+            if pay_method == "balance":
+                cur_u = conn.execute("SELECT balance, expires_at FROM proxy_user WHERE id = ?", (user_id,))
+                u_row = cur_u.fetchone()
+                curr_balance = float(u_row[0] or 0.0) if u_row else 0.0
+                curr_expires_at = int(u_row[1] or 0) if u_row else 0
+
+                if curr_balance < amount:
+                    conn.close()
+                    self.send_json({
+                        "ok": False,
+                        "message": f"账户余额不足（当前: ￥{curr_balance:.2f}，需要: ￥{amount:.2f}），请联系管理员充值或选择其他支付方式"
+                    }, 400)
+                    return
+
+                new_balance = round(curr_balance - amount, 2)
+                new_expires_at = (curr_expires_at + days_add * 86400) if curr_expires_at > now_ts else (now_ts + days_add * 86400)
+
+                with conn:
+                    conn.execute("UPDATE proxy_user SET balance = ?, expires_at = ?, vip_level = ? WHERE id = ?",
+                                 (new_balance, new_expires_at, tier["tier_key"], user_id))
+                    if tier.get("speed_limit_mbps", 0) > 0:
+                        conn.execute("UPDATE proxy_user SET bandwidth_limit_mbps = ? WHERE id = ?", (tier["speed_limit_mbps"], user_id))
+                    if tier.get("device_limit", 0) > 0:
+                        conn.execute("UPDATE proxy_user SET device_limit = ? WHERE id = ?", (tier["device_limit"], user_id))
+                    
+                    conn.execute("""
+                        INSERT INTO proxy_order (order_no, user_id, username, tier_id, tier_key, tier_name, period, amount, pay_method, status, note, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?)
+                    """, (order_no, user_id, username, tier["id"], tier["tier_key"], tier["name"], period, amount, pay_method, user_note, now_ts, now_ts))
+                conn.close()
+                threading.Thread(target=apply_all_configs, daemon=True).start()
+                self.send_json({
+                    "ok": True,
+                    "order_no": order_no,
+                    "status": "completed",
+                    "balance": new_balance,
+                    "expires_at": new_expires_at,
+                    "message": f"购买成功！已扣除 ￥{amount:.2f}，套餐【{tier['name']}】与有效期已即刻生效。"
+                })
+                return
+            else:
+                with conn:
+                    conn.execute("""
+                        INSERT INTO proxy_order (order_no, user_id, username, tier_id, tier_key, tier_name, period, amount, pay_method, status, note, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                    """, (order_no, user_id, username, tier["id"], tier["tier_key"], tier["name"], period, amount, pay_method, user_note, now_ts, now_ts))
+                conn.close()
+                self.send_json({
+                    "ok": True,
+                    "order_no": order_no,
+                    "status": "pending",
+                    "amount": amount,
+                    "message": "订单已提交！请按照转账指引完成支付，客服确认后将立即为您开通。"
+                })
+                return
+
         # 2. Admin required for all other POST endpoints
         if not check_auth(self.headers):
             self.send_json({"error": "Unauthorized"}, 401)
@@ -7041,6 +7273,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             expires_days = int(req.get("expires_days", 0))
             device_limit = int(req.get("device_limit", 0))
             vip_level = (req.get("vip_level") or "vip1").strip()
+            balance = float(req.get("balance", 0.0) or 0.0)
 
             if not username:
                 self.send_json({"ok": False, "message": "用户名不能为空"}, 400)
@@ -7058,9 +7291,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             try:
                 with conn:
                     cur = conn.execute("""
-                        INSERT INTO proxy_user (username, email, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit, bandwidth_limit_mbps, vip_level)
-                        VALUES (?, ?, ?, ?, ?, 0, 0, ?, 1, 0, ?, ?, ?, ?)
-                    """, (username, email, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time()), device_limit, bandwidth_limit_mbps, vip_level))
+                        INSERT INTO proxy_user (username, email, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit, bandwidth_limit_mbps, vip_level, balance)
+                        VALUES (?, ?, ?, ?, ?, 0, 0, ?, 1, 0, ?, ?, ?, ?, ?)
+                    """, (username, email, pwd_hash, sub_token, limit_bytes, expires_at, int(time.time()), device_limit, bandwidth_limit_mbps, vip_level, balance))
                     new_id = cur.lastrowid
                 conn.close()
                 threading.Thread(target=apply_all_configs, daemon=True).start()
@@ -7101,6 +7334,27 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "message": "用户状态已变更"})
             return
 
+        if path.startswith("/api/proxy/users/") and path.endswith("/balance"):
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            user_id = int(path.split("/")[-2])
+            delta_val = req.get("delta") if req.get("delta") is not None else req.get("adjust")
+            adjust = float(delta_val) if delta_val is not None else 0.0
+            set_balance = req.get("balance")
+            conn = get_db()
+            with conn:
+                if set_balance is not None:
+                    conn.execute("UPDATE proxy_user SET balance = ? WHERE id = ?", (max(0.0, float(set_balance)), user_id))
+                elif adjust != 0.0:
+                    conn.execute("UPDATE proxy_user SET balance = MAX(0.0, balance + ?) WHERE id = ?", (adjust, user_id))
+            cur = conn.execute("SELECT balance FROM proxy_user WHERE id = ?", (user_id,))
+            row = cur.fetchone()
+            conn.close()
+            new_bal = round(row[0] if row else 0.0, 2)
+            self.send_json({"ok": True, "balance": new_bal, "message": f"用户余额已更新为 ￥{new_bal:.2f}"})
+            return
+
         if path.startswith("/api/proxy/users/") and path.endswith("/edit"):
             user_id = int(path.split("/")[-2])
             limit_gb = req.get("traffic_limit_gb")
@@ -7110,6 +7364,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             bw_mbps = req.get("bandwidth_limit_mbps")
             email = req.get("email")
             vip_level = req.get("vip_level")
+            balance = req.get("balance")
             
             conn = get_db()
             with conn:
@@ -7126,6 +7381,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     conn.execute("UPDATE proxy_user SET email = ? WHERE id = ?", (str(email).strip(), user_id))
                 if vip_level is not None:
                     conn.execute("UPDATE proxy_user SET vip_level = ? WHERE id = ?", (str(vip_level).strip() or "vip1", user_id))
+                if balance is not None:
+                    conn.execute("UPDATE proxy_user SET balance = ? WHERE id = ?", (max(0.0, float(balance)), user_id))
                 if new_pwd:
                     conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (hash_password(new_pwd), user_id))
             conn.close()
@@ -7326,7 +7583,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 password = gen_random_password(16)
 
             now = int(time.time())
-            vip_levels = (req.get("vip_levels") or "").strip()
+            vip_levels = (req.get("vip_levels") or req.get("vip_level") or "").strip()
+            if not vip_levels:
+                self.send_json({"ok": False, "message": "请选择节点可见 VIP 权限等级（例如：所有用户可见 或 指定 VIP 等级）"}, 400)
+                return
             conn = get_db()
             with conn:
                 cur = conn.execute("""
@@ -7465,7 +7725,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             pwd_val = req.get("password")
             sni = req.get("sni")
             bw = req.get("bandwidth_limit_mbps")
-            vip_levels = req.get("vip_levels")
+            vip_levels = req.get("vip_levels") if req.get("vip_levels") is not None else req.get("vip_level")
             enabled = req.get("enabled")
 
             conn = get_db()
@@ -7574,11 +7834,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 return
             t_id = req.get("id")
             tier_key = (req.get("tier_key") or req.get("tier_id") or "").strip().lower()
+            tier_id_val = (req.get("tier_id") or tier_key).strip().lower()
             name = (req.get("name") or "").strip()
             description = (req.get("description") or "").strip()
-            speed_limit = int(req.get("speed_limit_mbps", 0))
-            device_limit = int(req.get("device_limit", 0))
-            sort_order = int(req.get("sort_order", 0))
+            speed_limit = int(req.get("speed_limit_mbps", 0) or 0)
+            device_limit = int(req.get("device_limit", 0) or 0)
+            sort_order = int(req.get("sort_order", 0) or 0)
+            price_monthly = float(req.get("price_monthly", 0.0) or 0.0)
+            price_quarterly = float(req.get("price_quarterly", 0.0) or 0.0)
+            price_yearly = float(req.get("price_yearly", 0.0) or 0.0)
 
             if not tier_key:
                 self.send_json({"ok": False, "message": "套餐标识（tier_key / tier_id）不能为空"}, 400)
@@ -7592,18 +7856,89 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 if t_id:
                     conn.execute("""
                         UPDATE proxy_tier
-                        SET tier_key = ?, name = ?, description = ?, speed_limit_mbps = ?, device_limit = ?, sort_order = ?
+                        SET tier_key = ?, tier_id = ?, name = ?, description = ?, speed_limit_mbps = ?, device_limit = ?, sort_order = ?,
+                            price_monthly = ?, price_quarterly = ?, price_yearly = ?
                         WHERE id = ?
-                    """, (tier_key, name, description, speed_limit, device_limit, sort_order, int(t_id)))
+                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, int(t_id)))
                     saved_id = int(t_id)
                 else:
                     cur = conn.execute("""
-                        INSERT INTO proxy_tier (tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (tier_key, name, description, speed_limit, device_limit, sort_order, int(time.time())))
+                        INSERT INTO proxy_tier (tier_key, tier_id, name, description, speed_limit_mbps, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, int(time.time())))
                     saved_id = cur.lastrowid
             conn.close()
             self.send_json({"ok": True, "id": saved_id, "tier_id": saved_id, "message": "VIP 套餐已成功保存"})
+            return
+
+        elif path == "/api/proxy/settings/payment":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            set_setting("pay_enabled", "1" if (req.get("pay_enabled") or req.get("enabled", True)) else "0")
+            set_setting("pay_usdt_trc20", str(req.get("pay_usdt_trc20") or req.get("usdt_trc20", "")).strip())
+            set_setting("pay_alipay_qr", str(req.get("pay_alipay_qr") or req.get("alipay_qr", "")).strip())
+            set_setting("pay_wechat_qr", str(req.get("pay_wechat_qr") or req.get("wechat_qr", "")).strip())
+            set_setting("pay_tg_contact", str(req.get("pay_tg_contact") or req.get("tg_support", "")).strip())
+            set_setting("pay_notes", str(req.get("pay_notes", "")).strip())
+            self.send_json({"ok": True, "message": "支付网关配置已成功保存"})
+            return
+
+        elif re.match(r"^/api/proxy/orders/(\d+)/complete$", path):
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            order_id = int(path.split("/")[-2])
+            conn = get_db()
+            cur = conn.execute("SELECT * FROM proxy_order WHERE id = ?", (order_id,))
+            order = cur.fetchone()
+            if not order:
+                conn.close()
+                self.send_json({"ok": False, "message": "订单不存在"}, 404)
+                return
+            order = dict(order)
+            if order["status"] == "completed":
+                conn.close()
+                self.send_json({"ok": True, "message": "订单早已是完成状态"})
+                return
+
+            user_id = order["user_id"]
+            tier_key = order["tier_key"]
+            period = order["period"]
+            days_add = 365 if period == "yearly" else (90 if period == "quarterly" else 30)
+            now_ts = int(time.time())
+
+            cur_u = conn.execute("SELECT expires_at FROM proxy_user WHERE id = ?", (user_id,))
+            u_row = cur_u.fetchone()
+            curr_exp = int(u_row[0] or 0) if u_row else 0
+            new_expires_at = (curr_exp + days_add * 86400) if curr_exp > now_ts else (now_ts + days_add * 86400)
+
+            cur_t = conn.execute("SELECT speed_limit_mbps, device_limit FROM proxy_tier WHERE tier_key = ?", (tier_key,))
+            t_row = cur_t.fetchone()
+
+            with conn:
+                conn.execute("UPDATE proxy_user SET expires_at = ?, vip_level = ? WHERE id = ?", (new_expires_at, tier_key, user_id))
+                if t_row and t_row[0] > 0:
+                    conn.execute("UPDATE proxy_user SET bandwidth_limit_mbps = ? WHERE id = ?", (t_row[0], user_id))
+                if t_row and t_row[1] > 0:
+                    conn.execute("UPDATE proxy_user SET device_limit = ? WHERE id = ?", (t_row[1], user_id))
+                conn.execute("UPDATE proxy_order SET status = 'completed', updated_at = ? WHERE id = ?", (now_ts, order_id))
+            conn.close()
+            threading.Thread(target=apply_all_configs, daemon=True).start()
+            self.send_json({"ok": True, "message": f"订单已审核通过并生效，用户会员期限已延长至 {time.strftime('%Y-%m-%d', time.localtime(new_expires_at))}"})
+            return
+
+        elif re.match(r"^/api/proxy/orders/(\d+)/reject$", path):
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            order_id = int(path.split("/")[-2])
+            now_ts = int(time.time())
+            conn = get_db()
+            with conn:
+                conn.execute("UPDATE proxy_order SET status = 'rejected', updated_at = ? WHERE id = ?", (now_ts, order_id))
+            conn.close()
+            self.send_json({"ok": True, "message": "订单已驳回/取消"})
             return
 
         elif path == "/api/proxy/announcements":
@@ -7745,6 +8080,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 conn.execute("DELETE FROM proxy_tier WHERE id = ?", (t_id,))
             conn.close()
             self.send_json({"ok": True, "message": "套餐已删除"})
+            return
+
+        m_order = re.match(r"^/api/proxy/orders/(\d+)$", path)
+        if m_order:
+            order_id = int(m_order.group(1))
+            conn = get_db()
+            with conn:
+                conn.execute("DELETE FROM proxy_order WHERE id = ?", (order_id,))
+            conn.close()
+            self.send_json({"ok": True, "message": "订单记录已删除"})
             return
 
         m_anno = re.match(r"^/api/proxy/announcements/(\d+)$", path)

@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Trash2,
   Users,
+  Wallet,
 } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
@@ -43,6 +44,7 @@ export type ManagedUser = {
   total_used_bytes: number
   remaining_bytes: number
   expires_at: number
+  balance?: number
   enabled: number
   status: "active" | "over_quota" | "expired" | "disabled" | "over_device_limit"
   created_at: number
@@ -66,6 +68,13 @@ export function ProxyUsers() {
   const [loading, setLoading] = useState(false)
   const [vipTiers, setVipTiers] = useState<Array<{ id: number; tier_id: string; name: string }>>([])
 
+  // 余额调整与充值弹窗状态
+  const [balanceModalOpen, setBalanceModalOpen] = useState(false)
+  const [balanceUser, setBalanceUser] = useState<ManagedUser | null>(null)
+  const [balanceDelta, setBalanceDelta] = useState("")
+  const [balanceAbsolute, setBalanceAbsolute] = useState("")
+  const [savingBalance, setSavingBalance] = useState(false)
+
   // 新建用户弹窗状态
   const [licenseStatus, setLicenseStatus] = useState<any>(() => {
     try {
@@ -82,6 +91,7 @@ export function ProxyUsers() {
     traffic_limit_gb: "200",
     expires_days: "30",
     device_limit: "0",
+    balance: "0",
   })
   const [creating, setCreating] = useState(false)
 
@@ -94,6 +104,7 @@ export function ProxyUsers() {
     expires_date: "",
     password: "",
     device_limit: "0",
+    balance: "0",
   })
   const [savingEdit, setSavingEdit] = useState(false)
 
@@ -156,13 +167,14 @@ export function ProxyUsers() {
           traffic_limit_gb: parseFloat(createForm.traffic_limit_gb) || 200,
           expires_days: parseInt(createForm.expires_days) || 0,
           device_limit: parseInt(createForm.device_limit) || 0,
+          balance: parseFloat(createForm.balance) || 0,
         }),
       })
       const data = await res.json()
       if (data.ok) {
         toast.success("用户创建成功！")
         setCreateOpen(false)
-        setCreateForm({ username: "", password: "", vip_level: "vip1", traffic_limit_gb: "200", expires_days: "30", device_limit: "0" })
+        setCreateForm({ username: "", password: "", vip_level: "vip1", traffic_limit_gb: "200", expires_days: "30", device_limit: "0", balance: "0" })
         loadUsers()
       } else {
         toast.error(data.message || "创建失败")
@@ -185,8 +197,52 @@ export function ProxyUsers() {
       expires_date: dateStr,
       password: "",
       device_limit: (user.device_limit ?? 0).toString(),
+      balance: (user.balance ?? 0).toString(),
     })
     setEditOpen(true)
+  }
+
+  // 打开余额管理弹窗
+  const openBalanceModal = (u: ManagedUser) => {
+    setBalanceUser(u)
+    setBalanceDelta("")
+    setBalanceAbsolute("")
+    setBalanceModalOpen(true)
+  }
+
+  // 保存余额调整
+  const handleSaveBalance = async () => {
+    if (!balanceUser) return
+    setSavingBalance(true)
+    try {
+      const payload: any = {}
+      if (balanceAbsolute.trim() !== "") {
+        payload.balance = parseFloat(balanceAbsolute)
+      } else if (balanceDelta.trim() !== "") {
+        payload.delta = parseFloat(balanceDelta)
+      } else {
+        toast.info("请输入调整金额或目标余额")
+        setSavingBalance(false)
+        return
+      }
+      const res = await fetch(`/api/proxy/users/${balanceUser.id}/balance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        toast.success(data.message || "用户余额已更新")
+        setBalanceModalOpen(false)
+        loadUsers()
+      } else {
+        toast.error(data.message || "更新失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    } finally {
+      setSavingBalance(false)
+    }
   }
 
   // 保存编辑
@@ -208,6 +264,7 @@ export function ProxyUsers() {
           expires_at: expTs,
           password: editForm.password,
           device_limit: parseInt(editForm.device_limit) || 0,
+          balance: parseFloat(editForm.balance) || 0,
         }),
       })
       const data = await res.json()
@@ -366,6 +423,7 @@ export function ProxyUsers() {
                 <th className="py-3 px-4 font-semibold">设备限制</th>
                 <th className="py-3 px-4 font-semibold">到期时间</th>
                 <th className="py-3 px-4 font-semibold">账户状态</th>
+                <th className="py-3 px-4 font-semibold">账户余额</th>
                 <th className="py-3 px-4 font-semibold">专属订阅链接</th>
                 <th className="py-3 px-4 font-semibold text-right">操作</th>
               </tr>
@@ -448,6 +506,10 @@ export function ProxyUsers() {
                       </div>
                     </td>
 
+                    <td className="py-3.5 px-4 font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                      ￥{(u.balance || 0).toFixed(2)}
+                    </td>
+
                     <td className="py-3.5 px-4 max-w-[220px]">
                       <div className="flex items-center gap-1.5">
                         <span className="font-mono text-[11px] truncate text-muted-foreground select-all">
@@ -492,6 +554,15 @@ export function ProxyUsers() {
 
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 hover:bg-emerald-500/10"
+                          onClick={() => openBalanceModal(u)}
+                          title="充值 / 调整余额"
+                        >
+                          <Wallet className="size-3.5" /> 余额
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -563,24 +634,39 @@ export function ProxyUsers() {
               />
             </div>
 
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">VIP 套餐等级</Label>
-                <span className="text-[10px] text-muted-foreground font-mono">如: vip1, vip2</span>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">VIP 套餐等级</Label>
+                  <span className="text-[10px] text-muted-foreground font-mono">如: vip1, vip2</span>
+                </div>
+                <Input
+                  list="vip-tier-list"
+                  className="text-xs h-9 font-mono"
+                  placeholder="默认 vip1 (用于匹配对应 VIP 节点)"
+                  value={createForm.vip_level}
+                  onChange={e => setCreateForm(prev => ({ ...prev, vip_level: e.target.value }))}
+                  required
+                />
+                <datalist id="vip-tier-list">
+                  {vipTiers.map(t => (
+                    <option key={t.id} value={t.tier_id}>{t.name}</option>
+                  ))}
+                </datalist>
               </div>
-              <Input
-                list="vip-tier-list"
-                className="text-xs h-9 font-mono"
-                placeholder="默认 vip1 (用于匹配对应 VIP 节点)"
-                value={createForm.vip_level}
-                onChange={e => setCreateForm(prev => ({ ...prev, vip_level: e.target.value }))}
-                required
-              />
-              <datalist id="vip-tier-list">
-                {vipTiers.map(t => (
-                  <option key={t.id} value={t.tier_id}>{t.name}</option>
-                ))}
-              </datalist>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">初始账户余额 (元)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="text-xs h-9 font-mono"
+                  placeholder="0.00"
+                  value={createForm.balance}
+                  onChange={e => setCreateForm(prev => ({ ...prev, balance: e.target.value }))}
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-3 gap-2">
@@ -649,7 +735,7 @@ export function ProxyUsers() {
           <DialogHeader>
             <DialogTitle className="text-base font-bold">编辑用户：{editingUser?.username}</DialogTitle>
             <DialogDescription className="text-xs">
-              修改该用户的流量限额、有效期或重设密码。
+              修改该用户的流量限额、有效期、账户余额或重设密码。
             </DialogDescription>
           </DialogHeader>
 
@@ -683,14 +769,27 @@ export function ProxyUsers() {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">到期时间 (留空为永久有效)</Label>
-              <Input
-                type="date"
-                className="text-xs h-9"
-                value={editForm.expires_date}
-                onChange={e => setEditForm(prev => ({ ...prev, expires_date: e.target.value }))}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">账户余额 (元)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  className="text-xs h-9 font-mono"
+                  value={editForm.balance}
+                  onChange={e => setEditForm(prev => ({ ...prev, balance: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">到期时间 (留空为永久有效)</Label>
+                <Input
+                  type="date"
+                  className="text-xs h-9"
+                  value={editForm.expires_date}
+                  onChange={e => setEditForm(prev => ({ ...prev, expires_date: e.target.value }))}
+                />
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -727,6 +826,67 @@ export function ProxyUsers() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* 用户余额充值与调整弹窗 */}
+      <Dialog open={balanceModalOpen} onOpenChange={setBalanceModalOpen}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Wallet className="size-4 text-emerald-500" /> 用户余额管理
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              为用户 <strong>{balanceUser?.username}</strong> 调整或充值账户余额
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="flex justify-between items-center bg-muted/40 p-2.5 rounded-lg border text-xs">
+              <span className="text-muted-foreground">当前余额</span>
+              <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 text-sm">
+                ￥{(balanceUser?.balance || 0).toFixed(2)}
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs">充值或增减金额 (元，负数为扣款)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                className="text-xs h-9 font-mono"
+                placeholder="例如: 100 或 -50"
+                value={balanceDelta}
+                onChange={(e) => setBalanceDelta(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs">或直接设置为目标余额 (元)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                className="text-xs h-9 font-mono"
+                placeholder="若填此项将优先直接覆写"
+                value={balanceAbsolute}
+                onChange={(e) => setBalanceAbsolute(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button variant="outline" size="sm" onClick={() => setBalanceModalOpen(false)} className="h-8 text-xs">
+              取消
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSaveBalance}
+              disabled={savingBalance}
+              className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              {savingBalance ? "保存中…" : "确认修改"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

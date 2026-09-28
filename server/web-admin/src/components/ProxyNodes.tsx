@@ -302,6 +302,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [batchDialogOpen, setBatchDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [vipTiers, setVipTiers] = useState<any[]>([])
   const [includeServerPrefix, setIncludeServerPrefix] = useState<boolean>(false)
   const [form, setForm] = useState({
     server_id: "0",
@@ -604,6 +605,14 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   useEffect(() => {
     loadData()
     loadStatus()
+    fetch("/api/proxy/tiers")
+      .then(res => res.json())
+      .then(data => {
+        if (data.ok && Array.isArray(data.tiers)) {
+          setVipTiers(data.tiers)
+        }
+      })
+      .catch(() => {})
   }, [loadData, loadStatus])
 
   // Keygen helper
@@ -795,6 +804,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         toast.error("请完善落地目标服务器的地址与端口！")
         return
       }
+    }
+
+    if (!form.vip_levels) {
+      toast.error("请选择 VIP 访问权限等级（此项为必填项）！")
+      return
     }
 
     setSubmitting(true)
@@ -1243,21 +1257,32 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   <Card key={server.id} className="overflow-hidden border shadow-xs">
                     <div
                       onClick={() => setCollapsedServers(prev => ({ ...prev, [String(server.id)]: !prev[String(server.id)] }))}
-                      className="flex items-center justify-between p-3.5 bg-muted/40 hover:bg-muted/60 transition cursor-pointer select-none"
+                      className="flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-3.5 bg-muted/40 hover:bg-muted/60 transition cursor-pointer select-none gap-2.5"
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="size-2.5 rounded-full bg-emerald-500 shrink-0" />
-                        <span className="font-bold text-sm text-foreground truncate">{server.name}</span>
-                        <span className="text-xs font-mono text-muted-foreground truncate max-w-[200px]">
-                          ({server.host || server.ipv4 || "本机"})
+                      <div className="flex items-center justify-between w-full sm:w-auto min-w-0 gap-2">
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span className="size-2.5 rounded-full bg-emerald-500 shrink-0" />
+                          <span className="font-bold text-sm text-foreground break-all sm:truncate" title={server.name}>
+                            {server.name}
+                          </span>
+                        </div>
+                        <div className="flex sm:hidden items-center gap-1 text-[11px] text-muted-foreground shrink-0 bg-background/80 px-2 py-0.5 rounded border">
+                          <span>{isCollapsed ? "展开" : "折叠"}</span>
+                          {isCollapsed ? <ChevronDown className="size-3.5" /> : <ChevronUp className="size-3.5" />}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-xs font-mono text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded">
+                          {server.host || server.ipv4 || "本机"}
                         </span>
-                        <Badge variant="secondary" className="text-xs px-2 py-0.5">
+                        <Badge variant="secondary" className="text-[11px] px-2 py-0.5 font-normal">
                           {sNodes.length} 个协议节点
                         </Badge>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <span>{isCollapsed ? "点击展开" : "点击折叠"}</span>
-                        {isCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+                        <div className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground ml-1">
+                          <span>{isCollapsed ? "点击展开" : "点击折叠"}</span>
+                          {isCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+                        </div>
                       </div>
                     </div>
 
@@ -2086,10 +2111,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               </div>
             )}
 
+            {/* 监听端口 & 单节点限速 (并排完美对齐，响应式适配移动端) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full min-w-0">
               <div className="space-y-1.5 min-w-0">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs">{nodeMode === "relay" ? "中转机监听端口 (对外开放)" : "端口"}</Label>
+                  <Label className="text-xs">{nodeMode === "relay" ? "中转机监听端口 (对外开放)" : "服务器监听端口"}</Label>
                   <button
                     type="button"
                     onClick={() => handleKeygen(form.protocol, form.method)}
@@ -2107,50 +2133,70 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 />
               </div>
 
-              {form.protocol === "ss2022" && (
-                <div className="space-y-1.5 min-w-0">
-                  <Label className="text-xs">加密算法</Label>
-                  <Select
-                    value={form.method}
-                    onValueChange={(m) => {
-                      setForm(prev => ({ ...prev, method: m }))
-                      handleKeygen("ss2022", m)
-                    }}
-                  >
-                    <SelectTrigger className="text-xs h-8 w-full min-w-0">
-                      <SelectValue placeholder="选择加密" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</SelectItem>
-                      <SelectItem value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</SelectItem>
-                    </SelectContent>
-                  </Select>
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">单节点限速 (Mbps)</Label>
+                  <span className="text-[11px] text-muted-foreground font-mono">0 为不限速</span>
                 </div>
-              )}
-
-              {form.protocol === "socks5" && (
-                <div className="space-y-1.5 min-w-0">
-                  <Label className="text-xs">用户名 (可选)</Label>
-                  <Input
-                    className="text-xs h-8 w-full"
-                    placeholder="留空为无认证"
-                    value={form.username}
-                    onChange={e => setForm(prev => ({ ...prev, username: e.target.value }))}
-                  />
-                </div>
-              )}
-
-              {(form.protocol.includes("ws") || form.protocol.includes("xhttp")) && (
-                <div className="space-y-1.5 min-w-0">
-                  <Label className="text-xs">路径 (Path)</Label>
-                  <Input
-                    className="text-xs h-8 font-mono w-full"
-                    value={form.ws_path}
-                    onChange={e => setForm(prev => ({ ...prev, ws_path: e.target.value }))}
-                  />
-                </div>
-              )}
+                <Input
+                  type="number"
+                  min="0"
+                  className="text-xs h-8 font-mono w-full"
+                  value={form.bandwidth_limit_mbps}
+                  placeholder="0"
+                  onChange={e => setForm(prev => ({ ...prev, bandwidth_limit_mbps: e.target.value }))}
+                />
+              </div>
             </div>
+
+            {/* 协议专属附加参数 (Shadowsocks 加密 / Socks5 用户名 / WebSocket 路径) */}
+            {(form.protocol === "ss2022" || form.protocol === "socks5" || form.protocol.includes("ws") || form.protocol.includes("xhttp")) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full min-w-0">
+                {form.protocol === "ss2022" && (
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="text-xs">加密算法</Label>
+                    <Select
+                      value={form.method}
+                      onValueChange={(m) => {
+                        setForm(prev => ({ ...prev, method: m }))
+                        handleKeygen("ss2022", m)
+                      }}
+                    >
+                      <SelectTrigger className="text-xs h-8 w-full min-w-0">
+                        <SelectValue placeholder="选择加密" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</SelectItem>
+                        <SelectItem value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {form.protocol === "socks5" && (
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="text-xs">用户名 (可选)</Label>
+                    <Input
+                      className="text-xs h-8 w-full"
+                      placeholder="留空为无认证"
+                      value={form.username}
+                      onChange={e => setForm(prev => ({ ...prev, username: e.target.value }))}
+                    />
+                  </div>
+                )}
+
+                {(form.protocol.includes("ws") || form.protocol.includes("xhttp")) && (
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="text-xs">路径 (Path)</Label>
+                    <Input
+                      className="text-xs h-8 font-mono w-full"
+                      value={form.ws_path}
+                      onChange={e => setForm(prev => ({ ...prev, ws_path: e.target.value }))}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
                         {/* 极简折叠：高级配置与密钥 (默认收起降噪) */}
             <details className="group rounded-lg border border-border/70 bg-muted/15 p-3 space-y-3 transition-all [&_summary::-webkit-details-marker]:hidden">
@@ -2252,38 +2298,29 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
             <div className="space-y-1.5 w-full min-w-0 pt-2 border-t">
               <div className="flex items-center justify-between">
-                <Label className="text-xs font-medium">单节点带宽限制 (Mbps)</Label>
-                <span className="text-[11px] text-muted-foreground font-mono">0 为不限速</span>
+                <Label className="text-xs font-medium">VIP 访问权限等级 <span className="text-destructive font-bold">* (必选)</span></Label>
+                <span className="text-[11px] text-muted-foreground font-mono">必选项</span>
               </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  min="0"
-                  className="text-xs h-8 font-mono w-32"
-                  value={form.bandwidth_limit_mbps}
-                  placeholder="0"
-                  onChange={e => setForm(prev => ({ ...prev, bandwidth_limit_mbps: e.target.value }))}
-                />
-                <span className="text-xs text-muted-foreground font-mono">Mbps (QoS 速率上限)</span>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                限制该节点对外提供的单节点峰值带宽速率，0 为不限速。
-              </p>
-            </div>
-
-            <div className="space-y-1.5 w-full min-w-0 pt-2 border-t">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-medium">VIP 访问权限等级 (留空全员可见)</Label>
-                <span className="text-[11px] text-muted-foreground font-mono">如: vip1 或 vip1,vip2</span>
-              </div>
-              <Input
-                className="text-xs h-8 font-mono w-full"
+              <Select
                 value={form.vip_levels}
-                placeholder="留空为所有等级可见，多个用英文逗号隔开，如 vip1,vip2"
-                onChange={e => setForm(prev => ({ ...prev, vip_levels: e.target.value }))}
-              />
+                onValueChange={(v) => setForm(prev => ({ ...prev, vip_levels: v }))}
+              >
+                <SelectTrigger className="text-xs h-8 w-full">
+                  <SelectValue placeholder="请选择 VIP 访问权限等级 (必选)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" className="text-xs font-medium">
+                    🌐 所有用户可见 (全员开放，无权限限制)
+                  </SelectItem>
+                  {vipTiers.map((t) => (
+                    <SelectItem key={t.id || t.tier_key} value={t.tier_key} className="text-xs font-mono">
+                      ⭐ {t.name} ({t.tier_key})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <p className="text-[11px] text-muted-foreground">
-                设置允许访问该节点的 VIP 套餐等级。留空则普通用户和所有 VIP 均可访问；若设置了 vip1,vip2，则仅对应等级用户可见并可订阅。
+                选择允许访问该节点的 VIP 套餐等级。若选择“所有用户可见”，普通用户与全部 VIP 均可访问；新建节点时必须选择此项，否则无法创建。
               </p>
             </div>
 
@@ -2304,6 +2341,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         open={batchDialogOpen}
         onOpenChange={setBatchDialogOpen}
         servers={serverOptions}
+        vipTiers={vipTiers}
         onSuccess={() => {
           loadData()
           loadStatus()
@@ -2571,6 +2609,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         open={editOpen}
         onOpenChange={setEditOpen}
         node={editNode}
+        vipTiers={vipTiers}
         onSuccess={() => {
           loadData()
           loadStatus()
@@ -2619,11 +2658,13 @@ function BatchCreateDialog({
   open,
   onOpenChange,
   servers,
+  vipTiers = [],
   onSuccess,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   servers: any[]
+  vipTiers?: any[]
   onSuccess: () => void
 }) {
   const [serverId, setServerId] = useState<string>(servers[0] ? String(servers[0].id) : "0")
@@ -2780,17 +2821,29 @@ function BatchCreateDialog({
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium">统一 VIP 访问等级 (留空全员可见)</Label>
-              <span className="text-[11px] text-muted-foreground font-mono">如: vip1 或 vip1,vip2</span>
+              <Label className="text-xs font-medium">统一 VIP 访问等级</Label>
+              <span className="text-[11px] text-muted-foreground font-mono">必选项</span>
             </div>
-            <Input
-              value={vipLevels}
-              onChange={(e) => setVipLevels(e.target.value)}
-              placeholder="留空为所有等级可见，多个用英文逗号隔开，如 vip1,vip2"
-              className="text-xs h-9 font-mono"
-            />
+            <Select
+              value={vipLevels || "all"}
+              onValueChange={setVipLevels}
+            >
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="请选择 VIP 访问等级" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-xs font-medium">
+                  🌐 所有用户可见 (全员开放，无权限限制)
+                </SelectItem>
+                {vipTiers.map((t) => (
+                  <SelectItem key={t.id || t.tier_key} value={t.tier_key} className="text-xs font-mono">
+                    ⭐ {t.name} ({t.tier_key})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="text-[11px] text-muted-foreground">
-              为批量创建的所有节点绑定 VIP 权限。留空代表全员可访问与订阅。
+              为批量创建的所有节点绑定 VIP 权限。选择“所有用户可见”代表全员可访问与订阅。
             </p>
           </div>
 
@@ -2823,11 +2876,13 @@ function EditNodeDialog({
   open,
   onOpenChange,
   node,
+  vipTiers = [],
   onSuccess,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   node: ProxyNode | null
+  vipTiers?: any[]
   onSuccess: () => void
 }) {
   const [form, setForm] = useState({
@@ -2970,17 +3025,29 @@ function EditNodeDialog({
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium">VIP 访问权限等级</Label>
-              <span className="text-[11px] text-muted-foreground font-mono">如: vip1 或 vip1,vip2</span>
+              <Label className="text-xs font-medium">VIP 访问权限等级 <span className="text-destructive">*</span></Label>
+              <span className="text-[11px] text-muted-foreground font-mono">控制可见权限</span>
             </div>
-            <Input
-              value={form.vip_levels}
-              onChange={e => setForm(prev => ({ ...prev, vip_levels: e.target.value }))}
-              placeholder="留空为所有用户可见，多个用英文逗号隔开，如 vip1,vip2"
-              className="text-xs h-8 font-mono"
-            />
+            <Select
+              value={form.vip_levels || "all"}
+              onValueChange={(v) => setForm(prev => ({ ...prev, vip_levels: v }))}
+            >
+              <SelectTrigger className="text-xs h-8 w-full">
+                <SelectValue placeholder="请选择 VIP 访问权限等级" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-xs font-medium">
+                  🌐 所有用户可见 (全员开放，无权限限制)
+                </SelectItem>
+                {vipTiers.map((t) => (
+                  <SelectItem key={t.id || t.tier_key} value={t.tier_key} className="text-xs font-mono">
+                    ⭐ {t.name} ({t.tier_key})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="text-[11px] text-muted-foreground">
-              绑定对应的 VIP 套餐等级。留空则普通用户和所有 VIP 用户均可获取。
+              绑定对应的 VIP 套餐等级。选择“所有用户可见”则普通用户和所有 VIP 用户均可获取。
             </p>
           </div>
 

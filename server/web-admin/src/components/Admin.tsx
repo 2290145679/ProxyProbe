@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { BarChart3, Bell, CalendarClock, Check, ChevronRight, Copy, Database, Download, Globe, GripVertical, KeyRound, Mail, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users } from "lucide-react"
+import { BarChart3, Bell, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, KeyRound, Mail, Megaphone, PackageCheck, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
@@ -2040,7 +2040,9 @@ function VipTierSettingsCard() {
   const [form, setForm] = useState({
     tier_id: "",
     name: "",
-    price: "0",
+    price_monthly: "0",
+    price_quarterly: "0",
+    price_yearly: "0",
     traffic_gb: "200",
     device_limit: "0",
     description: "",
@@ -2067,7 +2069,9 @@ function VipTierSettingsCard() {
         body: JSON.stringify({
           tier_id: form.tier_id.trim().toLowerCase(),
           name: form.name.trim(),
-          price: parseFloat(form.price) || 0,
+          price_monthly: parseFloat(form.price_monthly) || 0,
+          price_quarterly: parseFloat(form.price_quarterly) || 0,
+          price_yearly: parseFloat(form.price_yearly) || 0,
           traffic_gb: parseFloat(form.traffic_gb) || 0,
           device_limit: parseInt(form.device_limit) || 0,
           description: form.description.trim(),
@@ -2077,7 +2081,7 @@ function VipTierSettingsCard() {
       if (d.ok) {
         toast.success(d.message || "VIP 套餐添加成功！")
         setCreateOpen(false)
-        setForm({ tier_id: "", name: "", price: "0", traffic_gb: "200", device_limit: "0", description: "" })
+        setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", description: "" })
         loadTiers()
       } else {
         toast.error(d.message || "添加失败")
@@ -2145,6 +2149,13 @@ function VipTierSettingsCard() {
                     <span>·</span>
                     <span>设备: {t.device_limit > 0 ? `${t.device_limit}台` : "不限"}</span>
                   </div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-mono font-semibold pt-1">
+                    <span>月付: ￥{t.price_monthly ?? 0}</span>
+                    <span>·</span>
+                    <span>季付: ￥{t.price_quarterly ?? (t.price_monthly ? (t.price_monthly * 3 * 0.9).toFixed(0) : 0)}</span>
+                    <span>·</span>
+                    <span>年付: ￥{t.price_yearly ?? (t.price_monthly ? (t.price_monthly * 12 * 0.8).toFixed(0) : 0)}</span>
+                  </div>
                 </div>
                 <div className="flex justify-end pt-2 border-t">
                   <Button
@@ -2169,7 +2180,7 @@ function VipTierSettingsCard() {
               <Plus className="size-4 text-primary" /> 新增 VIP 等级套餐
             </DialogTitle>
             <DialogDescription className="text-xs">
-              定义 VIP 标识，创建后可在节点管理中标记节点权限，并分配给目标用户。
+              定义 VIP 标识与售价，创建后可在节点管理中标记节点权限，并分配给目标用户。
             </DialogDescription>
           </DialogHeader>
 
@@ -2193,6 +2204,45 @@ function VipTierSettingsCard() {
                   value={form.name}
                   onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
                   required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs">月付价格 (元)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="text-xs h-9 font-mono"
+                  placeholder="0.00"
+                  value={form.price_monthly}
+                  onChange={e => setForm(prev => ({ ...prev, price_monthly: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">季付价格 (元)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="text-xs h-9 font-mono"
+                  placeholder="0.00"
+                  value={form.price_quarterly}
+                  onChange={e => setForm(prev => ({ ...prev, price_quarterly: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">年付价格 (元)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="text-xs h-9 font-mono"
+                  placeholder="0.00"
+                  value={form.price_yearly}
+                  onChange={e => setForm(prev => ({ ...prev, price_yearly: e.target.value }))}
                 />
               </div>
             </div>
@@ -2242,6 +2292,367 @@ function VipTierSettingsCard() {
         </DialogContent>
       </Dialog>
     </Card>
+  )
+}
+
+function PaymentGatewaySettingsCard() {
+  const [enabled, setEnabled] = useState(false)
+  const [usdtTrc20, setUsdtTrc20] = useState("")
+  const [alipayQr, setAlipayQr] = useState("")
+  const [wechatQr, setWechatQr] = useState("")
+  const [tgSupport, setTgSupport] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    fetch("/api/proxy/settings/payment")
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          setEnabled(Boolean(d.enabled))
+          setUsdtTrc20(d.usdt_trc20 || "")
+          setAlipayQr(d.alipay_qr || "")
+          setWechatQr(d.wechat_qr || "")
+          setTgSupport(d.tg_support || "")
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/settings/payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled,
+          usdt_trc20: usdtTrc20.trim(),
+          alipay_qr: alipayQr.trim(),
+          wechat_qr: wechatQr.trim(),
+          tg_support: tgSupport.trim(),
+        }),
+      })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(d.message || "支付网关设置已保存")
+      } else {
+        toast.error(d.message || "保存失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <CreditCard className="size-4 text-emerald-500" /> 支付入口与收款网关配置
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            配置客户端用户选购/续费套餐时的外部收款渠道（USDT TRC20 钱包地址、微信/支付宝收款二维码图片或链接、Telegram 咨询直达）。
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            aria-label="启用支付入口"
+          />
+          <span className={`text-xs font-semibold ${enabled ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>
+            {enabled ? "收款入口已启用" : "已关闭收款"}
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-4 pt-2">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">USDT (TRC20) 收款钱包地址</Label>
+            <Input
+              className="text-xs h-9 font-mono"
+              placeholder="如: Txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              value={usdtTrc20}
+              onChange={e => setUsdtTrc20(e.target.value)}
+            />
+            <p className="text-[11px] text-muted-foreground">用户选购套餐时可直接复制此地址进行波场转账</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">Telegram 人工客服 / 支付联络</Label>
+            <Input
+              className="text-xs h-9"
+              placeholder="如: https://t.me/your_admin"
+              value={tgSupport}
+              onChange={e => setTgSupport(e.target.value)}
+            />
+            <p className="text-[11px] text-muted-foreground">用户支付时一键直达客服快速核单开通</p>
+          </div>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">支付宝收款二维码 (图片 URL 或 Base64)</Label>
+            <Input
+              className="text-xs h-9"
+              placeholder="https://... 或 data:image/png;base64,..."
+              value={alipayQr}
+              onChange={e => setAlipayQr(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">微信支付收款二维码 (图片 URL 或 Base64)</Label>
+            <Input
+              className="text-xs h-9"
+              placeholder="https://... 或 data:image/png;base64,..."
+              value={wechatQr}
+              onChange={e => setWechatQr(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-2">
+          <Button size="sm" onClick={handleSave} disabled={saving} className="text-xs h-8">
+            {saving ? "保存中..." : "保存支付入口设置"}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function OrdersTable() {
+  const [orders, setOrders] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<string>("all")
+
+  const loadOrders = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch("/api/proxy/orders")
+      const d = await res.json()
+      if (d.ok && Array.isArray(d.orders)) {
+        setOrders(d.orders)
+      }
+    } catch {
+      toast.error("加载订单记录失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadOrders()
+  }, [])
+
+  const handleComplete = async (orderId: number) => {
+    if (!confirm(`确认审核通过订单 #${orderId} 吗？系统将自动升级该用户的 VIP 等级并顺延有效期。`)) return
+    try {
+      const res = await fetch(`/api/proxy/orders/${orderId}/complete`, { method: "POST" })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(d.message || "订单审核通过，服务已生效！")
+        loadOrders()
+      } else {
+        toast.error(d.message || "操作失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    }
+  }
+
+  const handleReject = async (orderId: number) => {
+    if (!confirm(`确认驳回订单 #${orderId} 吗？`)) return
+    try {
+      const res = await fetch(`/api/proxy/orders/${orderId}/reject`, { method: "POST" })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(d.message || "订单已驳回")
+        loadOrders()
+      } else {
+        toast.error(d.message || "操作失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    }
+  }
+
+  const handleDelete = async (orderId: number) => {
+    if (!confirm(`确认彻底删除订单 #${orderId} 吗？`)) return
+    try {
+      const res = await fetch(`/api/proxy/orders/${orderId}`, { method: "DELETE" })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(d.message || "订单已删除")
+        loadOrders()
+      } else {
+        toast.error(d.message || "删除失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    }
+  }
+
+  const filteredOrders = orders.filter(o => {
+    if (statusFilter === "all") return true
+    return o.status === statusFilter
+  })
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <PackageCheck className="size-4 text-primary" /> 用户订购与支付记录 ({filteredOrders.length})
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            管理全站用户的 VIP 套餐购买、续费订单以及支付审核状态。
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-8 text-xs w-28">
+              <SelectValue placeholder="筛选状态" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部订单</SelectItem>
+              <SelectItem value="pending">待审核</SelectItem>
+              <SelectItem value="completed">已生效</SelectItem>
+              <SelectItem value="rejected">已驳回</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="sm" onClick={loadOrders} className="h-8 text-xs gap-1">
+            <RefreshCw className={`size-3 ${loading ? "animate-spin" : ""}`} /> 刷新
+          </Button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto pt-2">
+        {filteredOrders.length === 0 ? (
+          <div className="p-8 text-center text-xs text-muted-foreground">
+            暂无相关支付订购记录
+          </div>
+        ) : (
+          <table className="w-full text-left text-xs">
+            <thead className="bg-muted/50 border-b text-muted-foreground">
+              <tr>
+                <th className="py-2.5 px-3 font-semibold">单号</th>
+                <th className="py-2.5 px-3 font-semibold">用户</th>
+                <th className="py-2.5 px-3 font-semibold">套餐</th>
+                <th className="py-2.5 px-3 font-semibold">周期</th>
+                <th className="py-2.5 px-3 font-semibold">金额</th>
+                <th className="py-2.5 px-3 font-semibold">方式</th>
+                <th className="py-2.5 px-3 font-semibold">转账单号 / 附言</th>
+                <th className="py-2.5 px-3 font-semibold">状态</th>
+                <th className="py-2.5 px-3 font-semibold">创建时间</th>
+                <th className="py-2.5 px-3 font-semibold text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {filteredOrders.map(o => (
+                <tr key={o.id} className="hover:bg-muted/30 transition-colors">
+                  <td className="py-3 px-3 font-mono text-muted-foreground text-[11px]">#{o.id}</td>
+                  <td className="py-3 px-3 font-semibold text-foreground">{o.username}</td>
+                  <td className="py-3 px-3 uppercase font-mono font-bold text-amber-600 dark:text-amber-400">
+                    {o.tier_key}
+                  </td>
+                  <td className="py-3 px-3 font-medium">
+                    {o.period === "yearly" ? "年付" : o.period === "quarterly" ? "季付" : "月付"}
+                  </td>
+                  <td className="py-3 px-3 font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                    ￥{Number(o.amount || 0).toFixed(2)}
+                  </td>
+                  <td className="py-3 px-3 font-mono text-[11px]">
+                    {o.pay_method === "balance" ? "余额扣款" : o.pay_method}
+                  </td>
+                  <td className="py-3 px-3 text-muted-foreground max-w-[150px] truncate" title={o.note}>
+                    {o.note || "-"}
+                  </td>
+                  <td className="py-3 px-3">
+                    {o.status === "completed" && (
+                      <Badge className="bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 text-[10px]">
+                        已生效
+                      </Badge>
+                    )}
+                    {o.status === "pending" && (
+                      <Badge className="bg-amber-500/10 text-amber-600 border border-amber-500/20 text-[10px]">
+                        待审核
+                      </Badge>
+                    )}
+                    {o.status === "rejected" && (
+                      <Badge variant="destructive" className="text-[10px]">
+                        已驳回
+                      </Badge>
+                    )}
+                  </td>
+                  <td className="py-3 px-3 text-muted-foreground font-mono text-[11px]">
+                    {o.created_at ? new Date(o.created_at * 1000).toLocaleString() : "-"}
+                  </td>
+                  <td className="py-3 px-3 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      {o.status === "pending" && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 gap-1"
+                            onClick={() => handleComplete(o.id)}
+                            title="通过并生效"
+                          >
+                            <CheckCircle className="size-3.5" /> 通过
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 gap-1"
+                            onClick={() => handleReject(o.id)}
+                            title="驳回订单"
+                          >
+                            <XCircle className="size-3.5" /> 驳回
+                          </Button>
+                        </>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-1.5 text-xs text-destructive hover:bg-destructive/10"
+                        onClick={() => handleDelete(o.id)}
+                        title="删除记录"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function TiersManagementTab() {
+  return (
+    <div className="space-y-4">
+      <VipTierSettingsCard />
+      <PaymentGatewaySettingsCard />
+      <OrdersTable />
+    </div>
+  )
+}
+
+function AnnouncementsTab() {
+  return (
+    <div className="space-y-4">
+      <AnnouncementSettingsCard />
+      <GlobalNotificationSettingsCard />
+    </div>
   )
 }
 
@@ -3544,6 +3955,9 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
           </Button>
         </div>
       </Card>
+
+      {/* 服务器到期 Telegram 自动推送提醒设置 */}
+      <ServerExpirySettingsCard />
     </div>
   )
 }
@@ -4085,6 +4499,8 @@ const ADMIN_SECTIONS = [
   { path: "/admin/nodes", label: "服务器", icon: Server },
   { path: "/admin/proxy", label: "代理协议", icon: Globe },
   { path: "/admin/users", label: "用户管理", icon: Users },
+  { path: "/admin/tiers", label: "套餐管理", icon: PackageCheck },
+  { path: "/admin/announcements", label: "公告通知", icon: Megaphone },
   { path: "/admin/rules", label: "规则配置", icon: SlidersHorizontal },
   { path: "/admin/license", label: "商业授权", icon: KeyRound },
   { path: "/admin/ping", label: "延迟", icon: Radio },
@@ -4171,6 +4587,10 @@ export function Admin({
           <ProxyNodes nodes={nodes} />
         ) : path === "/admin/users" ? (
           <ProxyUsers />
+        ) : path === "/admin/tiers" ? (
+          <TiersManagementTab />
+        ) : path === "/admin/announcements" ? (
+          <AnnouncementsTab />
         ) : path === "/admin/rules" ? (
           <ProxyRules />
         ) : path === "/admin/license" ? (

@@ -7,7 +7,11 @@ import {
   Bell,
   Calendar,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Clock,
   Copy,
+  CreditCard,
   Crown,
   Download,
   ExternalLink,
@@ -22,8 +26,10 @@ import {
   QrCode,
   RefreshCw,
   Send,
+  ShoppingBag,
   Smartphone,
   Sun,
+  Wallet,
   Zap,
 } from "lucide-react"
 import QRCode from "qrcode"
@@ -49,6 +55,7 @@ export type UserProfile = {
   username: string
   is_admin: boolean
   vip_level?: string
+  balance?: number
   sub_token: string
   sub_url: string
   clash_url?: string
@@ -142,6 +149,62 @@ export function UserDashboard({
   const [globalNoticeOpen, setGlobalNoticeOpen] = useState(false)
 
   const [clientApps, setClientApps] = useState<any[]>([])
+  const [isAppsCollapsed, setIsAppsCollapsed] = useState(true)
+
+  // 导航分类与商城订单状态
+  const [activeTab, setActiveTab] = useState<"subs" | "store" | "apps">("subs")
+  const [tiers, setTiers] = useState<any[]>([])
+  const [paymentConfig, setPaymentConfig] = useState<any>(null)
+  const [userOrders, setUserOrders] = useState<any[]>([])
+  const [checkoutTier, setCheckoutTier] = useState<any | null>(null)
+  const [checkoutPeriod, setCheckoutPeriod] = useState<"monthly" | "quarterly" | "yearly">("monthly")
+  const [checkoutMethod, setCheckoutMethod] = useState<string>("balance")
+  const [checkoutNote, setCheckoutNote] = useState<string>("")
+  const [submittingOrder, setSubmittingOrder] = useState<boolean>(false)
+
+  const loadStoreData = async () => {
+    try {
+      const [resTiers, resPay, resOrders] = await Promise.all([
+        fetch("/api/proxy/tiers").then(r => r.json()).catch(() => null),
+        fetch("/api/proxy/user/payment-config").then(r => r.json()).catch(() => null),
+        fetch("/api/proxy/user/orders").then(r => r.json()).catch(() => null),
+      ])
+      if (resTiers?.ok && Array.isArray(resTiers.tiers)) setTiers(resTiers.tiers)
+      if (resPay?.ok) setPaymentConfig(resPay)
+      if (resOrders?.ok && Array.isArray(resOrders.orders)) setUserOrders(resOrders.orders)
+    } catch {}
+  }
+
+  // 购买套餐提交
+  async function handleBuyOrder() {
+    if (!checkoutTier) return
+    setSubmittingOrder(true)
+    try {
+      const res = await fetch("/api/proxy/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tier_key: checkoutTier.tier_key,
+          period: checkoutPeriod,
+          pay_method: checkoutMethod,
+          note: checkoutNote,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) {
+        throw new Error(data.message || "订单提交失败")
+      }
+      toast.success(data.message || "订单处理完成！")
+      setCheckoutTier(null)
+      setCheckoutNote("")
+      refreshUser()
+      loadStoreData()
+    } catch (e: any) {
+      toast.error(e.message || "操作异常")
+    } finally {
+      setSubmittingOrder(false)
+    }
+  }
 
   // 获取 Telegram 客服支持设置 (若后台关闭则完全不展示)
   useEffect(() => {
@@ -155,7 +218,7 @@ export function UserDashboard({
       .catch(() => {})
   }, [])
 
-  // 加载公告、通知与软件列表
+  // 加载公告、通知与软件列表、商城数据
   useEffect(() => {
     fetch("/api/proxy/user/announcements")
       .then(r => r.json())
@@ -179,6 +242,8 @@ export function UserDashboard({
         }
       })
       .catch(() => {})
+
+    loadStoreData()
   }, [])
 
   // 实时轮询用户流量与订阅状态 (每 3 秒自动刷新)
@@ -453,7 +518,23 @@ export function UserDashboard({
           </div>
 
           {/* 详细指标网格 */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 pt-2">
+            <div className="rounded-lg bg-emerald-500/10 p-3 space-y-1 border border-emerald-500/20">
+              <div className="flex items-center justify-between text-xs text-emerald-700 dark:text-emerald-400">
+                <span className="flex items-center gap-1.5"><Wallet className="size-3.5" /> 账户余额</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("store")}
+                  className="text-[10px] text-primary hover:underline cursor-pointer"
+                >
+                  选购
+                </button>
+              </div>
+              <p className="text-base font-semibold font-mono tracking-tight text-emerald-600 dark:text-emerald-400">
+                ￥{(user.balance || 0).toFixed(2)}
+              </p>
+            </div>
+
             <div className="rounded-lg bg-muted/50 p-3 space-y-1 border border-border/50">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Crown className="size-3.5 text-amber-500" /> VIP 等级套餐
@@ -549,66 +630,59 @@ export function UserDashboard({
           </Card>
         )}
 
-        {/* 常用客户端软件下载专区 */}
-        {clientApps.length > 0 && (
-          <Card className="p-4 sm:p-5 border shadow-sm space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-3">
-              <div className="space-y-0.5">
-                <div className="flex items-center gap-2">
-                  <Download className="size-4 text-emerald-500" />
-                  <h3 className="text-sm font-bold">常用客户端软件下载专区</h3>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  支持各主流操作系统翻墙软件，提供本地高速下载与官方镜像直链。
-                </p>
-              </div>
-            </div>
+        {/* 用户端核心分类导航 */}
+        <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl bg-muted/40 border shadow-xs">
+          <button
+            type="button"
+            onClick={() => setActiveTab("subs")}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              activeTab === "subs"
+                ? "bg-background text-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Zap className="size-3.5 text-amber-500" />
+            <span>我的订阅与节点</span>
+          </button>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
-              {clientApps.map((app) => (
-                <div key={app.id} className="p-3.5 rounded-lg border bg-muted/20 space-y-2.5 flex flex-col justify-between">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs text-foreground truncate">{app.name}</span>
-                      <Badge variant="outline" className="text-[10px] font-mono">
-                        {app.platform}
-                      </Badge>
-                    </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      版本：{app.version || "最新版"}
-                    </div>
-                  </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab("store")}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              activeTab === "store"
+                ? "bg-background text-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Crown className="size-3.5 text-primary" />
+            <span>购买 / 升级订阅套餐</span>
+            <Badge variant="outline" className="text-[10px] py-0 px-1 ml-0.5 bg-primary/10 text-primary border-primary/20">
+              商城
+            </Badge>
+          </button>
 
-                  <div className="flex items-center gap-2 pt-2 border-t">
-                    {app.has_local_file === 1 && (
-                      <Button
-                        size="sm"
-                        asChild
-                        className="h-7 text-[11px] flex-1 bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                      >
-                        <a href={`/api/proxy/apps/download/${app.id}`} download>
-                          <Download className="size-3" /> 本地高速下载
-                        </a>
-                      </Button>
-                    )}
-                    {app.mirror_url && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        asChild
-                        className="h-7 text-[11px] flex-1 gap-1"
-                      >
-                        <a href={app.mirror_url} target="_blank" rel="noopener noreferrer">
-                          <ExternalLink className="size-3" /> 官方镜像下载
-                        </a>
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        )}
+          <button
+            type="button"
+            onClick={() => setActiveTab("apps")}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              activeTab === "apps"
+                ? "bg-background text-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Download className="size-3.5 text-emerald-500" />
+            <span>客户端下载专区</span>
+            {clientApps.length > 0 && (
+              <Badge variant="secondary" className="text-[10px] py-0 px-1 ml-0.5 font-mono">
+                {clientApps.length}
+              </Badge>
+            )}
+          </button>
+        </div>
+
+        {/* 分类 1：我的订阅与节点 */}
+        {activeTab === "subs" && (
+          <div className="space-y-6">
 
         {/* 卡片 2：专属聚合订阅与一键导入 */}
         <Card className="p-4 sm:p-6 space-y-4 sm:space-y-5 border shadow-sm">
@@ -745,6 +819,90 @@ export function UserDashboard({
           </div>
         </Card>
 
+        {/* 卡片：常用客户端软件下载专区 (可折叠展开，避免挤占订阅空间) */}
+        {clientApps.length > 0 && (
+          <Card className="p-4 sm:p-5 border shadow-sm transition-all bg-card/60 backdrop-blur-xs">
+            <div
+              className="flex items-center justify-between cursor-pointer select-none"
+              onClick={() => setIsAppsCollapsed(!isAppsCollapsed)}
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="size-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                  <Download className="size-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold flex items-center gap-2">
+                    常用客户端软件下载专区
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                      {clientApps.length} 款官方与镜像
+                    </Badge>
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {isAppsCollapsed
+                      ? "点击展开快速下载 Windows / Android / iOS / macOS 代理软件与安装包"
+                      : "官方安装包与镜像加速下载，支持本地高速下载与官方镜像"}
+                  </p>
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
+                {isAppsCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+              </Button>
+            </div>
+
+            {!isAppsCollapsed && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-4 border-t mt-4">
+                {clientApps.map((app) => {
+                  const extUrl = (app.external_url || app.mirror_url || "").trim()
+                  const hasLocal = app.has_local_file === 1
+                  const localDownloadUrl = `/api/proxy/apps/download/${app.id}`
+
+                  return (
+                    <div key={app.id} className="p-3.5 rounded-lg border bg-muted/20 space-y-2.5 flex flex-col justify-between hover:border-primary/30 transition-all">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-xs text-foreground truncate">{app.name}</span>
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            {app.platform}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                          <span>版本: {app.version || "最新版"}</span>
+                          {app.file_size ? <span>· {formatBytes(app.file_size)}</span> : null}
+                        </div>
+                        {app.description && (
+                          <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">{app.description}</p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-2 border-t">
+                        {hasLocal && (
+                          <Button asChild size="sm" className="h-7 text-xs flex-1 gap-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs">
+                            <a href={localDownloadUrl} target="_blank" rel="noopener noreferrer" download>
+                              <Download className="size-3" /> 本地下载
+                            </a>
+                          </Button>
+                        )}
+                        {extUrl ? (
+                          <Button asChild variant={hasLocal ? "outline" : "default"} size="sm" className="h-7 text-xs flex-1 gap-1 shadow-xs">
+                            <a href={extUrl} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="size-3" /> {hasLocal ? "官方镜像" : "下载 / 官网"}
+                            </a>
+                          </Button>
+                        ) : null}
+                        {!hasLocal && !extUrl && (
+                          <Button disabled variant="outline" size="sm" className="h-7 text-xs flex-1 text-muted-foreground">
+                            暂无下载链接
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </Card>
+        )}
+
         {/* 卡片 3：可用节点列表 */}
         <Card className="p-4 sm:p-6 space-y-4 sm:space-y-5 border shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
@@ -815,7 +973,7 @@ export function UserDashboard({
                         className="size-8 text-muted-foreground hover:text-foreground"
                         title={isIpShown ? "隐藏真实 IP" : "查看真实 IP"}
                       >
-                        {isIpShown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                        {isIpShown ? <Eye className="size-4 text-primary" /> : <EyeOff className="size-4" />}
                       </Button>
                     </div>
                   </div>
@@ -824,6 +982,293 @@ export function UserDashboard({
             </div>
           )}
         </Card>
+          </div>
+        )}
+
+        {/* 分类 2：购买 / 升级订阅套餐 (商城) */}
+        {activeTab === "store" && (
+          <div className="space-y-6">
+            <Card className="p-4 sm:p-6 border shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-4">
+                <div className="space-y-1">
+                  <h2 className="text-lg font-bold flex items-center gap-2">
+                    <Crown className="size-5 text-amber-500" /> VIP 等级套餐选购与续费
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    开通更高级别的套餐，解锁更多专属高速节点、更高带宽上限和更多设备连接数。
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 bg-muted/40 px-3.5 py-2 rounded-lg border text-xs">
+                  <div>
+                    <span className="text-muted-foreground">当前余额：</span>
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                      ￥{(user.balance || 0).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="h-4 w-px bg-border" />
+                  <div>
+                    <span className="text-muted-foreground">当前级别：</span>
+                    <span className="font-bold font-mono uppercase text-amber-600 dark:text-amber-400">
+                      {user.vip_level || "VIP1"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {tiers.length === 0 ? (
+                <div className="py-12 text-center text-xs text-muted-foreground">
+                  管理员暂未配置套餐价格，请联系客服获取订阅支持。
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+                  {tiers.map((t) => {
+                    const isCurrent = (user.vip_level || "VIP1").toLowerCase() === (t.tier_key || "").toLowerCase()
+                    const mPrice = t.price_monthly ?? 0
+                    const qPrice = t.price_quarterly ?? (mPrice ? mPrice * 3 * 0.9 : 0)
+                    const yPrice = t.price_yearly ?? (mPrice ? mPrice * 12 * 0.8 : 0)
+
+                    return (
+                      <div
+                        key={t.tier_key}
+                        className={`rounded-xl border p-5 space-y-4 flex flex-col justify-between transition-all ${
+                          isCurrent
+                            ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/20"
+                            : "bg-card hover:border-primary/40 hover:shadow-xs"
+                        }`}
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-base text-foreground">
+                                {t.tier_name || t.tier_key.toUpperCase()}
+                              </span>
+                              <Badge variant="outline" className="font-mono text-[10px] uppercase">
+                                {t.tier_key}
+                              </Badge>
+                            </div>
+                            {isCurrent && (
+                              <Badge className="bg-primary/20 text-primary border-primary/30 text-[10px]">
+                                当前使用中
+                              </Badge>
+                            )}
+                          </div>
+
+                          <div className="pt-1 border-b pb-3 space-y-1">
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-2xl font-black font-mono tracking-tight text-foreground">
+                                ￥{mPrice}
+                              </span>
+                              <span className="text-xs text-muted-foreground">/ 月</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                              <span>季付: ￥{qPrice.toFixed(0)}</span>
+                              <span>·</span>
+                              <span>年付: ￥{yPrice.toFixed(0)}</span>
+                            </div>
+                          </div>
+
+                          <ul className="space-y-2 text-xs text-muted-foreground">
+                            <li className="flex items-center gap-2">
+                              <Zap className="size-3.5 text-amber-500 shrink-0" />
+                              <span>
+                                单节点限速:{" "}
+                                <strong className="text-foreground font-mono">
+                                  {t.bandwidth_limit_mbps && t.bandwidth_limit_mbps > 0 ? `${t.bandwidth_limit_mbps} Mbps` : "高速无限制"}
+                                </strong>
+                              </span>
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <Laptop className="size-3.5 text-indigo-500 shrink-0" />
+                              <span>
+                                同时在线设备:{" "}
+                                <strong className="text-foreground font-mono">
+                                  {t.device_limit && t.device_limit > 0 ? `${t.device_limit} 台` : "不限设备数"}
+                                </strong>
+                              </span>
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <HardDrive className="size-3.5 text-purple-500 shrink-0" />
+                              <span>
+                                每月可用流量:{" "}
+                                <strong className="text-foreground font-mono">
+                                  {t.traffic_limit_bytes && t.traffic_limit_bytes > 0 ? formatBytes(t.traffic_limit_bytes) : "无限流量"}
+                                </strong>
+                              </span>
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <Globe className="size-3.5 text-emerald-500 shrink-0" />
+                              <span>专属 VIP 物理隔离线路</span>
+                            </li>
+                          </ul>
+                        </div>
+
+                        <Button
+                          onClick={() => {
+                            setCheckoutTier(t)
+                            setCheckoutPeriod("monthly")
+                            setCheckoutMethod("balance")
+                          }}
+                          className={`w-full text-xs font-semibold h-9 mt-3 gap-1.5 ${
+                            isCurrent
+                              ? "bg-amber-600 hover:bg-amber-700 text-white"
+                              : "bg-primary text-primary-foreground hover:bg-primary/90"
+                          }`}
+                        >
+                          <ShoppingBag className="size-3.5" />
+                          {isCurrent ? "续费当前套餐" : "立即购买 / 升级"}
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
+
+            {/* 我的订购历史记录 */}
+            <Card className="p-4 sm:p-6 border shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b pb-3">
+                <div className="space-y-0.5">
+                  <h3 className="text-sm font-bold flex items-center gap-2">
+                    <Clock className="size-4 text-primary" /> 我的订单记录 ({userOrders.length})
+                  </h3>
+                  <p className="text-xs text-muted-foreground">查看以往的套餐购买、续费记录与审核状态</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={loadStoreData} className="text-xs h-7 gap-1">
+                  <RefreshCw className="size-3" /> 刷新
+                </Button>
+              </div>
+
+              {userOrders.length === 0 ? (
+                <div className="py-8 text-center text-xs text-muted-foreground">暂无任何订单记录</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b text-muted-foreground">
+                        <th className="py-2 px-2 font-medium">订单编号</th>
+                        <th className="py-2 px-2 font-medium">订购套餐</th>
+                        <th className="py-2 px-2 font-medium">周期</th>
+                        <th className="py-2 px-2 font-medium">金额</th>
+                        <th className="py-2 px-2 font-medium">支付方式</th>
+                        <th className="py-2 px-2 font-medium">状态</th>
+                        <th className="py-2 px-2 font-medium">创建时间</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {userOrders.map((o) => (
+                        <tr key={o.id} className="hover:bg-muted/30 transition-colors">
+                          <td className="py-2.5 px-2 font-mono text-[11px] text-muted-foreground">#{o.id}</td>
+                          <td className="py-2.5 px-2 font-semibold uppercase font-mono">{o.tier_key}</td>
+                          <td className="py-2.5 px-2">
+                            {o.period === "yearly" ? "年付" : o.period === "quarterly" ? "季付" : "月付"}
+                          </td>
+                          <td className="py-2.5 px-2 font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                            ￥{Number(o.amount || 0).toFixed(2)}
+                          </td>
+                          <td className="py-2.5 px-2 capitalize font-mono text-[11px]">
+                            {o.pay_method === "balance" ? "余额扣款" : o.pay_method}
+                          </td>
+                          <td className="py-2.5 px-2">
+                            {o.status === "completed" && (
+                              <Badge className="bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 text-[10px]">
+                                已生效
+                              </Badge>
+                            )}
+                            {o.status === "pending" && (
+                              <Badge className="bg-amber-500/10 text-amber-600 border border-amber-500/20 text-[10px]">
+                                审核中
+                              </Badge>
+                            )}
+                            {o.status === "rejected" && (
+                              <Badge variant="destructive" className="text-[10px]">
+                                已驳回
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-2 text-muted-foreground text-[11px]">
+                            {o.created_at ? new Date(o.created_at * 1000).toLocaleString() : "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {/* 分类 3：常用客户端软件专区 (独立视图) */}
+        {activeTab === "apps" && (
+          <div className="space-y-6">
+            <Card className="p-4 sm:p-6 border shadow-sm space-y-4">
+              <div className="border-b pb-4 space-y-1">
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <Download className="size-5 text-emerald-500" /> 常用翻墙客户端下载专区
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  全平台客户端软件安装包与官方镜像加速通道，一键高速下载使用
+                </p>
+              </div>
+
+              {clientApps.length === 0 ? (
+                <div className="py-12 text-center text-xs text-muted-foreground">
+                  管理员暂未上传任何客户端软件，请使用通用订阅链接自行配置客户端。
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-2">
+                  {clientApps.map((app) => {
+                    const extUrl = (app.external_url || app.mirror_url || "").trim()
+                    const hasLocal = app.has_local_file === 1
+                    const localDownloadUrl = `/api/proxy/apps/download/${app.id}`
+
+                    return (
+                      <div key={app.id} className="p-4 rounded-xl border bg-card hover:border-primary/40 space-y-3 flex flex-col justify-between transition-all shadow-xs">
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-sm text-foreground truncate">{app.name}</span>
+                            <Badge variant="outline" className="text-[10px] font-mono">
+                              {app.platform}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span>版本: {app.version || "最新版"}</span>
+                            {app.file_size ? <span>· {formatBytes(app.file_size)}</span> : null}
+                          </div>
+                          {app.description && (
+                            <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed">{app.description}</p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-3 border-t">
+                          {hasLocal && (
+                            <Button asChild size="sm" className="h-8 text-xs flex-1 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs">
+                              <a href={localDownloadUrl} target="_blank" rel="noopener noreferrer" download>
+                                <Download className="size-3.5" /> 本地高速下载
+                              </a>
+                            </Button>
+                          )}
+                          {extUrl ? (
+                            <Button asChild variant={hasLocal ? "outline" : "default"} size="sm" className="h-8 text-xs flex-1 gap-1.5 shadow-xs">
+                              <a href={extUrl} target="_blank" rel="noopener noreferrer">
+                                <ExternalLink className="size-3.5" /> {hasLocal ? "官方镜像" : "下载 / 官网"}
+                              </a>
+                            </Button>
+                          ) : null}
+                          {!hasLocal && !extUrl && (
+                            <Button disabled variant="outline" size="sm" className="h-8 text-xs flex-1 text-muted-foreground">
+                              暂无下载链接
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
 
         {/* 客服支持快捷入口卡片 (仅当管理员后台开启时显示，默认关闭 100% 隐藏) */}
         {supportTg.enabled && supportTg.telegram_url && (
@@ -848,6 +1293,234 @@ export function UserDashboard({
           </Card>
         )}
       </main>
+
+      {/* 购买结算与支付弹窗 */}
+      <Dialog open={!!checkoutTier} onOpenChange={(open) => { if (!open) setCheckoutTier(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Crown className="size-4 text-amber-500" />
+              订购套餐: {checkoutTier?.tier_name || checkoutTier?.tier_key?.toUpperCase()}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              选择购买或续费周期并完成支付，系统将自动顺延账号有效期。
+            </DialogDescription>
+          </DialogHeader>
+
+          {checkoutTier && (() => {
+            const mPrice = checkoutTier.price_monthly ?? 0
+            const qPrice = checkoutTier.price_quarterly ?? (mPrice ? Number((mPrice * 3 * 0.9).toFixed(0)) : 0)
+            const yPrice = checkoutTier.price_yearly ?? (mPrice ? Number((mPrice * 12 * 0.8).toFixed(0)) : 0)
+            const currentPrice = checkoutPeriod === "yearly" ? yPrice : checkoutPeriod === "quarterly" ? qPrice : mPrice
+            const hasEnoughBalance = (user.balance || 0) >= currentPrice
+
+            return (
+              <div className="space-y-4 py-2">
+                {/* 周期选择 */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-foreground">选择订购时长</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCheckoutPeriod("monthly")}
+                      className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer ${
+                        checkoutPeriod === "monthly"
+                          ? "border-primary bg-primary/10 text-primary font-bold shadow-xs"
+                          : "border-border hover:bg-muted/40 text-muted-foreground"
+                      }`}
+                    >
+                      <div className="text-xs">月付 (30天)</div>
+                      <div className="text-sm font-mono mt-0.5">￥{mPrice}</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCheckoutPeriod("quarterly")}
+                      className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer ${
+                        checkoutPeriod === "quarterly"
+                          ? "border-primary bg-primary/10 text-primary font-bold shadow-xs"
+                          : "border-border hover:bg-muted/40 text-muted-foreground"
+                      }`}
+                    >
+                      <div className="text-xs">季付 (90天)</div>
+                      <div className="text-sm font-mono mt-0.5">￥{qPrice}</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCheckoutPeriod("yearly")}
+                      className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer ${
+                        checkoutPeriod === "yearly"
+                          ? "border-primary bg-primary/10 text-primary font-bold shadow-xs"
+                          : "border-border hover:bg-muted/40 text-muted-foreground"
+                      }`}
+                    >
+                      <div className="text-xs">年付 (365天)</div>
+                      <div className="text-sm font-mono mt-0.5">￥{yPrice}</div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 支付方式 */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-foreground">支付方式</label>
+                  <div className="space-y-2">
+                    <label className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
+                      checkoutMethod === "balance" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30"
+                    }`}>
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="radio"
+                          name="payMethod"
+                          value="balance"
+                          checked={checkoutMethod === "balance"}
+                          onChange={() => setCheckoutMethod("balance")}
+                          className="accent-primary"
+                        />
+                        <div className="space-y-0.5">
+                          <div className="text-xs font-semibold flex items-center gap-1.5">
+                            <Wallet className="size-3.5 text-emerald-500" /> 账户余额直接扣款
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            可用余额: <strong className="font-mono text-emerald-600 dark:text-emerald-400">￥{(user.balance || 0).toFixed(2)}</strong>
+                          </div>
+                        </div>
+                      </div>
+                      <Badge variant={hasEnoughBalance ? "outline" : "destructive"} className="text-[10px]">
+                        {hasEnoughBalance ? "余额充足" : "余额不足"}
+                      </Badge>
+                    </label>
+
+                    {paymentConfig?.usdt_trc20 && (
+                      <label className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
+                        checkoutMethod === "usdt_trc20" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30"
+                      }`}>
+                        <div className="flex items-center gap-2.5">
+                          <input
+                            type="radio"
+                            name="payMethod"
+                            value="usdt_trc20"
+                            checked={checkoutMethod === "usdt_trc20"}
+                            onChange={() => setCheckoutMethod("usdt_trc20")}
+                            className="accent-primary"
+                          />
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-semibold flex items-center gap-1.5">
+                              <CreditCard className="size-3.5 text-blue-500" /> USDT (TRC20) 转账
+                            </div>
+                            <div className="text-[11px] text-muted-foreground font-mono truncate max-w-[240px]">
+                              {paymentConfig.usdt_trc20}
+                            </div>
+                          </div>
+                        </div>
+                      </label>
+                    )}
+
+                    {paymentConfig?.alipay_qr && (
+                      <label className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
+                        checkoutMethod === "alipay" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30"
+                      }`}>
+                        <div className="flex items-center gap-2.5">
+                          <input
+                            type="radio"
+                            name="payMethod"
+                            value="alipay"
+                            checked={checkoutMethod === "alipay"}
+                            onChange={() => setCheckoutMethod("alipay")}
+                            className="accent-primary"
+                          />
+                          <div className="text-xs font-semibold flex items-center gap-1.5">
+                            <CreditCard className="size-3.5 text-sky-500" /> 支付宝扫码支付
+                          </div>
+                        </div>
+                      </label>
+                    )}
+
+                    {paymentConfig?.wechat_qr && (
+                      <label className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
+                        checkoutMethod === "wechat" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30"
+                      }`}>
+                        <div className="flex items-center gap-2.5">
+                          <input
+                            type="radio"
+                            name="payMethod"
+                            value="wechat"
+                            checked={checkoutMethod === "wechat"}
+                            onChange={() => setCheckoutMethod("wechat")}
+                            className="accent-primary"
+                          />
+                          <div className="text-xs font-semibold flex items-center gap-1.5">
+                            <CreditCard className="size-3.5 text-emerald-500" /> 微信支付扫码
+                          </div>
+                        </div>
+                      </label>
+                    )}
+                  </div>
+                </div>
+
+                {/* 外部支付指引与附言备注 */}
+                {checkoutMethod !== "balance" && (
+                  <div className="rounded-lg border p-3 bg-muted/20 space-y-2 text-xs">
+                    {checkoutMethod === "usdt_trc20" && (
+                      <div className="space-y-1">
+                        <span className="text-muted-foreground font-medium">USDT TRC20 接收地址:</span>
+                        <div className="p-2 rounded bg-card font-mono text-[11px] break-all border select-all">
+                          {paymentConfig?.usdt_trc20}
+                        </div>
+                      </div>
+                    )}
+                    {checkoutMethod === "alipay" && paymentConfig?.alipay_qr && (
+                      <div className="flex flex-col items-center p-2 bg-white rounded border">
+                        <img src={paymentConfig.alipay_qr} alt="Alipay QR" className="size-40 object-contain" />
+                        <span className="text-[10px] text-muted-foreground mt-1">使用支付宝 App 扫码转账</span>
+                      </div>
+                    )}
+                    {checkoutMethod === "wechat" && paymentConfig?.wechat_qr && (
+                      <div className="flex flex-col items-center p-2 bg-white rounded border">
+                        <img src={paymentConfig.wechat_qr} alt="WeChat QR" className="size-40 object-contain" />
+                        <span className="text-[10px] text-muted-foreground mt-1">使用微信 App 扫码转账</span>
+                      </div>
+                    )}
+
+                    <div className="space-y-1 pt-1">
+                      <label className="text-xs font-medium text-foreground">支付转账交易单号 / 附言哈希</label>
+                      <input
+                        type="text"
+                        value={checkoutNote}
+                        onChange={(e) => setCheckoutNote(e.target.value)}
+                        placeholder="请输入转账单号或哈希，以便管理员审核快速生效"
+                        className="w-full h-8 px-2.5 rounded border bg-background text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-2 border-t text-xs">
+                  <div>
+                    <span className="text-muted-foreground">应付总额：</span>
+                    <span className="text-base font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                      ￥{currentPrice.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setCheckoutTier(null)} className="h-8 text-xs">
+                      取消
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={submittingOrder || (checkoutMethod === "balance" && !hasEnoughBalance)}
+                      onClick={handleBuyOrder}
+                      className="h-8 text-xs bg-primary text-primary-foreground font-semibold shadow-xs"
+                    >
+                      {submittingOrder ? "正在处理…" : checkoutMethod === "balance" ? "立即余额支付" : "提交订购单"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
 
       {/* 手机扫码弹窗 */}
       <Dialog open={qrOpen} onOpenChange={setQrOpen}>
