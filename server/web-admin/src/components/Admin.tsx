@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { BarChart3, Bell, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, KeyRound, Mail, Megaphone, PackageCheck, Palette, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users, XCircle } from "lucide-react"
+import { BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, KeyRound, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
@@ -1648,226 +1648,7 @@ function Ping({ nodes }: { nodes: Node[] }) {
   )
 }
 
-type Theme = {
-  name: string
-  short: string
-  description: string
-  version: string
-  author: string
-  url: string
-  selected: boolean
-  // 内置主题在二进制里，没有目录可删。装上一份同名的会顶替它，那一份就是普通
-  // 主题，删掉之后内置的重新顶上。
-  builtin: boolean
-}
 
-function Themes() {
-  const [themes, setThemes] = useState<Theme[] | null>(null)
-  const [busy, setBusy] = useState("")
-  const [doomed, setDoomed] = useState<Theme | null>(null)
-  const [zoomed, setZoomed] = useState<Theme | null>(null)
-  const picker = useRef<HTMLInputElement>(null)
-
-  const load = () =>
-    api<{ themes: Theme[] }>("/themes").then((data) => setThemes(data.themes)).catch(() => setThemes([]))
-  useEffect(() => { load() }, [])
-
-  async function select(short: string) {
-    try {
-      await api("/settings", { method: "PUT", body: JSON.stringify({ theme: short }) })
-      setThemes((old) => old?.map((theme) => ({ ...theme, selected: theme.short === short })) ?? old)
-      toast.success("主题已切换")
-    } catch (e) {
-      toast.error((e as Error).message)
-    }
-  }
-
-  async function install(file: File) {
-    setBusy("upload")
-    try {
-      const { theme } = await upload<{ theme: Theme }>("/themes", file)
-      // The hub reads a theme from disk on every request, so it is already live;
-      // reloading the list only brings this page up to date.
-      toast.success(`已安装 ${theme.name} ${theme.version}`)
-      load()
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      setBusy("")
-    }
-  }
-
-  // Only a theme whose manifest names a GitHub repository has a source to update
-  // from; the hub refuses anything else, and this merely hides the button.
-  const updatable = (theme: Theme) => theme.url.startsWith("https://github.com/")
-
-  async function update(theme: Theme) {
-    setBusy(`update:${theme.short}`)
-    try {
-      const { updated, version } = await api<{ updated: boolean; version: string }>(
-        `/themes/${theme.short}/update`,
-        { method: "POST" },
-      )
-      toast.success(updated ? `${theme.name} 已更新到 ${version}` : `${theme.name} 已是最新版本 ${version}`)
-      if (updated) load()
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      setBusy("")
-    }
-  }
-
-  async function remove(theme: Theme) {
-    setBusy("delete")
-    try {
-      await api(`/themes/${theme.short}`, { method: "DELETE" })
-      toast.success(`已删除 ${theme.name}`)
-      load()
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      setBusy("")
-      setDoomed(null)
-    }
-  }
-
-  if (!themes) return null
-  return (
-    <div className="space-y-4">
-      <Card className="gap-4 p-5">
-        <div>
-          <h3 className="text-sm font-medium">安装主题</h3>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            上传主题作者发布的 <code>theme.tar.gz</code>，同名主题整体替换。
-            <br />
-            主题的 <code>url</code> 指向 GitHub 仓库时，卡片上的 <RefreshCw className="inline size-3" /> 从它最新的
-            release 取 <code>theme.tar.gz</code>，版本没变就不下载。
-            <br />
-            主题代码在访客浏览器中执行，请只安装可信来源。
-          </p>
-        </div>
-        <div>
-          <Button size="sm" disabled={!!busy} onClick={() => picker.current?.click()}>
-            <Upload /> {busy === "upload" ? "安装中…" : "上传主题包"}
-          </Button>
-          <input
-            ref={picker}
-            type="file"
-            accept=".gz,.tgz,application/gzip"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              e.target.value = ""
-              if (file) install(file)
-            }}
-          />
-        </div>
-      </Card>
-
-      {/* items-start：有预览图和没有的卡片不该为了等高而留白 */}
-      <div className="grid items-start gap-3 sm:grid-cols-2">
-        {themes.map((theme) => (
-          <Card key={theme.short} className="gap-4 p-5">
-            {/* 主题包里可选的 preview.png，所以后端不用告诉前端有没有这张图：
-                没有就是 404，图一直不显示。hidden 挂在 <a> 上而不是 <img> 上——
-                隐藏的是整个链接，否则卡片里留着一个高度为 0 却照样吃 gap-4 的空
-                链接。必须从 hidden 开始：带边框的 aspect-video 空盒子会在响应回
-                来之前就画出来，闪一下再消失。
-                缩略图被压到卡片那点宽度，比例不是 16:9 的还会被 object-cover
-                裁掉边，所以图本身要能点开看原尺寸——就地开一个对话框，不跳走。 */}
-            <button
-              type="button"
-              title="查看完整预览图"
-              hidden
-              className="cursor-zoom-in"
-              onClick={() => setZoomed(theme)}
-            >
-              <img
-                src={`/api/themes/${theme.short}/preview`}
-                alt={`${theme.name} 预览图`}
-                onLoad={(e) => { e.currentTarget.parentElement!.hidden = false }}
-                className="aspect-video w-full rounded-md border object-cover object-top"
-              />
-            </button>
-            <div className="flex items-start gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-medium">{theme.name}</h3>
-                  {theme.selected && <Badge>当前</Badge>}
-                  {theme.builtin && <Badge variant="secondary" className="font-normal">内置</Badge>}
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">{theme.description}</p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button size="sm" variant={theme.selected ? "secondary" : "default"} disabled={theme.selected} onClick={() => select(theme.short)}>
-                  {theme.selected ? "使用中" : "使用"}
-                </Button>
-                {updatable(theme) && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    title="从 GitHub 更新"
-                    disabled={!!busy}
-                    onClick={() => update(theme)}
-                  >
-                    <RefreshCw className={busy === `update:${theme.short}` ? "animate-spin" : ""} />
-                  </Button>
-                )}
-                {/* The built-in theme is served from the binary and has no
-                    directory to delete -- it is also the fallback everything
-                    else lands on. */}
-                {!theme.builtin && (
-                  <Button size="icon" variant="ghost" disabled={!!busy} onClick={() => setDoomed(theme)}>
-                    <Trash2 />
-                  </Button>
-                )}
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {theme.author} · {theme.version}
-              {theme.url && <> · <a className="hover:underline" href={theme.url} target="_blank" rel="noreferrer">源码</a></>}
-            </p>
-          </Card>
-        ))}
-      </div>
-
-      {/* 原图，不是卡片上那张裁过的：宽度给到 4xl，高度让 80vh 兜住，
-          object-contain 保证整张都在框里而不是被切一刀。 */}
-      {zoomed && (
-        <Dialog open onOpenChange={(open) => !open && setZoomed(null)}>
-          <DialogContent className="sm:max-w-4xl">
-            <DialogHeader>
-              <DialogTitle>{zoomed.name} 预览图</DialogTitle>
-              <DialogDescription>{zoomed.author} · {zoomed.version}</DialogDescription>
-            </DialogHeader>
-            <img
-              src={`/api/themes/${zoomed.short}/preview`}
-              alt={`${zoomed.name} 预览图`}
-              className="max-h-[80vh] w-full rounded-md border object-contain"
-            />
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {doomed && (
-        <ConfirmDialog
-          title={`删除 ${doomed.name}？`}
-          description={
-            doomed.short === "default"
-              ? "装上的这份会从磁盘上删掉，公开页回到 hub 内置的那份默认主题。"
-              : doomed.selected
-                ? "这是当前使用的主题，删除后公开页会回到内置的默认主题。"
-                : "主题目录会从磁盘上删掉，重新上传主题包可以装回来。"
-          }
-          confirmLabel="删除"
-          busy={!!busy}
-          onClose={() => setDoomed(null)}
-          onConfirm={() => remove(doomed)}
-        />
-      )}
-    </div>
-  )
-}
 
 type Settings = Record<string, string | boolean>
 
@@ -2010,18 +1791,6 @@ function SettingsTab({
         </div>
       </Card>
 
-      {/* VIP 等级套餐管理 */}
-      <VipTierSettingsCard />
-
-      {/* 服务器到期 Telegram 自动推送提醒设置 */}
-      <ServerExpirySettingsCard />
-
-      {/* 系统公告管理 */}
-      <AnnouncementSettingsCard />
-
-      {/* 全局登录弹窗通知设置 */}
-      <GlobalNotificationSettingsCard />
-
       {/* 客户端软件下载与上传专区设置 */}
       <ClientAppsSettingsCard />
 
@@ -2037,6 +1806,7 @@ function SettingsTab({
 function VipTierSettingsCard() {
   const [tiers, setTiers] = useState<any[]>([])
   const [createOpen, setCreateOpen] = useState(false)
+  const [editingTier, setEditingTier] = useState<any | null>(null)
   const [form, setForm] = useState({
     tier_id: "",
     name: "",
@@ -2059,32 +1829,58 @@ function VipTierSettingsCard() {
 
   useEffect(() => { loadTiers() }, [])
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleOpenCreate = () => {
+    setEditingTier(null)
+    setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", description: "" })
+    setCreateOpen(true)
+  }
+
+  const handleEdit = (t: any) => {
+    setEditingTier(t)
+    setForm({
+      tier_id: t.tier_id || t.tier_key || "",
+      name: t.name || "",
+      price_monthly: String(t.price_monthly ?? 0),
+      price_quarterly: String(t.price_quarterly ?? (t.price_monthly ? Math.round(t.price_monthly * 3 * 0.9) : 0)),
+      price_yearly: String(t.price_yearly ?? (t.price_monthly ? Math.round(t.price_monthly * 12 * 0.8) : 0)),
+      traffic_gb: String(t.traffic_gb ?? 200),
+      device_limit: String(t.device_limit ?? 0),
+      description: t.description || "",
+    })
+    setCreateOpen(true)
+  }
+
+  const handleSaveTier = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
     try {
+      const payload: any = {
+        tier_id: form.tier_id.trim().toLowerCase(),
+        name: form.name.trim(),
+        price_monthly: parseFloat(form.price_monthly) || 0,
+        price_quarterly: parseFloat(form.price_quarterly) || 0,
+        price_yearly: parseFloat(form.price_yearly) || 0,
+        traffic_gb: parseFloat(form.traffic_gb) || 0,
+        device_limit: parseInt(form.device_limit) || 0,
+        description: form.description.trim(),
+      }
+      if (editingTier) {
+        payload.id = editingTier.id
+      }
       const res = await fetch("/api/proxy/tiers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tier_id: form.tier_id.trim().toLowerCase(),
-          name: form.name.trim(),
-          price_monthly: parseFloat(form.price_monthly) || 0,
-          price_quarterly: parseFloat(form.price_quarterly) || 0,
-          price_yearly: parseFloat(form.price_yearly) || 0,
-          traffic_gb: parseFloat(form.traffic_gb) || 0,
-          device_limit: parseInt(form.device_limit) || 0,
-          description: form.description.trim(),
-        }),
+        body: JSON.stringify(payload),
       })
       const d = await res.json()
       if (d.ok) {
-        toast.success(d.message || "VIP 套餐添加成功！")
+        toast.success(d.message || (editingTier ? "VIP 套餐修改成功！" : "VIP 套餐添加成功！"))
         setCreateOpen(false)
+        setEditingTier(null)
         setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", description: "" })
         loadTiers()
       } else {
-        toast.error(d.message || "添加失败")
+        toast.error(d.message || "操作失败")
       }
     } catch {
       toast.error("网络请求错误")
@@ -2120,7 +1916,7 @@ function VipTierSettingsCard() {
             自定义 VIP 权限等级（如 vip1, vip2）。在节点上标记对应等级后，只有该等级的用户可以获取与订阅，不同等级节点物理隔离不可见。
           </p>
         </div>
-        <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 text-xs h-8">
+        <Button size="sm" onClick={handleOpenCreate} className="gap-1.5 text-xs h-8">
           <Plus className="size-3.5" /> 添加 VIP 套餐
         </Button>
       </div>
@@ -2157,7 +1953,15 @@ function VipTierSettingsCard() {
                     <span>年付: ￥{t.price_yearly ?? (t.price_monthly ? (t.price_monthly * 12 * 0.8).toFixed(0) : 0)}</span>
                   </div>
                 </div>
-                <div className="flex justify-end pt-2 border-t">
+                <div className="flex justify-end gap-1 pt-2 border-t">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleEdit(t)}
+                    className="h-6 px-2 text-primary hover:text-primary hover:bg-primary/10 text-[11px] gap-1"
+                  >
+                    <Pencil className="size-3" /> 编辑
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -2173,18 +1977,29 @@ function VipTierSettingsCard() {
         )}
       </div>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(open) => {
+        setCreateOpen(open)
+        if (!open) setEditingTier(null)
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-base font-bold flex items-center gap-2">
-              <Plus className="size-4 text-primary" /> 新增 VIP 等级套餐
+              {editingTier ? (
+                <>
+                  <Pencil className="size-4 text-primary" /> 编辑 VIP 等级套餐
+                </>
+              ) : (
+                <>
+                  <Plus className="size-4 text-primary" /> 新增 VIP 等级套餐
+                </>
+              )}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              定义 VIP 标识与售价，创建后可在节点管理中标记节点权限，并分配给目标用户。
+              {editingTier ? "修改 VIP 权限等级、售价、流量配额及说明描述。" : "定义 VIP 标识与售价，创建后可在节点管理中标记节点权限，并分配给目标用户。"}
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleCreate} className="space-y-4 py-2">
+          <form onSubmit={handleSaveTier} className="space-y-4 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">套餐标识 (英文数字代号)</Label>
@@ -2285,7 +2100,7 @@ function VipTierSettingsCard() {
                 取消
               </Button>
               <Button type="submit" size="sm" disabled={saving} className="h-8 text-xs">
-                {saving ? "创建中..." : "确认添加"}
+                {saving ? "保存中..." : (editingTier ? "保存修改" : "确认添加")}
               </Button>
             </DialogFooter>
           </form>
@@ -2770,6 +2585,7 @@ function ServerExpirySettingsCard() {
 function AnnouncementSettingsCard() {
   const [announcements, setAnnouncements] = useState<any[]>([])
   const [createOpen, setCreateOpen] = useState(false)
+  const [editingAnno, setEditingAnno] = useState<any | null>(null)
   const [title, setTitle] = useState("")
   const [content, setContent] = useState("")
   const [isPinned, setIsPinned] = useState(false)
@@ -2785,29 +2601,50 @@ function AnnouncementSettingsCard() {
 
   useEffect(() => { loadAnnouncements() }, [])
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleOpenCreate = () => {
+    setEditingAnno(null)
+    setTitle("")
+    setContent("")
+    setIsPinned(false)
+    setCreateOpen(true)
+  }
+
+  const handleEdit = (a: any) => {
+    setEditingAnno(a)
+    setTitle(a.title || "")
+    setContent(a.content || "")
+    setIsPinned(Boolean(a.is_pinned))
+    setCreateOpen(true)
+  }
+
+  const handleSaveAnno = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
     try {
+      const payload: any = {
+        title: title.trim(),
+        content: content.trim(),
+        is_pinned: isPinned ? 1 : 0,
+      }
+      if (editingAnno) {
+        payload.id = editingAnno.id
+      }
       const res = await fetch("/api/proxy/announcements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          content: content.trim(),
-          is_pinned: isPinned ? 1 : 0,
-        }),
+        body: JSON.stringify(payload),
       })
       const d = await res.json()
       if (d.ok) {
-        toast.success("系统公告发布成功！")
+        toast.success(editingAnno ? "系统公告修改成功！" : "系统公告发布成功！")
         setCreateOpen(false)
+        setEditingAnno(null)
         setTitle("")
         setContent("")
         setIsPinned(false)
         loadAnnouncements()
       } else {
-        toast.error(d.message || "发布失败")
+        toast.error(d.message || "操作失败")
       }
     } catch {
       toast.error("网络请求错误")
@@ -2843,7 +2680,7 @@ function AnnouncementSettingsCard() {
             发布全站公告（通知更新、维护、线路新增）。用户登录后可在公告栏查看标题，点击进入展开查看详细图文内容。
           </p>
         </div>
-        <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 text-xs h-8">
+        <Button size="sm" onClick={handleOpenCreate} className="gap-1.5 text-xs h-8">
           <Plus className="size-3.5" /> 发布新公告
         </Button>
       </div>
@@ -2868,15 +2705,25 @@ function AnnouncementSettingsCard() {
                   </div>
                   <p className="text-[11px] text-muted-foreground line-clamp-1">{a.content}</p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] text-muted-foreground font-mono">
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-[10px] text-muted-foreground font-mono mr-1">
                     {new Date(a.created_at * 1000).toLocaleDateString()}
                   </span>
                   <Button
                     variant="ghost"
                     size="sm"
+                    onClick={() => handleEdit(a)}
+                    className="h-7 w-7 p-0 text-primary hover:text-primary hover:bg-primary/10"
+                    title="编辑公告"
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => handleDelete(a.id)}
                     className="h-7 w-7 p-0 text-rose-500 hover:text-rose-600"
+                    title="删除公告"
                   >
                     <Trash2 className="size-3.5" />
                   </Button>
@@ -2887,18 +2734,29 @@ function AnnouncementSettingsCard() {
         )}
       </div>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(open) => {
+        setCreateOpen(open)
+        if (!open) setEditingAnno(null)
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-base font-bold flex items-center gap-2">
-              <Plus className="size-4 text-primary" /> 发布系统公告
+              {editingAnno ? (
+                <>
+                  <Pencil className="size-4 text-primary" /> 编辑系统公告
+                </>
+              ) : (
+                <>
+                  <Plus className="size-4 text-primary" /> 发布系统公告
+                </>
+              )}
             </DialogTitle>
             <DialogDescription className="text-xs">
               在客户端用户中心首页公告栏展示此条通知。
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleCreate} className="space-y-4 py-2">
+          <form onSubmit={handleSaveAnno} className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label className="text-xs">公告标题</Label>
               <Input
@@ -2933,7 +2791,7 @@ function AnnouncementSettingsCard() {
                 取消
               </Button>
               <Button type="submit" size="sm" disabled={saving} className="h-8 text-xs">
-                {saving ? "发布中..." : "立即发布"}
+                {saving ? "保存中..." : (editingAnno ? "保存修改" : "立即发布")}
               </Button>
             </DialogFooter>
           </form>
@@ -3046,6 +2904,7 @@ function GlobalNotificationSettingsCard() {
 function ClientAppsSettingsCard() {
   const [apps, setApps] = useState<any[]>([])
   const [createOpen, setCreateOpen] = useState(false)
+  const [editingApp, setEditingApp] = useState<any | null>(null)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [form, setForm] = useState({
     name: "Clash Verge",
@@ -3075,6 +2934,26 @@ function ClientAppsSettingsCard() {
 
   useEffect(() => { loadApps() }, [])
 
+  const handleOpenCreate = () => {
+    setEditingApp(null)
+    setForm({ name: "Clash Verge", platform: "Windows", version: "v1.7.5", mirror_url: "", description: "" })
+    setUploadFile(null)
+    setCreateOpen(true)
+  }
+
+  const handleEdit = (app: any) => {
+    setEditingApp(app)
+    setForm({
+      name: app.name || "",
+      platform: app.platform || "Windows",
+      version: app.version || "",
+      mirror_url: app.external_url || app.mirror_url || "",
+      description: app.description || "",
+    })
+    setUploadFile(null)
+    setCreateOpen(true)
+  }
+
   const handleSelectPreset = (p: typeof PRESET_APPS[0]) => {
     setForm(prev => ({
       ...prev,
@@ -3084,25 +2963,29 @@ function ClientAppsSettingsCard() {
     }))
   }
 
-  const handleCreateApp = async (e: React.FormEvent) => {
+  const handleSaveApp = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
     try {
+      const payload: any = {
+        name: form.name.trim(),
+        platform: form.platform,
+        version: form.version.trim(),
+        mirror_url: form.mirror_url.trim(),
+        description: form.description.trim(),
+      }
+      if (editingApp) {
+        payload.id = editingApp.id
+      }
       const res = await fetch("/api/proxy/apps", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          platform: form.platform,
-          version: form.version.trim(),
-          mirror_url: form.mirror_url.trim(),
-          description: form.description.trim(),
-        }),
+        body: JSON.stringify(payload),
       })
       const d = await res.json()
-      if (!res.ok || !d.ok) throw new Error(d.message || "创建软件条目失败")
+      if (!res.ok || !d.ok) throw new Error(d.message || "保存软件条目失败")
 
-      const appId = d.app_id
+      const appId = d.app_id || (editingApp ? editingApp.id : null)
       if (uploadFile && appId) {
         toast.info("正在将安装包上传到本地服务器...")
         const upRes = await fetch("/api/proxy/apps/upload", {
@@ -3122,12 +3005,13 @@ function ClientAppsSettingsCard() {
         }
       }
 
-      toast.success("客户端软件添加成功！")
+      toast.success(editingApp ? "客户端软件修改成功！" : "客户端软件添加成功！")
       setCreateOpen(false)
+      setEditingApp(null)
       setUploadFile(null)
       loadApps()
     } catch (err: any) {
-      toast.error(err.message || "添加软件出错")
+      toast.error(err.message || "操作软件出错")
     } finally {
       setSubmitting(false)
     }
@@ -3160,7 +3044,7 @@ function ClientAppsSettingsCard() {
             上传翻墙客户端安装包或提供镜像外链，预设 Clash、NekoBox、FLClash、Hiddify 等。用户在中心专区可自主选择「本地服务器高速下载」或「官方镜像直链下载」。
           </p>
         </div>
-        <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5 text-xs h-8">
+        <Button size="sm" onClick={handleOpenCreate} className="gap-1.5 text-xs h-8">
           <Plus className="size-3.5" /> 上传 / 添加软件
         </Button>
       </div>
@@ -3204,7 +3088,15 @@ function ClientAppsSettingsCard() {
                   </div>
                 </div>
 
-                <div className="flex justify-end pt-2 border-t">
+                <div className="flex justify-end gap-1 pt-2 border-t">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleEdit(app)}
+                    className="h-6 px-2 text-primary hover:text-primary hover:bg-primary/10 text-[11px] gap-1"
+                  >
+                    <Pencil className="size-3" /> 编辑
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -3220,18 +3112,29 @@ function ClientAppsSettingsCard() {
         )}
       </div>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(open) => {
+        setCreateOpen(open)
+        if (!open) setEditingApp(null)
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-base font-bold flex items-center gap-2">
-              <Upload className="size-4 text-primary" /> 添加客户端软件
+              {editingApp ? (
+                <>
+                  <Pencil className="size-4 text-primary" /> 编辑客户端软件
+                </>
+              ) : (
+                <>
+                  <Upload className="size-4 text-primary" /> 添加客户端软件
+                </>
+              )}
             </DialogTitle>
             <DialogDescription className="text-xs">
               支持上传安装包二进制文件至本地服务器，亦可填写官方镜像下载外链。
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleCreateApp} className="space-y-4 py-2">
+          <form onSubmit={handleSaveApp} className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label className="text-xs">预设常用软件快速填入</Label>
               <div className="flex flex-wrap gap-1.5">
@@ -3877,6 +3780,54 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
         </div>
       </ChannelCard>
 
+      {/* Telegram 双向交互运维机器人卡片 */}
+      <Card className="p-5 bg-card/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="size-9 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-500 shrink-0">
+              <Bot className="size-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold">Telegram 双向交互式运维机器人</h3>
+                {s.notify_telegram_token_set && text("notify_telegram_chat") !== "" ? (
+                  <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0">
+                    🟢 已就绪
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] px-1.5 py-0">
+                    ⚪ 待配置
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                无需打开面板，在 Telegram 发送指令即可秒级感知全网状态、发起巡检或打包备份数据库
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* 交互指令说明胶囊 */}
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-border/30 text-xs">
+          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
+            <div className="font-mono font-semibold text-primary">/status</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">全网大盘与服务器负载概览</div>
+          </div>
+          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
+            <div className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">/test</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">手机即时触发全节点连通测试</div>
+          </div>
+          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
+            <div className="font-mono font-semibold text-purple-600 dark:text-purple-400">/backup</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">立即打包并发送数据库备份文件</div>
+          </div>
+          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
+            <div className="font-mono font-semibold text-sky-600 dark:text-sky-400">/nodes</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">查询各节点实时延迟与感知状态</div>
+          </div>
+        </div>
+      </Card>
+
       <ChannelCard title="Webhook" configured={!!s.notify_webhook_url_set}>
         <Field label="URL" hint={secretHint("notify_webhook_url")}>
           <Input
@@ -4506,7 +4457,6 @@ const ADMIN_SECTIONS = [
   { path: "/admin/ping", label: "延迟", icon: Radio },
   { path: "/admin/notify", label: "通知", icon: Bell },
   { path: "/admin/data", label: "数据", icon: Database },
-  { path: "/admin/themes", label: "主题", icon: Palette },
   { path: "/admin/security", label: "安全", icon: Shield },
   { path: "/admin/settings", label: "设置", icon: Settings },
 ] as const
@@ -4601,8 +4551,6 @@ export function Admin({
           <Notify nodes={nodes} refresh={refresh} />
         ) : path === "/admin/data" ? (
           <Data go={go} />
-        ) : path === "/admin/themes" ? (
-          <Themes />
         ) : path === "/admin/security" ? (
           <Security site={site} />
         ) : path === "/admin/settings" ? (

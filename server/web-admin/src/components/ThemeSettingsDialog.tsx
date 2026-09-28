@@ -1,6 +1,5 @@
-import { Check, Moon, Palette, Sun } from "lucide-react"
+import { Check, Palette } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -14,15 +13,13 @@ export function ThemeSettingsDialog({
   onOpenChange,
   themeStyle,
   onThemeStyleChange,
-  dark,
-  onToggleDark,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   themeStyle: "default" | "sakura"
   onThemeStyleChange: (style: "default" | "sakura") => void
-  dark: boolean
-  onToggleDark: () => void
+  dark?: boolean
+  onToggleDark?: () => void
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -33,7 +30,7 @@ export function ThemeSettingsDialog({
             <span>界面主题与外观设置</span>
           </DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
-            自定义控制面板配色与深浅显示风格，设置将跟随您的账号实时同步。
+            自定义控制面板配色风格，设置将跟随您的账号实时同步。
           </DialogDescription>
         </DialogHeader>
 
@@ -48,7 +45,7 @@ export function ThemeSettingsDialog({
               <button
                 type="button"
                 onClick={() => onThemeStyleChange("default")}
-                className={`relative flex flex-col items-start gap-1.5 rounded-xl border p-3.5 text-left transition-all ${
+                className={`relative flex flex-col items-start gap-1.5 rounded-xl border p-3.5 text-left transition-all cursor-pointer ${
                   themeStyle === "default"
                     ? "border-primary bg-primary/5 ring-2 ring-primary/20 shadow-sm"
                     : "border-border hover:bg-muted/50"
@@ -77,7 +74,7 @@ export function ThemeSettingsDialog({
               <button
                 type="button"
                 onClick={() => onThemeStyleChange("sakura")}
-                className={`relative flex flex-col items-start gap-1.5 rounded-xl border p-3.5 text-left transition-all ${
+                className={`relative flex flex-col items-start gap-1.5 rounded-xl border p-3.5 text-left transition-all cursor-pointer ${
                   themeStyle === "sakura"
                     ? "border-rose-400 bg-rose-500/10 ring-2 ring-rose-400/20 shadow-sm"
                     : "border-border hover:bg-muted/50"
@@ -101,37 +98,6 @@ export function ThemeSettingsDialog({
                   <div className="size-3 rounded-full bg-purple-900 border border-purple-800" />
                 </div>
               </button>
-            </div>
-          </div>
-
-          {/* 明暗模式切换 */}
-          <div className="space-y-2 pt-2 border-t">
-            <label className="text-xs font-semibold text-foreground">
-              颜色模式
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <Button
-                variant={!dark ? "default" : "outline"}
-                size="sm"
-                onClick={() => {
-                  if (dark) onToggleDark()
-                }}
-                className="gap-2 h-9 text-xs justify-center"
-              >
-                <Sun className="size-3.5" />
-                <span>浅色模式</span>
-              </Button>
-              <Button
-                variant={dark ? "default" : "outline"}
-                size="sm"
-                onClick={() => {
-                  if (!dark) onToggleDark()
-                }}
-                className="gap-2 h-9 text-xs justify-center"
-              >
-                <Moon className="size-3.5" />
-                <span>深色模式</span>
-              </Button>
             </div>
           </div>
 

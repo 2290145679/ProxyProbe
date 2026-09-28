@@ -1569,6 +1569,7 @@ def init_db():
             ("price_monthly", "REAL DEFAULT 0"),
             ("price_quarterly", "REAL DEFAULT 0"),
             ("price_yearly", "REAL DEFAULT 0"),
+            ("traffic_gb", "REAL DEFAULT 0"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE proxy_tier ADD COLUMN {col_name} {col_def}")
@@ -3686,14 +3687,20 @@ def check_all_nodes_health_parallel():
     return results
 
 def node_health_checker_loop():
-    """后台轻量静默巡检所有代理节点连通性 (每 10 分钟一次)"""
+    """后台轻量静默巡检所有代理节点连通性 (可自定义周期)"""
     time.sleep(15)
     while True:
         try:
             check_all_nodes_health_parallel()
         except Exception:
             pass
-        time.sleep(600)
+        try:
+            interval_min = int(get_setting("node_check_interval_minutes", "10") or 10)
+        except Exception:
+            interval_min = 10
+        if interval_min < 1:
+            interval_min = 1
+        time.sleep(interval_min * 60)
 
 def telegram_bot_command_loop():
     """Telegram Bot 双向交互式运维指令处理器 (长轮询 getUpdates)"""
@@ -4060,7 +4067,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.18"
+CURRENT_VERSION = "v2.5.22"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -6016,7 +6023,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         # VIP 套餐列表接口 (公开/用户端与管理端通用)
         if path == "/api/proxy/tiers":
             conn = get_db()
-            cur = conn.execute("SELECT id, tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at, tier_id, price_monthly, price_quarterly, price_yearly FROM proxy_tier ORDER BY sort_order ASC, id ASC")
+            cur = conn.execute("SELECT id, tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at, tier_id, price_monthly, price_quarterly, price_yearly, traffic_gb FROM proxy_tier ORDER BY sort_order ASC, id ASC")
             tiers = []
             for r in cur.fetchall():
                 d = dict(r)
@@ -6025,6 +6032,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 d["price_monthly"] = round(float(d.get("price_monthly") or 0.0), 2)
                 d["price_quarterly"] = round(float(d.get("price_quarterly") or 0.0), 2)
                 d["price_yearly"] = round(float(d.get("price_yearly") or 0.0), 2)
+                d["traffic_gb"] = round(float(d.get("traffic_gb") or 0.0), 2)
                 tiers.append(d)
             conn.close()
             self.send_json({"ok": True, "tiers": tiers})
@@ -6257,6 +6265,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": ok, "message": msg, "latency_ms": ms})
             return
 
+        if path == "/api/proxy/dashboard/check-interval":
+            if not check_auth(self.headers):
+                self.send_json({"ok": False, "error": "Unauthorized"}, 401)
+                return
+            try:
+                interval_min = int(get_setting("node_check_interval_minutes", "10") or 10)
+            except Exception:
+                interval_min = 10
+            self.send_json({"ok": True, "interval_minutes": interval_min})
+            return
+
         if path == "/api/proxy/dashboard/overview":
             if not check_auth(self.headers):
                 self.send_json({"ok": False, "error": "Unauthorized"}, 401)
@@ -6399,7 +6418,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "avg_latency_ms": avg_lat,
                     "best_node": best_node["name"] if best_node else None,
                     "best_latency_ms": best_node["last_check_latency"] if best_node else 0,
-                    "tg_bot_active": tg_ready
+                    "tg_bot_active": tg_ready,
+                    "inspection_interval_minutes": int(get_setting("node_check_interval_minutes", "10") or 10)
                 },
                 "node_ranking": node_ranking,
                 "user_ranking": user_ranking[:8],
@@ -6410,7 +6430,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         if path == "/api/proxy/unlock/config":
             enabled, custom = get_unlock_config()
-            show_badges = get_setting("unlock_show_badges", "1") == "1"
+            show_badges = get_setting("unlock_show_badges", "0") == "1"
             self.send_json({
                 "ok": True,
                 "enabled": enabled,
@@ -7816,6 +7836,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "results": results})
             return
 
+        if path == "/api/proxy/dashboard/check-interval":
+            if not check_auth(self.headers):
+                self.send_json({"ok": False, "error": "Unauthorized"}, 401)
+                return
+            interval_min = int(req.get("interval_minutes", 10) or 10)
+            if interval_min < 1:
+                interval_min = 1
+            if interval_min > 1440:
+                interval_min = 1440
+            set_setting("node_check_interval_minutes", str(interval_min))
+            self.send_json({"ok": True, "interval_minutes": interval_min, "message": f"自动巡检周期已更新为 {interval_min} 分钟"})
+            return
+
         if path.startswith("/api/proxy/core/"):
             parts = path.strip("/").split("/")
             if len(parts) >= 5:
@@ -8261,6 +8294,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             price_monthly = float(req.get("price_monthly", 0.0) or 0.0)
             price_quarterly = float(req.get("price_quarterly", 0.0) or 0.0)
             price_yearly = float(req.get("price_yearly", 0.0) or 0.0)
+            traffic_gb = float(req.get("traffic_gb", 0.0) or 0.0)
 
             if not tier_key:
                 self.send_json({"ok": False, "message": "套餐标识（tier_key / tier_id）不能为空"}, 400)
@@ -8275,15 +8309,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     conn.execute("""
                         UPDATE proxy_tier
                         SET tier_key = ?, tier_id = ?, name = ?, description = ?, speed_limit_mbps = ?, device_limit = ?, sort_order = ?,
-                            price_monthly = ?, price_quarterly = ?, price_yearly = ?
+                            price_monthly = ?, price_quarterly = ?, price_yearly = ?, traffic_gb = ?
                         WHERE id = ?
-                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, int(t_id)))
+                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, traffic_gb, int(t_id)))
                     saved_id = int(t_id)
                 else:
                     cur = conn.execute("""
-                        INSERT INTO proxy_tier (tier_key, tier_id, name, description, speed_limit_mbps, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, int(time.time())))
+                        INSERT INTO proxy_tier (tier_key, tier_id, name, description, speed_limit_mbps, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, traffic_gb, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, traffic_gb, int(time.time())))
                     saved_id = cur.lastrowid
             conn.close()
             self.send_json({"ok": True, "id": saved_id, "tier_id": saved_id, "message": "VIP 套餐已成功保存"})

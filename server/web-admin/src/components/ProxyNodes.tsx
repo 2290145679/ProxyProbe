@@ -263,9 +263,9 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [testingUnlockId, setTestingUnlockId] = useState<number | null>(null)
   const [showUnlockBadges, setShowUnlockBadges] = useState<boolean>(() => {
     const saved = localStorage.getItem("proxy_show_unlock_badges")
-    return saved !== null ? saved === "true" : true
+    return saved !== null ? saved === "true" : false
   })
-  const [tempShowBadges, setTempShowBadges] = useState<boolean>(true)
+  const [tempShowBadges, setTempShowBadges] = useState<boolean>(false)
   const [unlockConfigOpen, setUnlockConfigOpen] = useState(false)
   const [unlockEnabled, setUnlockEnabled] = useState<string[]>(["gemini", "chatgpt", "netflix", "youtube"])
   const [unlockPresets, setUnlockPresets] = useState<UnlockPresetItem[]>([])

@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowUpDown,
   BarChart3,
-  Bot,
   CheckCircle2,
   Layers,
   RefreshCw,
@@ -17,6 +16,20 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 export type DashboardSummary = {
   total_servers: number
@@ -33,6 +46,7 @@ export type DashboardSummary = {
   best_node: string | null
   best_latency_ms: number
   tg_bot_active: boolean
+  inspection_interval_minutes?: number
 }
 
 export type NodeRankingItem = {
@@ -122,6 +136,8 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
   const [checkingAll, setCheckingAll] = useState(false)
   const [testingId, setTestingId] = useState<number | null>(null)
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date())
+  const [showUnhealthyDialog, setShowUnhealthyDialog] = useState(false)
+  const [inspectionInterval, setInspectionInterval] = useState(10)
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [nodeRanking, setNodeRanking] = useState<NodeRankingItem[]>([])
@@ -136,6 +152,9 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
       const data = await res.json()
       if (data.ok) {
         setSummary(data.summary)
+        if (data.summary?.inspection_interval_minutes) {
+          setInspectionInterval(data.summary.inspection_interval_minutes)
+        }
         setNodeRanking(data.node_ranking || [])
         setUserRanking(data.user_ranking || [])
         setProtocolDist(data.protocol_distribution || [])
@@ -203,6 +222,29 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
       setTestingId(null)
     }
   }
+
+  // 修改巡检周期
+  const handleUpdateInterval = async (val: string) => {
+    const mins = parseInt(val) || 10
+    setInspectionInterval(mins)
+    try {
+      const res = await fetch("/api/proxy/dashboard/check-interval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interval_minutes: mins }),
+      })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(`静默巡检周期已更新为每 ${mins} 分钟一次`)
+      } else {
+        toast.error(d.message || "设置巡检周期失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    }
+  }
+
+  const unhealthyNodes = nodeRanking.filter(n => n.last_check_status && n.last_check_status !== "ok")
 
   // 计算 24 小时流量走势图坐标
   const chartMax = Math.max(...hourlyTraffic.map((h) => h.total), 1024 * 1024 * 10) // 至少 10MB 基准
@@ -278,7 +320,15 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
             {summary && summary.unhealthy_nodes === 0 && summary.total_nodes > 0 ? (
               <CheckCircle2 className="size-4 text-emerald-500" />
             ) : (
-              <AlertTriangle className="size-4 text-amber-500" />
+              <button
+                type="button"
+                onClick={() => setShowUnhealthyDialog(true)}
+                className="p-1 -m-1 rounded-md text-amber-500 hover:bg-amber-500/10 transition-colors flex items-center gap-1 cursor-pointer"
+                title="点击查看异常节点详情与排查报告"
+              >
+                <AlertTriangle className="size-4 text-amber-500 animate-pulse" />
+                <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 underline decoration-dotted">查看详情</span>
+              </button>
             )}
           </div>
           <div className="my-2">
@@ -290,7 +340,14 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
             <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5 flex-wrap">
               <span>{summary ? `${summary.healthy_nodes} / ${summary.total_nodes} 节点握手正常` : "加载中..."}</span>
               {summary && summary.unhealthy_nodes > 0 && (
-                <span className="text-destructive font-medium">({summary.unhealthy_nodes} 个异常)</span>
+                <button
+                  type="button"
+                  onClick={() => setShowUnhealthyDialog(true)}
+                  className="text-destructive font-medium hover:underline cursor-pointer transition-colors"
+                  title="点击查看异常节点清单"
+                >
+                  ({summary.unhealthy_nodes} 个异常)
+                </button>
               )}
             </div>
           </div>
@@ -623,9 +680,26 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
             <Wifi className="size-4 text-emerald-500" />
             <h2 className="text-sm font-semibold">节点全景感知与连通性矩阵</h2>
           </div>
-          <span className="text-xs text-muted-foreground">
-            后台静默自动巡检周期：10 分钟
-          </span>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>后台静默自动巡检周期：</span>
+            <Select
+              value={String(inspectionInterval)}
+              onValueChange={handleUpdateInterval}
+            >
+              <SelectTrigger className="h-7 text-xs w-28 font-medium">
+                <SelectValue placeholder="选择周期" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">1 分钟</SelectItem>
+                <SelectItem value="3">3 分钟</SelectItem>
+                <SelectItem value="5">5 分钟</SelectItem>
+                <SelectItem value="10">10 分钟 (默认)</SelectItem>
+                <SelectItem value="15">15 分钟</SelectItem>
+                <SelectItem value="30">30 分钟</SelectItem>
+                <SelectItem value="60">60 分钟</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <div className="mt-3 overflow-x-auto">
@@ -714,64 +788,85 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
         </div>
       </Card>
 
-      {/* 第五行：Telegram 智能运维交互卡片 */}
-      <Card className="p-4 sm:p-5 bg-card/60">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="size-9 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-500 shrink-0">
-              <Bot className="size-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold">Telegram 双向交互式运维机器人</h3>
-                {summary?.tg_bot_active ? (
-                  <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0">
-                    🟢 已就绪
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] px-1.5 py-0">
-                    ⚪ 待配置
-                  </Badge>
-                )}
+      {/* 异常节点清单弹窗 */}
+      <Dialog open={showUnhealthyDialog} onOpenChange={setShowUnhealthyDialog}>
+        <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-destructive">
+              <AlertTriangle className="size-5 text-amber-500" />
+              全网异常节点检测清单 ({unhealthyNodes.length} 个)
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              以下节点在最近一次连通性感知巡检中握手失败或响应超时。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2.5 py-2">
+            {unhealthyNodes.length === 0 ? (
+              <div className="text-center py-8 text-xs text-muted-foreground">
+                <CheckCircle2 className="size-8 text-emerald-500 mx-auto mb-2 opacity-80" />
+                当前暂无异常节点，全部代理节点握手测试均畅通！
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                无需打开面板，在 Telegram 发送指令即可秒级感知全网状态、发起巡检或打包备份数据库
-              </p>
-            </div>
+            ) : (
+              unhealthyNodes.map((n) => (
+                <div key={n.id} className="p-3 rounded-lg border border-destructive/20 bg-destructive/5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-xs text-foreground">{n.name}</span>
+                      {protocolBadge(n.protocol)}
+                    </div>
+                    <Badge variant="destructive" className="text-[10px] px-1.5 py-0">连接异常</Badge>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                    <span>所属服务器: <strong className="text-foreground">{n.server_name}</strong></span>
+                    <span>端口: <code className="font-mono">{n.port}</code></span>
+                    <span>最近检测: {formatRelativeTime(n.last_check_time)}</span>
+                  </div>
+                  <div className="text-xs font-mono bg-destructive/10 text-destructive rounded p-2 text-[11px] break-all">
+                    ⚠️ 失败原因: {n.last_check_error || "TCP/TLS 握手超时或对端拒绝连接"}
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={testingId === n.id}
+                      onClick={() => handleSingleTest(n.id)}
+                    >
+                      <RefreshCw className={`size-3 mr-1 ${testingId === n.id ? "animate-spin" : ""}`} />
+                      {testingId === n.id ? "探测中..." : "重新探测"}
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
-          {onNavigate && (
+          <div className="flex justify-between items-center pt-2 border-t">
+            {onNavigate && (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="text-xs h-8"
+                onClick={() => {
+                  setShowUnhealthyDialog(false)
+                  onNavigate("/admin/proxy")
+                }}
+              >
+                前往代理节点管理 →
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
-              className="h-8 text-xs shrink-0 self-start sm:self-center"
-              onClick={() => onNavigate("/admin/notify")}
+              className="text-xs h-8 ml-auto"
+              onClick={() => setShowUnhealthyDialog(false)}
             >
-              配置 TG 机器人 →
+              关闭
             </Button>
-          )}
-        </div>
-
-        {/* 交互指令说明胶囊 */}
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-border/30 text-xs">
-          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
-            <div className="font-mono font-semibold text-primary">/status</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">全网大盘与服务器负载概览</div>
           </div>
-          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
-            <div className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">/test</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">手机即时触发全节点连通测试</div>
-          </div>
-          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
-            <div className="font-mono font-semibold text-purple-600 dark:text-purple-400">/backup</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">立即打包并发送数据库备份文件</div>
-          </div>
-          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
-            <div className="font-mono font-semibold text-sky-600 dark:text-sky-400">/nodes</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">查询各节点实时延迟与感知状态</div>
-          </div>
-        </div>
-      </Card>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
