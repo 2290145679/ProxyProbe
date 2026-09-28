@@ -3780,54 +3780,6 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
         </div>
       </ChannelCard>
 
-      {/* Telegram 双向交互运维机器人卡片 */}
-      <Card className="p-5 bg-card/60">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="size-9 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-500 shrink-0">
-              <Bot className="size-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold">Telegram 双向交互式运维机器人</h3>
-                {s.notify_telegram_token_set && text("notify_telegram_chat") !== "" ? (
-                  <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0">
-                    🟢 已就绪
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] px-1.5 py-0">
-                    ⚪ 待配置
-                  </Badge>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                无需打开面板，在 Telegram 发送指令即可秒级感知全网状态、发起巡检或打包备份数据库
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* 交互指令说明胶囊 */}
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-border/30 text-xs">
-          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
-            <div className="font-mono font-semibold text-primary">/status</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">全网大盘与服务器负载概览</div>
-          </div>
-          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
-            <div className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">/test</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">手机即时触发全节点连通测试</div>
-          </div>
-          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
-            <div className="font-mono font-semibold text-purple-600 dark:text-purple-400">/backup</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">立即打包并发送数据库备份文件</div>
-          </div>
-          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
-            <div className="font-mono font-semibold text-sky-600 dark:text-sky-400">/nodes</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">查询各节点实时延迟与感知状态</div>
-          </div>
-        </div>
-      </Card>
-
       <ChannelCard title="Webhook" configured={!!s.notify_webhook_url_set}>
         <Field label="URL" hint={secretHint("notify_webhook_url")}>
           <Input
@@ -3909,6 +3861,54 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
 
       {/* 服务器到期 Telegram 自动推送提醒设置 */}
       <ServerExpirySettingsCard />
+
+      {/* Telegram 双向交互运维机器人卡片 */}
+      <Card className="p-5 bg-card/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="size-9 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-500 shrink-0">
+              <Bot className="size-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold">Telegram 双向交互式运维机器人</h3>
+                {s.notify_telegram_token_set && text("notify_telegram_chat") !== "" ? (
+                  <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0">
+                    🟢 已就绪
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] px-1.5 py-0">
+                    ⚪ 待配置
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                无需打开面板，在 Telegram 发送指令即可秒级感知全网状态、发起巡检或打包备份数据库
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* 交互指令说明胶囊 */}
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-border/30 text-xs">
+          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
+            <div className="font-mono font-semibold text-primary">/status</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">全网大盘与服务器负载概览</div>
+          </div>
+          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
+            <div className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">/test</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">手机即时触发全节点连通测试</div>
+          </div>
+          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
+            <div className="font-mono font-semibold text-purple-600 dark:text-purple-400">/backup</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">立即打包并发送数据库备份文件</div>
+          </div>
+          <div className="p-2 rounded-md bg-muted/40 border border-border/30">
+            <div className="font-mono font-semibold text-sky-600 dark:text-sky-400">/nodes</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">查询各节点实时延迟与感知状态</div>
+          </div>
+        </div>
+      </Card>
     </div>
   )
 }
