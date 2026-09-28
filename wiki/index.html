@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ProxyProbe 官方知识库与开发文档 (Wiki) - 新一代企业级分布式节点管控平台</title>
-  <meta name="description" content="ProxyProbe 是面向现代网络运维团队设计的高性能分布式代理节点管控、全景网络拓扑感知、多协议流量闭环计费及自动化运维平台。">
+  <title>ProxyProbe 官方知识库与功能全景手册 (Wiki) - 新一代企业级分布式节点管控与自动化流控系统</title>
+  <meta name="description" content="ProxyProbe 官方知识库与功能手册：基于 Rust 探针与 Sing-box + Xray 双内核的一体化分布式服务器监控、一键全家桶协议生成、全景感知、VIP物理隔离、Telegram运维与定时备份平台。">
   <link rel="stylesheet" href="css/wiki.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -47,7 +47,6 @@
         <span class="header-btn-text">Release</span>
       </a>
       <button class="theme-toggle-btn" id="themeToggle" aria-label="切换主题模式">
-        <!-- SVG will be dynamically inserted -->
       </button>
     </div>
   </header>
@@ -60,33 +59,46 @@
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
-        <input type="text" class="search-input" id="wikiSearch" placeholder="搜索文档与知识库...">
+        <input type="text" class="search-input" id="wikiSearch" placeholder="搜索文档与功能...">
       </div>
 
       <div class="nav-group">
-        <div class="nav-group-title">快速入门</div>
+        <div class="nav-group-title">核心概览</div>
         <ul class="nav-list">
-          <li class="nav-item"><a href="#intro" class="nav-link active">📖 项目概述与架构</a></li>
-          <li class="nav-item"><a href="#quickstart" class="nav-link">🚀 快速安装与部署</a></li>
-          <li class="nav-item"><a href="#core-protocols" class="nav-link">🌐 协议与代理核心</a></li>
+          <li class="nav-item"><a href="#highlights" class="nav-link active">🌟 核心两大设计亮点</a></li>
+          <li class="nav-item"><a href="#quickstart" class="nav-link">🚀 极速一键部署</a></li>
+          <li class="nav-item"><a href="#hhub-cli" class="nav-link">🖥️ hhub 终端运维控制台</a></li>
         </ul>
       </div>
 
       <div class="nav-group">
-        <div class="nav-group-title">核心系统</div>
+        <div class="nav-group-title">协议与订阅</div>
         <ul class="nav-list">
-          <li class="nav-item"><a href="#traffic-engine" class="nav-link">📊 全协议流量统计引擎</a></li>
-          <li class="nav-item"><a href="#health-probing" class="nav-link">🚨 节点全景感知与诊断</a></li>
-          <li class="nav-item"><a href="#vip-tiers" class="nav-link">💎 VIP 套餐与物理隔离</a></li>
-          <li class="nav-item"><a href="#billing-store" class="nav-link">💳 财务中心与商城网关</a></li>
+          <li class="nav-item"><a href="#all-in-one-protocols" class="nav-link">⚡ 一键全家桶协议创建</a></li>
+          <li class="nav-item"><a href="#dual-core-engine" class="nav-link">🌐 双内核协同调度矩阵</a></li>
+          <li class="nav-item"><a href="#smart-subscription" class="nav-link">🔀 聚合订阅与分流规则中心</a></li>
         </ul>
       </div>
 
       <div class="nav-group">
-        <div class="nav-group-title">运维与扩展</div>
+        <div class="nav-group-title">监控与运维</div>
         <ul class="nav-list">
+          <li class="nav-item"><a href="#node-health-matrix" class="nav-link">🚨 全景感知与异常诊断</a></li>
+          <li class="nav-item"><a href="#ping-monitoring" class="nav-link">📶 三网骨干延迟监控</a></li>
           <li class="nav-item"><a href="#telegram-bot" class="nav-link">🤖 Telegram 运维机器人</a></li>
-          <li class="nav-item"><a href="#license-center" class="nav-link">📜 商业授权与在线监控</a></li>
+          <li class="nav-item"><a href="#database-backup" class="nav-link">📦 TG 自动备份与数据维护</a></li>
+        </ul>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title">商业化与用户中心</div>
+        <ul class="nav-list">
+          <li class="nav-item"><a href="#vip-isolation" class="nav-link">💎 VIP 等级与物理隔离</a></li>
+          <li class="nav-item"><a href="#user-management" class="nav-link">👥 用户管理与邮箱注册</a></li>
+          <li class="nav-item"><a href="#client-downloads" class="nav-link">📱 客户端分发与下载中心</a></li>
+          <li class="nav-item"><a href="#announcements-modal" class="nav-link">📢 全站公告与弹窗通知</a></li>
+          <li class="nav-item"><a href="#payment-gateway" class="nav-link">💳 财务收银与多支付网关</a></li>
+          <li class="nav-item"><a href="#commercial-license" class="nav-link">📜 商业授权与企业版特权</a></li>
           <li class="nav-item"><a href="#faq" class="nav-link">❓ 常见问题排查 (FAQ)</a></li>
         </ul>
       </div>
@@ -97,16 +109,16 @@
       
       <!-- Hero Banner -->
       <section class="hero-banner">
-        <h1 class="hero-title">ProxyProbe 官方知识库</h1>
+        <h1 class="hero-title">ProxyProbe 官方全景手册</h1>
         <p class="hero-desc">
-          新一代企业级分布式节点全景感知、智能故障诊断、多协议闭环计费及一体化运维管控平台。基于 Sing-box & Xray 核心深度定制，专为高并发网络集群与商业交付打造。
+          新一代企业级分布式节点全景感知、自动化全协议流控、VIP 物理隔离与全流程闭环运维系统。深度整合 <strong>Sing-box</strong> 与 <strong>Xray-core</strong> 现代双内核，专为大规模节点集群管理与商业交付量身打造。
         </p>
         <div class="hero-buttons">
           <a href="#quickstart" class="btn-primary">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
-            快速开始部署
+            一行命令极速安装
           </a>
           <a href="https://demo.yohoo.xyz" target="_blank" class="btn-secondary">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -114,289 +126,312 @@
               <line x1="8" y1="21" x2="16" y2="21"></line>
               <line x1="12" y1="17" x2="12" y2="21"></line>
             </svg>
-            进入在线演示站
+            进入在线演示中心
           </a>
         </div>
       </section>
 
-      <!-- Section 1: Intro -->
-      <section id="intro" class="doc-section">
+      <!-- Section 1: Highlights -->
+      <section id="highlights" class="doc-section">
         <h2 class="section-title">
-          <span>📖</span> 项目概述与系统架构
+          <span>🌟</span> 核心设计两大亮点
         </h2>
         <p>
-          <strong>ProxyProbe</strong> 是一套专为代理服务器集群管理量身定制的一体化运维中枢，采用 <strong>Master-Agent（主控与分布式节点代理）</strong> 架构，彻底告别了传统面板依赖单机、协议流量统计不准、被控机故障难以快速定位等痛点。
+          ProxyProbe 从底层架构设计之初便紧紧围绕<strong>“极简自动化运维”</strong>与<strong>“高可用商业化闭环”</strong>两大核心诉求，彻底颠覆传统多面板拼凑、配置复杂、统计失真与单点故障的运维困局。
         </p>
 
         <div class="feature-grid">
-          <div class="feature-card">
-            <div class="feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <div class="feature-card highlight-card">
+            <div class="feature-icon" style="background: rgba(99, 102, 241, 0.15); color: #818cf8;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
             </div>
-            <h3 class="feature-title">全协议全覆盖</h3>
-            <p class="feature-desc">原生融合 Sing-box 与 Xray，深度支持 AnyTLS、Hysteria 2、TUIC v5、VLESS Reality、VMess、Trojan、Shadowsocks 等全量现代协议。</p>
+            <h3 class="feature-title" style="font-size: 1.15rem; color: #818cf8;">亮点一：分布式全景探针感知与全协议自动化流控一体化</h3>
+            <p class="feature-desc" style="font-size: 0.92rem; line-height: 1.65;">
+              • <strong>一键全家桶全协议生成</strong>：在目标服务器上一键批量拉起 AnyTLS、Hysteria 2、TUIC v5、VLESS Reality、VMess-WS、Trojan、Shadowsocks 等全套现代协议，智能避让端口并自动签发证书秘钥，0 门槛秒建节点。<br>
+              • <strong>全景矩阵与感叹号透视</strong>：主控端与探针核心采用 Rust 编写，探针内存占用低于 15MB；大盘异常感叹号一键点击直达故障节点与日志，支持自主调节巡检周期。<br>
+              • <strong>自适应智能聚合订阅</strong>：单一订阅链接依据客户端 User-Agent 智能下发对应规则，内置 Clash / Sing-box 分流规则可视化中心与国家地区国旗 Emoji 自动解析。
+            </p>
           </div>
-          <div class="feature-card">
-            <div class="feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
-            </div>
-            <h3 class="feature-title">全链路会话级流量闭环</h3>
-            <p class="feature-desc">独创 Sing-box 跨行日志连接 ID (conn_id) 跨行会话追踪算法，解决短连接与并发下 AnyTLS / Hy2 流量无法精准归因到用户的业内难题。</p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            </div>
-            <h3 class="feature-title">VIP 等级物理隔离</h3>
-            <p class="feature-desc">细颗粒度控制节点访问权限、单节点限速与并发设备上限；低等级用户物理无感高等级专线，保障核心业务的高可用性。</p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
-            </div>
-            <h3 class="feature-title">TG 交互式双向运维 Bot</h3>
-            <p class="feature-desc">手机随时随地发送 <code>/status</code>、<code>/test</code>、<code>/backup</code>、<code>/nodes</code> 交互指令，自动秒级诊断全网节点并触发全量热备份推送。</p>
-          </div>
-        </div>
 
-        <div class="callout callout-note">
-          <div class="callout-title">架构设计思想</div>
-          主控端（Master）统一维护配置数据库、用户凭证及聚合流量日志；被控节点（Agent）只作为无状态执行单元运行，断网时仍可依据本地缓存安全提供服务，重连后自动级联同步上传增量用量。
+          <div class="feature-card highlight-card">
+            <div class="feature-icon" style="background: rgba(16, 185, 129, 0.15); color: #34d399;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <h3 class="feature-title" style="font-size: 1.15rem; color: #34d399;">亮点二：极致开箱即用与商业化运营全流程闭环</h3>
+            <p class="feature-desc" style="font-size: 0.92rem; line-height: 1.65;">
+              • <strong>极速一键部署与 hhub 终端控制台</strong>：一行命令自动化完成主控安装、SSL 证书自动签发、Caddy 统一反代网关与守护进程配置；内置 <code>hhub</code> 控制台随时无损切换域名/IP。<br>
+              • <strong>VIP 等级物理隔离与配额控制</strong>：低等级用户物理级无感高等级独立专线，抗封锁且保护高净值资产；套餐支持自由二次编辑。<br>
+              • <strong>Telegram 双向运维与自动热备份</strong>：TG 机器人支持双向交互命令（/status, /test, /backup, /nodes），定时将 SQLite 数据库打包 Gzip 推送至私聊；支持全站公告、弹窗通知、客户端直链分发与 SMTP 邮箱验证注册。
+            </p>
+          </div>
         </div>
       </section>
 
-      <!-- Section 2: Quick Start -->
+      <!-- Section 2: Quickstart -->
       <section id="quickstart" class="doc-section">
         <h2 class="section-title">
-          <span>🚀</span> 快速安装与部署指南
+          <span>🚀</span> 极速一键安装与被控节点秒级接入
         </h2>
-        <p>ProxyProbe 主控端已高度打包编译为跨平台原生二进制，配合 Caddy 自动申请免费 SSL 证书，5 分钟即可完成全栈部署。</p>
+        <p>无需手动编译、无需繁琐配置 Nginx/Caddyfile，ProxyProbe 提供了全自动的安装流水线，5 分钟内即可拥有一整套高可用管控中心。</p>
 
-        <h3 class="section-subtitle">1. 系统环境与前提依赖</h3>
-        <p>推荐使用干净的 Linux 操作系统（Ubuntu 20.04+, Debian 11+, AlmaLinux 8+, Rocky Linux 9+）。主控机需开放 80、443 端口及业务代理端口。</p>
+        <h3 class="section-subtitle">1. 主控端一键极速部署（全新服务器推荐）</h3>
+        <p>推荐操作系统：<strong>Ubuntu 22.04+ / Debian 11+</strong>（需开放 80、443 端口）：</p>
 
-        <h3 class="section-subtitle">2. 主控端一键部署</h3>
         <div class="code-block-wrapper">
           <div class="code-header">
-            <span class="code-lang">BASH</span>
-            <button class="copy-btn" data-target="codeInstall">复制命令</button>
+            <span class="code-lang">BASH - 交互式极速部署</span>
+            <button class="copy-btn" data-target="codeInstallHub">复制命令</button>
           </div>
-          <pre><code id="codeInstall"># 从官方 Release 仓库拉取最新二进制并初始化主控端
-mkdir -p /opt/monitor &amp;&amp; cd /opt/monitor
-curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/web-admin-dist.tar.gz -o web-admin-dist.tar.gz
-curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/proxy-manager-linux-amd64 -o proxy-manager
-chmod +x proxy-manager
-
-# 解压前端面板资源
-mkdir -p /opt/monitor/web-admin/dist
-tar -xzf web-admin-dist.tar.gz -C /opt/monitor/web-admin/dist/
-
-# 启动主控服务
-./proxy-manager --port 28090</code></pre>
+          <pre><code id="codeInstallHub">curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/deploy-hub.sh | bash</code></pre>
         </div>
 
-        <h3 class="section-subtitle">3. 配置 Caddy 域名与自动化 HTTPS</h3>
-        <p>在 <code>/etc/caddy/Caddyfile</code> 中添加反向代理规则，Caddy 将自动申请并续签 Let's Encrypt / ZeroSSL 证书：</p>
+        <p>执行后脚本将以交互方式引导您完成极简配置：</p>
+        <ul style="padding-left: 20px; color: var(--text-secondary); margin-bottom: 16px;">
+          <li>📌 <strong>绑定域名或公网 IP</strong>：输入已解析域名将由 Caddy 自动申请免费 SSL 证书；输入 IP 则开启纯 IP 模式；</li>
+          <li>🔑 <strong>管理员初始密码</strong>：可自定义输入，留空将自动生成高强度安全随机密码；</li>
+          <li>🌐 <strong>访问端口与通信</strong>：脚本全自动配置 systemd 守护进程、安全防火墙策略与 <code>hhub</code> 控制台工具。</li>
+        </ul>
+
         <div class="code-block-wrapper">
           <div class="code-header">
-            <span class="code-lang">CADDYFILE</span>
-            <button class="copy-btn" data-target="codeCaddy">复制配置</button>
+            <span class="code-lang">BASH - 非交互静默部署（自动化装机专用）</span>
+            <button class="copy-btn" data-target="codeSilentHub">复制命令</button>
           </div>
-          <pre><code id="codeCaddy">tz.yourdomain.com {
-    # 代理主控核心 API 与订阅生成
-    handle /api/proxy/* {
-        reverse_proxy 127.0.0.1:28090
-    }
-    handle /sub* {
-        reverse_proxy 127.0.0.1:28090
-    }
-
-    # 客户端 Agent 自动化安装与同步脚本
-    handle /proxy-agent.sh {
-        reverse_proxy 127.0.0.1:28090
-    }
-
-    # 管理后台与用户控制台 SPA 单页应用
-    redir /admin /admin/
-    handle_path /admin* {
-        root * /opt/monitor/web-admin/dist
-        try_files {path} /index.html
-        file_server
-    }
-
-    # 探针大盘前端与实时 WebSocket
-    handle {
-        reverse_proxy 127.0.0.1:28080
-    }
-}</code></pre>
+          <pre><code id="codeSilentHub">export DOMAIN=tz.yourdomain.com ADMIN_PASS=MyStrongPassword2026
+curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/deploy-hub.sh | bash</code></pre>
         </div>
 
-        <h3 class="section-subtitle">4. 被控节点 (Agent) 挂载</h3>
-        <p>在管理后台【服务器】添加一台新机器后，系统将自动生成唯一 Token 的单行 Shell 指令，在远端机粘贴回车即可完成 Agent 自动拉起与自愈守护：</p>
+        <h3 class="section-subtitle">2. 被控探针节点 (Agent) 秒级接入</h3>
+        <p>
+          在管理后台【服务器】界面点击“添加服务器”，系统将为您生成该机器专属带有安全通信 TOKEN 的单行 Shell 指令。在任意远端 Linux 服务器终端粘贴并回车：
+        </p>
         <div class="code-block-wrapper">
           <div class="code-header">
-            <span class="code-lang">BASH</span>
-            <button class="copy-btn" data-target="codeAgent">复制示例</button>
+            <span class="code-lang">BASH - 探针节点接入指令示例</span>
+            <button class="copy-btn" data-target="codeAgentInstall">复制示例</button>
           </div>
-          <pre><code id="codeAgent">curl -fsSL https://tz.yourdomain.com/proxy-agent.sh | bash -s -- --token YOUR_SERVER_TOKEN</code></pre>
+          <pre><code id="codeAgentInstall">curl -fsSL https://tz.yourdomain.com/proxy-agent.sh | bash -s -- --token YOUR_SERVER_TOKEN</code></pre>
         </div>
+        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+          💡 <strong>自动化流程：</strong>脚本自动部署轻量级 <code>monitor-agent</code>、按需准备 Xray-core / Sing-box / Realm 引擎、签发 ECC 证书，并启动 5 秒级热同步守护进程。
+        </p>
       </section>
 
-      <!-- Section 3: Core Protocols -->
-      <section id="core-protocols" class="doc-section">
+      <!-- Section 3: hhub CLI -->
+      <section id="hhub-cli" class="doc-section">
         <h2 class="section-title">
-          <span>🌐</span> 协议矩阵与多核心架构
+          <span>🖥️</span> hhub 终端可视化运维控制台
         </h2>
-        <p>ProxyProbe 深度整合了业界两大主流网络引擎：<strong>Sing-box (Go 现代核心)</strong> 与 <strong>Xray-core</strong>，并根据各协议的特性进行硬件级吞吐与伪装优化。</p>
+        <p>
+          在安装了 ProxyProbe 主控的服务器终端中，只需输入 <code>hhub</code> 即可调出交互式运维菜单，随时进行配置微调与系统诊断：
+        </p>
+        <div class="code-block-wrapper">
+          <div class="code-header">
+            <span class="code-lang">TERMINAL</span>
+          </div>
+          <pre><code>hhub</code></pre>
+        </div>
 
         <div class="table-wrapper">
           <table>
             <thead>
               <tr>
-                <th>协议类型</th>
-                <th>驱动核心</th>
-                <th>关键特性 / 伪装层</th>
-                <th>推荐应用场景</th>
+                <th style="width: 80px;">序号</th>
+                <th style="width: 180px;">控制台功能</th>
+                <th>详细说明</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td><strong>AnyTLS</strong></td>
-                <td>Sing-box</td>
-                <td>自适应 TLS 指纹与动态握手混淆</td>
-                <td>对抗强封锁与敏感网络环境</td>
+                <td><code>[1]</code></td>
+                <td><strong>查看系统运行状态</strong></td>
+                <td>实时查看 Caddy 网关、Rust 探针中枢、代理核心运行状态及外部访问 URL</td>
               </tr>
               <tr>
-                <td><strong>Hysteria 2</strong></td>
-                <td>Sing-box</td>
-                <td>基于 UDP/QUIC 的标准协议，拥塞控制强</td>
-                <td>跨国高丢包、高延迟长链路网络加速</td>
+                <td><code>[2]</code></td>
+                <td><strong>一键重启所有服务</strong></td>
+                <td>平滑热重启全套后台守护进程，零配置丢失</td>
               </tr>
               <tr>
-                <td><strong>TUIC v5</strong></td>
-                <td>Sing-box</td>
-                <td>极轻量级 QUIC 传输协议，0-RTT 握手</td>
-                <td>移动设备抗切换与低延迟游戏加速</td>
+                <td><code>[5] / [6]</code></td>
+                <td><strong>修改外部/内部端口</strong></td>
+                <td>自动同步调整 Caddy 反代配置与系统防火墙放行规则</td>
               </tr>
               <tr>
-                <td><strong>VLESS Reality</strong></td>
-                <td>Xray-core</td>
-                <td>借用真实大厂 TLS 证书（如 Yahoo / Apple），杜绝证书嗅探</td>
-                <td>主力直连节点、高隐蔽性日常冲浪</td>
+                <td><code>[7]</code></td>
+                <td><strong>修改绑定域名 / IP</strong></td>
+                <td><strong>纯 IP 模式与域名 HTTPS 模式自由无损切换</strong>，自动处理 80 ↔ 443 端口并申请证书</td>
               </tr>
               <tr>
-                <td><strong>VMess / Trojan</strong></td>
-                <td>Xray-core</td>
-                <td>标准 WS+TLS / gRPC 伪装，老客户端兼容极佳</td>
-                <td>旧版客户端（小火箭 / Surge 早期版等）</td>
+                <td><code>[8]</code></td>
+                <td><strong>重置管理员密码</strong></td>
+                <td>一键重设主控面板与管理端后台凭证</td>
               </tr>
               <tr>
-                <td><strong>Realm 级联中继</strong></td>
-                <td>Realm Core</td>
-                <td>端口转发、中转落地机级联，流量自动同步</td>
-                <td>国内入口中转加速出口节点</td>
+                <td><code>[9]</code></td>
+                <td><strong>一键无损热升级系统</strong></td>
+                <td>自动拉取官方最新发行版编译包与前端，保留所有节点与用户数据并无缝重启</td>
+              </tr>
+              <tr>
+                <td><code>[10]</code></td>
+                <td><strong>查看服务实时日志</strong></td>
+                <td>支持滚屏追踪 proxy-manager 与 monitor-hub 的 real-time journal 日志</td>
+              </tr>
+              <tr>
+                <td><code>[11]</code></td>
+                <td><strong>数据库备份与还原</strong></td>
+                <td>本地一键生成带时间戳的 SQLite 快照归档或从历史点还原</td>
               </tr>
             </tbody>
           </table>
         </div>
       </section>
 
-      <!-- Section 4: Traffic Accounting Engine -->
-      <section id="traffic-engine" class="doc-section">
+      <!-- Section 4: All-in-One Protocols -->
+      <section id="all-in-one-protocols" class="doc-section">
         <h2 class="section-title">
-          <span>📊</span> 全协议双向流量归因与会话追踪引擎
+          <span>⚡</span> 一键全家桶协议创建与极速生成
         </h2>
         <p>
-          在市面传统方案中，基于 Sing-box 运行的 AnyTLS、Hysteria 2 协议常常存在<strong>“只能测出在线设备数，无法将流量精确统计到具体用户”</strong>的短板。ProxyProbe 在 v2.5.21 中全面攻克了这一技术难题。
+          针对日常运维中一台服务器需要部署多个协议的繁琐操作，ProxyProbe 创新研发了<strong>“一键全家桶协议创建”</strong>引擎。
         </p>
 
-        <h3 class="section-subtitle">双行日志连接 ID (conn_id) 跨行会话追踪算法</h3>
-        <p>Sing-box 的访问日志在连接生命周期中被拆分为两行异步事件：握手连接行（记录连接 ID 与源 IP:Port）与身份验证通过行（记录相同的连接 ID、用户凭据与目的域名）。</p>
-        
-        <div class="callout callout-important">
-          <div class="callout-title">Session Correlation Parser 运作流程</div>
-          1. <strong>连接捕获阶段</strong>：监听 <code>conn[xxxx] inbound/anytls: inbound connection from 1.2.3.4:5678</code>，记录连接 ID 与源 IP 映射表并赋予 TTL。<br>
-          2. <strong>身份归因阶段</strong>：捕获后续 <code>conn[xxxx] match[user_uuid]</code>，通过 <code>conn[xxxx]</code> 建立源 IP:Port ➜ User ID 映射关系。<br>
-          3. <strong>流量级联阶段</strong>：通过 Clash API 抓取 socket 上下行数据流，精准沉淀至 <code>proxy_traffic_hourly</code> 及用户累计账单。
+        <div class="callout callout-note">
+          <div class="callout-title">什么是「一键全家桶」？</div>
+          管理员在【代理协议】界面仅需选择目标服务器并点击「一键生成全家桶」，系统将自动完成全套协议规划：<br>
+          • 自动规划并分配多个互不冲突的高速端口；<br>
+          • 一次性为该服务器批量配置 <strong>AnyTLS、Hysteria 2、TUIC v5、VLESS Reality (Vision/XHTTP)、Trojan、VMess-WS、Shadowsocks 2022</strong>；<br>
+          • 自动生成 x25519 秘钥对、安全 UUID、连接密码与大厂真实 SNI 伪装域名（如 Apple / Yahoo）；<br>
+          • 5 秒内全网同步生效，并立即加入到全自适应客户端订阅链中。
         </div>
-      </section>
 
-      <!-- Section 5: Health Probing -->
-      <section id="health-probing" class="doc-section">
-        <h2 class="section-title">
-          <span>🚨</span> 节点全景感知、智能诊断与巡检控制
-        </h2>
-        <p>为了让运维人员快速掌握全网健康状态，ProxyProbe 提供了全方位的感知矩阵与智能下钻诊断能力。</p>
-
-        <h3 class="section-subtitle">1. 健康度异常感叹号一键透视 (v2.5.22 新增)</h3>
+        <h3 class="section-subtitle">协议参数极简降噪 (Decluttered Modal)</h3>
         <p>
-          当主控大盘检测到节点出现离线或握手超时，卡片顶部的健康度感叹号与 <code>(X 个异常)</code> 徽标支持<strong>直接点击交互</strong>，自动弹出诊断浮窗，直观列出所有故障节点名称、协议类型、归属服务器及具体报错日志，并支持一键发起即时重测。
+          单独添加节点时，弹窗默认仅展现必填项（服务器、协议类型、节点名称、监听端口）。高阶复杂的伪装头部、Path、PublicKey 等全量自动安全预填并收拢在「高级配置」中，普通运维开箱即用，资深专家随时展开微调。
         </p>
-
-        <h3 class="section-subtitle">2. 后台静默自动巡检周期自定义</h3>
-        <p>
-          支持在连通性矩阵界面通过下拉菜单调节后台巡检间隔（<strong>1 分钟、3 分钟、5 分钟、10 分钟、15 分钟、30 分钟、60 分钟</strong>），参数动态持久化并在后台线程自适应生效，告别固定写死的巡检周期。
-        </p>
-
-        <h3 class="section-subtitle">3. 流媒体与主流 AI 平台解锁深度检测</h3>
-        <p>支持对各大节点进行多平台流媒体及 AI 服务可用性探针（Netflix 原生、Disney+、YouTube Premium、OpenAI / ChatGPT、Anthropic Claude、Google Gemini），默认关闭以降低资源消耗，按需一键开启。</p>
       </section>
 
-      <!-- Section 6: VIP Tiers -->
-      <section id="vip-tiers" class="doc-section">
+      <!-- Section 5: Dual Core Engine -->
+      <section id="dual-core-engine" class="doc-section">
         <h2 class="section-title">
-          <span>💎</span> VIP 等级套餐、物理隔离与配额控制
+          <span>🌐</span> 双内核驱动协同调度矩阵
         </h2>
-        <p>针对商业化运营，ProxyProbe 实现了节点与用户的多维度权限绑定与物理隔离机制：</p>
-        
-        <ul style="padding-left: 20px; color: var(--text-secondary); margin-bottom: 20px;">
-          <li style="margin-bottom: 8px;"><strong>等级物理不可见</strong>：VIP1 用户获取订阅链接时，系统底层物理剥离 VIP2/VIP3 节点配置，杜绝抓包逆向越权。</li>
-          <li style="margin-bottom: 8px;"><strong>单节点限速与设备上限</strong>：支持在节点级别配置最高上行/下行速率限制，并在用户级别限制同时在线客户端 IP 数。</li>
-          <li style="margin-bottom: 8px;"><strong>全流程二次编辑 (v2.5.22)</strong>：已创建的 VIP 套餐支持完整数据回显、月/季/年付价格调整及流量配额二次更新。</li>
-        </ul>
-      </section>
+        <p>ProxyProbe 深度整合了两大顶级网络核心，分别承担其最擅长的通信协议链路：</p>
 
-      <!-- Section 7: Billing & Store -->
-      <section id="billing-store" class="doc-section">
-        <h2 class="section-title">
-          <span>💳</span> 财务中心、多支付网关与用户订阅商城
-        </h2>
-        <p>系统内置了完备的轻量级商城与计费中心：</p>
-        <div class="feature-grid">
-          <div class="feature-card">
-            <h3 class="feature-title">多网关收款配置</h3>
-            <p class="feature-desc">支持配置 USDT (TRC-20 链上地址)、微信收款码、支付宝收款码，以及 Telegram 客服支持直达链接。</p>
-          </div>
-          <div class="feature-card">
-            <h3 class="feature-title">余额自动秒级开通</h3>
-            <p class="feature-desc">用户控制台支持通过账户余额直接扣款购买/升级订阅，系统自动延长用户到期日并应用新等级配额。</p>
-          </div>
-          <div class="feature-card">
-            <h3 class="feature-title">转账审核与快捷充值</h3>
-            <p class="feature-desc">后台支持实时查看提交的转账凭证并一键审批生效或驳回；用户列表提供直接调账与增量充值弹窗。</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- Section 8: Telegram Bot -->
-      <section id="telegram-bot" class="doc-section">
-        <h2 class="section-title">
-          <span>🤖</span> Telegram 双向交互式运维机器人
-        </h2>
-        <p>在【通知】模块中配置 Telegram Bot Token 与 管理员 Chat ID，即可开启全自动交互运维：</p>
-        
         <div class="table-wrapper">
           <table>
             <thead>
               <tr>
-                <th>交互指令</th>
-                <th>执行行为与反馈</th>
+                <th>核心引擎</th>
+                <th>承载协议</th>
+                <th>底层优势与应用场景</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Sing-box</strong><br><span style="font-size:0.8rem; color:var(--text-muted);">Go 现代核心</span></td>
+                <td>• AnyTLS<br>• Hysteria 2 (Hy2)<br>• TUIC v5</td>
+                <td>专为现代基于 QUIC / UDP 的低延迟抗丢包协议打造。内置精准会话流量追踪算法，长链路跨国网络加速效果卓越。</td>
+              </tr>
+              <tr>
+                <td><strong>Xray-core</strong><br><span style="font-size:0.8rem; color:var(--text-muted);">经典成熟核心</span></td>
+                <td>• VLESS Reality<br>• Trojan (gRPC/WS)<br>• VMess (WS/TLS)<br>• Shadowsocks 2022</td>
+                <td>借用真实大厂 TLS 证书（如 Yahoo / Apple），杜绝中间人证书嗅探；支持老旧客户端与全平台极高兼容性。</td>
+              </tr>
+              <tr>
+                <td><strong>Realm Core</strong><br><span style="font-size:0.8rem; color:var(--text-muted);">Rust 高性能转发</span></td>
+                <td>• 端口中继转发<br>• 入口落地机级联</td>
+                <td>极低延迟端口中转调度，轻松组建国内多级中继拓扑。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Section 6: Smart Subscription & Rules -->
+      <section id="smart-subscription" class="doc-section">
+        <h2 class="section-title">
+          <span>🔀</span> 自适应智能聚合订阅与可视化分流规则中心
+        </h2>
+        
+        <h3 class="section-subtitle">1. 单一订阅链接全客户端自适应</h3>
+        <p>
+          用户无需纠结复制哪种格式的订阅。单一订阅 URL 后端根据客户端的 <code>User-Agent</code> 自动分发最优配置：
+        </p>
+        <ul style="padding-left: 20px; color: var(--text-secondary); margin-bottom: 16px;">
+          <li>⚡ <strong>Clash / Clash Verge / Mihomo</strong> ➜ 自动分发预设分组与规则完整的 Clash YAML 配置；</li>
+          <li>⚡ <strong>Sing-box 官方客户端</strong> ➜ 自动分发原生 JSON 路由规则配置；</li>
+          <li>⚡ <strong>Shadowrocket / v2rayN / Quantumult X</strong> ➜ 自动分发标准 Base64 聚合节点链；</li>
+          <li>⚡ <strong>支持强制参数</strong>：添加 <code>?clash=1</code>、<code>?singbox=1</code>、<code>?b64=1</code> 可手动覆盖。</li>
+        </ul>
+
+        <h3 class="section-subtitle">2. 客户端分流规则中心 (`/admin/rules`)</h3>
+        <p>
+          后台内置可视化的规则中心，预置四大经典分流策略：<strong>「国内外智能分流 (默认推荐)」、「极简轻量」、「全局代理」、「自定义专家」</strong>。支持对规则组进行语法高亮编辑、注入自定义拦截标签，并在管理界面实时预览客户端完整配置。
+        </p>
+
+        <h3 class="section-subtitle">3. 节点国家地区国旗 Emoji 智能识别</h3>
+        <p>
+          节点管理与订阅分发引擎会根据节点所在地理位置代码（如 HK、JP、US、SG 等）或名称关键字，自动前置匹配对应国家地区国旗 Emoji（🇭🇰/🇯🇵/🇺🇸/🇸🇬/🇨🇳/🇩🇪 等），全平台客户端展示清爽统一。
+        </p>
+      </section>
+
+      <!-- Section 7: Health Probing Matrix -->
+      <section id="node-health-matrix" class="doc-section">
+        <h2 class="section-title">
+          <span>🚨</span> 节点全景感知、异常诊断与巡检控制
+        </h2>
+        
+        <h3 class="section-subtitle">1. 健康度异常感叹号一键透视</h3>
+        <p>
+          当主控大盘检测到节点出现离线或握手失败时，卡片顶部的健康度感叹号 <code>(!)</code> 与 <code>(X 个异常)</code> 徽章支持<strong>直接交互点击</strong>，弹出全屏诊断浮窗，直观列出所有故障节点名称、协议类型、归属服务器及具体报错日志，并支持一键发起即时重测。
+        </p>
+
+        <h3 class="section-subtitle">2. 后台静默自动巡检周期自定义</h3>
+        <p>
+          支持在连通性矩阵界面通过下拉菜单调节后台巡检间隔（<strong>1 分钟、3 分钟、5 分钟、10 分钟、15 分钟、30 分钟、60 分钟</strong>），参数动态持久化并在后台线程自适应生效，不再硬编码固定周期。
+        </p>
+
+        <h3 class="section-subtitle">3. 流媒体与主流 AI 平台解锁深度检测</h3>
+        <p>
+          针对各大节点提供全自动流媒体解锁探测（Netflix 原生解锁、Disney+、YouTube Premium）与主流 AI 矩阵（OpenAI / ChatGPT、Anthropic Claude、Google Gemini）检测。默认保持关闭以节约服务器资源，有需要可随时一键开启。
+        </p>
+      </section>
+
+      <!-- Section 8: Ping Monitoring -->
+      <section id="ping-monitoring" class="doc-section">
+        <h2 class="section-title">
+          <span>📶</span> 三网骨干网络延迟监控任务 (`/admin/ping`)
+        </h2>
+        <p>
+          ProxyProbe 内置多维度的真实网络质量感知体系。在【延迟】管理页面中，可添加自定义 Ping 监控任务（如针对<strong>广东移动 BGP 优选、广东联通高速直连、广东电信骨干网</strong>的指定 IP 与端口）。
+        </p>
+        <p>
+          各被控节点在后台独立发起实际的 TCP 建连与 TLS 握手测试，毫秒级上报历史延迟数据与可用率指标，帮助管理员第一眼识别线路波动或运营商网络劣化。
+        </p>
+      </section>
+
+      <!-- Section 9: Telegram Bot -->
+      <section id="telegram-bot" class="doc-section">
+        <h2 class="section-title">
+          <span>🤖</span> Telegram 双向交互式运维机器人与智能告警
+        </h2>
+        <p>
+          在【通知】模块中填入 Telegram Bot Token 与管理员 Chat ID，即可开启全功能运维机器人：
+        </p>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 140px;">交互指令</th>
+                <th>机器人响应与行为</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><code>/status</code></td>
-                <td>即时汇总全网大盘、当前总在线节点数、24 小时总流量及所有服务器 CPU/内存平均负载。</td>
+                <td>实时汇总全网大盘、当前总在线节点数、24 小时总流量消耗及所有服务器 CPU/内存平均负载。</td>
               </tr>
               <tr>
                 <td><code>/test</code></td>
@@ -404,51 +439,175 @@ tar -xzf web-admin-dist.tar.gz -C /opt/monitor/web-admin/dist/
               </tr>
               <tr>
                 <td><code>/backup</code></td>
-                <td>主控端立即执行 SQLite 数据库加锁热备份，自动压缩并以文件形式直接推送至您的 Telegram 私聊。</td>
+                <td>立即执行 SQLite 数据库加锁热备份，自动 Gzip 压缩并直接推送 <code>.db.gz</code> 文件至您的 Telegram 对话框。</td>
               </tr>
               <tr>
                 <td><code>/nodes</code></td>
-                <td>格式化输出各节点实时延迟、最近一次心跳及协议状态。</td>
+                <td>格式化输出各节点实时延迟、最近一次心跳及运行状态。</td>
               </tr>
             </tbody>
           </table>
         </div>
+
+        <h3 class="section-subtitle">静默无扰守护告警</h3>
+        <p>
+          后台守护进程对所有服务器进行持续监测。任何服务器离线超过 75 秒或恢复上线时，自动推送信令通知；同时支持流量使用达到阈值（如 80%）提醒及服务器到期前（如提前 7 天）自动告警。
+        </p>
       </section>
 
-      <!-- Section 9: License Center -->
-      <section id="license-center" class="doc-section">
+      <!-- Section 10: Database Backup -->
+      <section id="database-backup" class="doc-section">
         <h2 class="section-title">
-          <span>📜</span> 商业发卡中心与客户端心跳感知
+          <span>📦</span> Telegram 定时自动备份与数据维护 (`/admin/data`)
         </h2>
-        <p>为满足私有化交付与商业授权需求，ProxyProbe 提供了离线非对称密钥签名与卡密中心：</p>
-        <div class="callout callout-tip">
-          <div class="callout-title">发卡中心在线状态感知 (v2.5.22 新增)</div>
-          历史卡密列表全面集成实时在线监测与公网 IP 嗅探：<br>
-          • 🟢 <strong>在线</strong>：最近 5 分钟内持续接收到客户端心跳握手；<br>
-          • ⚪ <strong>离线</strong>：已激活过但近期断连，展示最近一次活跃时间及客户端服务器公网 IP；<br>
-          • 🟡 <strong>待激活</strong>：已生成卡密尚未绑定机器；<br>
-          • 🔴 <strong>已吊销</strong>：管理员主动注销或违规封禁。
+        <p>
+          数据是业务运转的核心命脉。ProxyProbe 提供了全方位的数据安全保障：
+        </p>
+
+        <h3 class="section-subtitle">1. Telegram 定时自动推送备份</h3>
+        <p>
+          在数据维护界面中开启“Telegram 机器人定时自动备份”，可自由设置备份周期（如每 <strong>24 小时</strong>）。系统将自动在后台进行 SQLite 在线热备份（Online Backup API），经 Gzip 压缩后直接发送至管理员 Telegram 私聊，彻底解决单点损坏或机房故障隐患。
+        </p>
+
+        <h3 class="section-subtitle">2. 数据维护大盘与一键空间回收 (VACUUM)</h3>
+        <p>
+          直观展现当前数据库文件大小、预写日志 (WAL) 大小、可回收磁盘空间、数据保留天数及历史明细行数。支持一键点击「立即回收」清理冗余空间，支持「导出备份」下载原始数据库文件，支持直接上传历史 <code>.db</code> 或 <code>.db.gz</code> 镜像包一键恢复。
+        </p>
+      </section>
+
+      <!-- Section 11: VIP Isolation -->
+      <section id="vip-isolation" class="doc-section">
+        <h2 class="section-title">
+          <span>💎</span> VIP 等级套餐体系与节点物理隔离
+        </h2>
+        <p>针对多层级客户运营，ProxyProbe 实现了严格的节点物理级隔离：</p>
+        
+        <ul style="padding-left: 20px; color: var(--text-secondary); margin-bottom: 16px;">
+          <li style="margin-bottom: 8px;"><strong>等级物理不可见隔离</strong>：VIP1 用户获取订阅链接时，系统底层物理剥离 VIP2/VIP3 专属服务器与节点，抓包分析也完全看不到高等级节点信息，从根源上杜绝逆向越权。</li>
+          <li style="margin-bottom: 8px;"><strong>套餐精细化属性</strong>：支持为套餐配置月付、季付、年付定价、月度流量配额 (GB) 及最大并发设备数。</li>
+          <li style="margin-bottom: 8px;"><strong>套餐自由修改与二次更新</strong>：已创建的 VIP 套餐支持完整数据回显与自由修改，价格调整与配额升级随时保存生效。</li>
+        </ul>
+      </section>
+
+      <!-- Section 12: User Management & SMTP -->
+      <section id="user-management" class="doc-section">
+        <h2 class="section-title">
+          <span>👥</span> 用户管理、注册控制与 SMTP 邮箱验证体系
+        </h2>
+        
+        <h3 class="section-subtitle">1. 灵活的注册模式与窗口控制</h3>
+        <p>支持配置开放注册、邀请码注册、或设置限时注册窗口，满足不同阶段的用户准入策略。</p>
+
+        <h3 class="section-subtitle">2. SMTP 邮箱验证码注册体系</h3>
+        <p>
+          在后台设置中可灵活配置标准 SMTP 邮件发送参数（SMTP 服务器地址、端口、发件人邮箱、授权码与 SSL/TLS 加密）。用户在前台注册时，系统自动发送 6 位数安全动态验证码，有效杜绝批量虚假注册与脚本刷号。
+        </p>
+
+        <h3 class="section-subtitle">3. 用户全生命周期管控</h3>
+        <p>
+          管理员可对用户进行流量配额分配、到期时间手动延长、账户余额增减调账、专属套餐等级指派、单个用户独立重置订阅 Token（防泄露）、一键封禁与解封。
+        </p>
+      </section>
+
+      <!-- Section 13: Client Downloads -->
+      <section id="client-downloads" class="doc-section">
+        <h2 class="section-title">
+          <span>📱</span> 全平台应用客户端分发与下载中心
+        </h2>
+        <p>
+          为了让最终用户拥有流畅的连接体验，系统在后台提供了<strong>「应用客户端分发」</strong>管理模块：
+        </p>
+        <ul style="padding-left: 20px; color: var(--text-secondary); margin-bottom: 16px;">
+          <li>📦 <strong>全系统覆盖</strong>：支持维护 Windows、macOS (Intel/Apple Silicon)、iOS、Android、Linux 客户端推荐版本；</li>
+          <li>🚀 <strong>安装包直传与外部镜像</strong>：支持直接上传客户端安装包至主控服务器，或配置外部高速镜像下载链接；</li>
+          <li>📖 <strong>用户面板一键下载</strong>：用户登录自服务控制台后，直接点击即可下载对应系统客户端，并配套清晰的一键唤醒导入或扫码导入指引。</li>
+        </ul>
+      </section>
+
+      <!-- Section 14: Announcements & Modal -->
+      <section id="announcements-modal" class="doc-section">
+        <h2 class="section-title">
+          <span>📢</span> 全站公告发布与全局浮动弹窗通知
+        </h2>
+        <p>
+          在【公告与通知】模块中，管理员可进行多形式的信息触达：
+        </p>
+        <ul style="padding-left: 20px; color: var(--text-secondary); margin-bottom: 16px;">
+          <li>📢 <strong>全站通知列表</strong>：支持富文本编辑发布通知、标记重要置顶排序，用户前台仪表盘直观展现；</li>
+          <li>🔔 <strong>全局强提醒弹窗</strong>：支持开启“网站进入全局浮动弹窗”，配置弹窗标题与正文。用户每次打开站点时将率先弹出重要通知（如节点维护、线路割接或活动政策提醒），确保信息 100% 传达。</li>
+        </ul>
+      </section>
+
+      <!-- Section 15: Payment & Store -->
+      <section id="payment-gateway" class="doc-section">
+        <h2 class="section-title">
+          <span>💳</span> 财务收银与多支付网关中心
+        </h2>
+        <p>ProxyProbe 内置了轻量高效的收银台与账单管理闭环：</p>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <h3 class="feature-title">多网关聚合收款</h3>
+            <p class="feature-desc">支持配置 USDT (TRC-20 链上地址与汇率)、微信收款二维码、支付宝收款二维码，以及专属 Telegram 客服支持链接。</p>
+          </div>
+          <div class="feature-card">
+            <h3 class="feature-title">余额购买与到期自动续订</h3>
+            <p class="feature-desc">用户支持使用账户余额秒级开通或升级 VIP 等级套餐，系统自动完成扣款、更新配额并智能顺延到期日。</p>
+          </div>
+          <div class="feature-card">
+            <h3 class="feature-title">订单流水与人工凭证审核</h3>
+            <p class="feature-desc">后台实时记录每一笔订单状态，支持对线下转账凭证一键审批通过或驳回；支持订单编号快速检索与导出。</p>
+          </div>
         </div>
       </section>
 
-      <!-- Section 10: FAQ -->
+      <!-- Section 16: Commercial License -->
+      <section id="commercial-license" class="doc-section">
+        <h2 class="section-title">
+          <span>📜</span> 商业许可证正版授权与企业版特权
+        </h2>
+        <p>
+          ProxyProbe 具备严格且安全的正版授权验证体系。在管理后台【商业授权】（`/admin/license`）页面中，输入由官方授权颁发的**许可证卡密（License Key）**，即可一键在线激活企业版特权。
+        </p>
+
+        <div class="callout callout-tip">
+          <div class="callout-title">企业版授权核心权益</div>
+          • <strong>节点与服务器无上限</strong>：解除免费版本的纳管数量限制，支持管理上千台服务器与海量节点；<br>
+          • <strong>VIP 物理隔离完整支持</strong>：开启高阶套餐划分与物理层级访问阻断；<br>
+          • <strong>流媒体与 AI 深度诊断解锁</strong>：支持对全网节点进行跨平台流媒体与 AI 模型可用性检测；<br>
+          • <strong>离线防篡改安全保护</strong>：系统采用高强度非对称数字加密签名，即使服务器临时离线断网，正版授权依旧稳定保持有效。
+        </div>
+      </section>
+
+      <!-- Section 17: FAQ -->
       <section id="faq" class="doc-section">
         <h2 class="section-title">
-          <span>❓</span> 常见问题排查 (FAQ)
+          <span>❓</span> 常见问题排查与运维指南 (FAQ)
         </h2>
         
-        <h3 class="section-subtitle">Q: 如何检查 proxy-manager 运行状态与日志？</h3>
-        <p>在 Linux 终端执行以下指令查看实时守护日志：</p>
+        <h3 class="section-subtitle">Q1: 新建了 Hysteria 2 节点却测试连接超时？</h3>
+        <p>
+          1. <strong>检查核心安装状态</strong>：在节点列表所属服务器旁确认 Sing-box 指示灯是否为绿色；<br>
+          2. <strong>UDP 端口放行</strong>：Hysteria 2 基于 UDP 传输，请务必在服务器安全组与系统防火墙（如 <code>ufw allow 端口/udp</code>）放行该 UDP 端口。
+        </p>
+
+        <h3 class="section-subtitle">Q2: 刚安装时使用的是公网 IP，后面域名解析好了如何切换为 HTTPS？</h3>
+        <p>
+          无需重新安装！在主控终端输入 <code>hhub</code>，选择 <code>[7] 修改绑定域名/IP</code>，直接输入您解析好的新域名。脚本将自动调整端口至 443、通过 Caddy 自动申请免费 SSL 证书，全站所有用户的聚合订阅链接也将自动适配为最新域名！
+        </p>
+
+        <h3 class="section-subtitle">Q3: 新版本发布后，如何进行无损升级？</h3>
+        <p>
+          方式一：直接在管理后台右上角点击跳动的版本更新徽章，在弹窗中点击「一键无损热升级」；<br>
+          方式二：在终端输入 <code>hhub</code>，选择 <code>[9] 一键无损热升级系统</code>。所有数据库数据与节点配置均 100% 完整保留。
+        </p>
+
+        <h3 class="section-subtitle">Q4: 如何查看主控中枢的后台实时运行日志？</h3>
+        <p>在 Linux 终端执行以下指令即可查看实时日志：</p>
         <div class="code-block-wrapper">
           <div class="code-header"><span class="code-lang">BASH</span></div>
           <pre><code>systemctl status proxy-manager.service --no-pager
 journalctl -u proxy-manager.service -f</code></pre>
         </div>
-
-        <h3 class="section-subtitle">Q: 被控节点显示离线或无法连通？</h3>
-        <p>1. 检查被控机防火墙是否放行了 Agent 端口与主控通信端口（默认通过 443 HTTPS 反向代理连接主控）；<br>
-        2. 在被控节点执行 <code>systemctl status proxy-agent.service</code> 确认守护进程是否正常拉起；<br>
-        3. 查看被控端日志 <code>journalctl -u proxy-agent.service -n 50</code>。</p>
       </section>
 
     </main>
@@ -457,15 +616,22 @@ journalctl -u proxy-manager.service -f</code></pre>
     <aside class="toc-sidebar">
       <div class="toc-title">本页目录导航</div>
       <ul class="toc-list">
-        <li class="toc-item"><a href="#intro" class="toc-link">项目概述与架构</a></li>
-        <li class="toc-item"><a href="#quickstart" class="toc-link">快速安装与部署</a></li>
-        <li class="toc-item"><a href="#core-protocols" class="toc-link">协议与代理核心</a></li>
-        <li class="toc-item"><a href="#traffic-engine" class="toc-link">全协议流量统计</a></li>
-        <li class="toc-item"><a href="#health-probing" class="toc-link">全景感知与诊断</a></li>
-        <li class="toc-item"><a href="#vip-tiers" class="toc-link">VIP 套餐隔离</a></li>
-        <li class="toc-item"><a href="#billing-store" class="toc-link">财务与商城网关</a></li>
+        <li class="toc-item"><a href="#highlights" class="toc-link">核心设计两大亮点</a></li>
+        <li class="toc-item"><a href="#quickstart" class="toc-link">极速一键部署</a></li>
+        <li class="toc-item"><a href="#hhub-cli" class="toc-link">hhub 终端控制台</a></li>
+        <li class="toc-item"><a href="#all-in-one-protocols" class="toc-link">一键全家桶协议</a></li>
+        <li class="toc-item"><a href="#dual-core-engine" class="toc-link">双内核协同调度</a></li>
+        <li class="toc-item"><a href="#smart-subscription" class="toc-link">聚合订阅与分流规则</a></li>
+        <li class="toc-item"><a href="#node-health-matrix" class="toc-link">全景感知与诊断</a></li>
+        <li class="toc-item"><a href="#ping-monitoring" class="toc-link">三网延迟监控</a></li>
         <li class="toc-item"><a href="#telegram-bot" class="toc-link">Telegram 运维 Bot</a></li>
-        <li class="toc-item"><a href="#license-center" class="toc-link">商业授权与监控</a></li>
+        <li class="toc-item"><a href="#database-backup" class="toc-link">TG 自动备份与维护</a></li>
+        <li class="toc-item"><a href="#vip-isolation" class="toc-link">VIP 等级与物理隔离</a></li>
+        <li class="toc-item"><a href="#user-management" class="toc-link">用户管理与邮箱注册</a></li>
+        <li class="toc-item"><a href="#client-downloads" class="toc-link">客户端分发与下载</a></li>
+        <li class="toc-item"><a href="#announcements-modal" class="toc-link">全站公告与弹窗通知</a></li>
+        <li class="toc-item"><a href="#payment-gateway" class="toc-link">财务与多支付网关</a></li>
+        <li class="toc-item"><a href="#commercial-license" class="toc-link">商业授权与企业版</a></li>
         <li class="toc-item"><a href="#faq" class="toc-link">常见问题 (FAQ)</a></li>
       </ul>
     </aside>
