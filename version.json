@@ -1,12 +1,12 @@
 {
-  "version": "v2.5.20",
-  "title": "ProxyProbe v2.5.20 全协议流量统计覆盖（支持 Hysteria 2 / AnyTLS / TUIC 与中转链路双向计量）",
+  "version": "v2.5.21",
+  "title": "ProxyProbe v2.5.21 用户端界面精简与 Sing-box/AnyTLS 流量闭环完善",
   "release_date": "2026-09-28",
   "changelog": [
-    "【全协议流量统计完整支持】Sing-box 核心协议（Hysteria 2、AnyTLS、TUIC 等）全面支持上传与下载流量实时统计，彻底告别以往仅能统计在线设备而无流量数据的限制",
-    "【精准用户与节点归因】基于 Sing-box Clash API 与连接生命周期算法，结合访问日志及客户端 IP 端口映射，流量精准归集到对应用户、节点及小时级流量趋势图",
-    "【中转中继链路流量同步】Realm 中继节点支持与目标落地节点上传/下载流量自动级联递增同步，真实反映中继服务器吞吐负载",
-    "【分布式 Agent 同步升级】远程 Agent 守护进程全面支持 Sing-box 流量采集与上报，跨服务器分布式节点流量无缝汇总至主控面板"
+    "【用户界面精简】移除用户端顶部多余的「客户端下载专区」标签切换，保留订阅页内默认折叠、即开即用的下载卡片，布局更加清爽聚焦",
+    "【Sing-box 双行日志会话关联解析】重构 Sing-box 访问日志解析机制，建立连接 ID (conn_id) 跨行会话追踪，彻底解决 AnyTLS / Hysteria 2 流量归因难题",
+    "【分布式 Agent 守护进程无缝热更】修复 PROXY_AGENT_PY 变量作用域与全局声明问题，确保远端服务器自动平滑升级并实时上报 AnyTLS 流量",
+    "【主控流量轮询引擎优化】优化 poll_stats 统计循环元数据抽取顺序，消除异常静默拦截，实现本地与分布式节点流量全链路精准计量"
   ],
   "release_url": "https://github.com/2290145679/ProxyProbe-Release"
 }

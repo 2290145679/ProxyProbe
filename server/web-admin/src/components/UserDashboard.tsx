@@ -152,7 +152,7 @@ export function UserDashboard({
   const [isAppsCollapsed, setIsAppsCollapsed] = useState(true)
 
   // 导航分类与商城订单状态
-  const [activeTab, setActiveTab] = useState<"subs" | "store" | "apps">("subs")
+  const [activeTab, setActiveTab] = useState<"subs" | "store">("subs")
   const [tiers, setTiers] = useState<any[]>([])
   const [paymentConfig, setPaymentConfig] = useState<any>(null)
   const [userOrders, setUserOrders] = useState<any[]>([])
@@ -659,24 +659,6 @@ export function UserDashboard({
             <Badge variant="outline" className="text-[10px] py-0 px-1 ml-0.5 bg-primary/10 text-primary border-primary/20">
               商城
             </Badge>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab("apps")}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              activeTab === "apps"
-                ? "bg-background text-foreground shadow-xs"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Download className="size-3.5 text-emerald-500" />
-            <span>客户端下载专区</span>
-            {clientApps.length > 0 && (
-              <Badge variant="secondary" className="text-[10px] py-0 px-1 ml-0.5 font-mono">
-                {clientApps.length}
-              </Badge>
-            )}
           </button>
         </div>
 
@@ -1192,78 +1174,6 @@ export function UserDashboard({
                       ))}
                     </tbody>
                   </table>
-                </div>
-              )}
-            </Card>
-          </div>
-        )}
-
-        {/* 分类 3：常用客户端软件专区 (独立视图) */}
-        {activeTab === "apps" && (
-          <div className="space-y-6">
-            <Card className="p-4 sm:p-6 border shadow-sm space-y-4">
-              <div className="border-b pb-4 space-y-1">
-                <h2 className="text-lg font-bold flex items-center gap-2">
-                  <Download className="size-5 text-emerald-500" /> 常用翻墙客户端下载专区
-                </h2>
-                <p className="text-xs text-muted-foreground">
-                  全平台客户端软件安装包与官方镜像加速通道，一键高速下载使用
-                </p>
-              </div>
-
-              {clientApps.length === 0 ? (
-                <div className="py-12 text-center text-xs text-muted-foreground">
-                  管理员暂未上传任何客户端软件，请使用通用订阅链接自行配置客户端。
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-2">
-                  {clientApps.map((app) => {
-                    const extUrl = (app.external_url || app.mirror_url || "").trim()
-                    const hasLocal = app.has_local_file === 1
-                    const localDownloadUrl = `/api/proxy/apps/download/${app.id}`
-
-                    return (
-                      <div key={app.id} className="p-4 rounded-xl border bg-card hover:border-primary/40 space-y-3 flex flex-col justify-between transition-all shadow-xs">
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-sm text-foreground truncate">{app.name}</span>
-                            <Badge variant="outline" className="text-[10px] font-mono">
-                              {app.platform}
-                            </Badge>
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>版本: {app.version || "最新版"}</span>
-                            {app.file_size ? <span>· {formatBytes(app.file_size)}</span> : null}
-                          </div>
-                          {app.description && (
-                            <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed">{app.description}</p>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 pt-3 border-t">
-                          {hasLocal && (
-                            <Button asChild size="sm" className="h-8 text-xs flex-1 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs">
-                              <a href={localDownloadUrl} target="_blank" rel="noopener noreferrer" download>
-                                <Download className="size-3.5" /> 本地高速下载
-                              </a>
-                            </Button>
-                          )}
-                          {extUrl ? (
-                            <Button asChild variant={hasLocal ? "outline" : "default"} size="sm" className="h-8 text-xs flex-1 gap-1.5 shadow-xs">
-                              <a href={extUrl} target="_blank" rel="noopener noreferrer">
-                                <ExternalLink className="size-3.5" /> {hasLocal ? "官方镜像" : "下载 / 官网"}
-                              </a>
-                            </Button>
-                          ) : null}
-                          {!hasLocal && !extUrl && (
-                            <Button disabled variant="outline" size="sm" className="h-8 text-xs flex-1 text-muted-foreground">
-                              暂无下载链接
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
                 </div>
               )}
             </Card>

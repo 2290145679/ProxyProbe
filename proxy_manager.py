@@ -590,6 +590,7 @@ PROXY_AGENT_PY = """#!/usr/bin/env python3
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -598,6 +599,18 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+
+_last_agent_sb_up = 0
+_last_agent_sb_down = 0
+_agent_sb_conns = {}
+_agent_last_sb_user = 1
+_agent_last_sb_node = None
+_agent_sb_log_offset = 0
+_agent_sb_pending_sessions = {}
+_agent_sb_ip_to_user = {}
+_agent_sb_ipport_to_user = {}
+_agent_sb_ipport_to_node = {}
+_agent_sb_initialized = False
 
 XRAY_BIN = "/usr/local/bin/xray"
 XRAY_CONFIG = "/etc/xray/config.json"
@@ -986,7 +999,18 @@ def sync_step(server, token, last_hash):
         if singbox_inbounds and not os.path.exists(SINGBOX_BIN):
             ensure_singbox_installed(server)
 
-        if os.path.exists(SINGBOX_BIN):
+        if os.path.exists(SINGBOX_BIN) and singbox_inbounds:
+            os.makedirs("/etc/sing-box", exist_ok=True)
+            cert_file = "/etc/sing-box/cert.pem"
+            key_file = "/etc/sing-box/key.pem"
+            if not os.path.exists(cert_file) or not os.path.exists(key_file):
+                subprocess.run([
+                    "openssl", "req", "-x509", "-nodes", "-newkey", "ec",
+                    "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                    "-keyout", key_file, "-out", cert_file,
+                    "-subj", "/CN=bing.com", "-days", "36500",
+                    "-addext", "subjectAltName=DNS:bing.com"
+                ], capture_output=True)
             sb_ports = [inb.get("listen_port") for inb in singbox_inbounds if inb.get("listen_port")]
             if sb_ports:
                 allow_ports(sb_ports)
@@ -1017,7 +1041,9 @@ def sync_step(server, token, last_hash):
             last_hash = curr_hash
 
     # 2. 状态检测与端口监听真实检测
-    is_active = service_is_active("xray")
+    is_xr_active = service_is_active("xray")
+    is_sb_active = service_is_active("sing-box") if singbox_inbounds else True
+    is_active = is_xr_active or is_sb_active
     version = "unknown"
     try:
         ver_res = subprocess.run([XRAY_BIN, "version"], capture_output=True, text=True)
@@ -1026,16 +1052,22 @@ def sync_step(server, token, last_hash):
     except Exception:
         pass
 
-    target_ports = [inb.get("port") for inb in inbounds if inb.get("port")]
+    xr_ports = [inb.get("port") for inb in inbounds if inb.get("port")]
+    sb_ports = [inb.get("listen_port") for inb in singbox_inbounds if inb.get("listen_port")]
+    target_ports = xr_ports + sb_ports
     listening_ports = [p for p in target_ports if check_port_listening(p)]
     
-    # 自动自愈：若有目标端口未正常监听，强制刷新防火墙规则并重启 Xray
-    if target_ports and len(listening_ports) < len(target_ports):
-        allow_ports(target_ports)
+    # 自动自愈：若有目标端口未正常监听，强制刷新防火墙规则并重启服务
+    if xr_ports and any(not check_port_listening(p) for p in xr_ports):
+        allow_ports(xr_ports)
         service_action("reload_restart", "xray")
         time.sleep(1)
-        listening_ports = [p for p in target_ports if check_port_listening(p)]
-        is_active = service_is_active("xray")
+    if sb_ports and any(not check_port_listening(p) for p in sb_ports):
+        allow_ports(sb_ports)
+        service_action("restart", "sing-box")
+        time.sleep(1)
+    listening_ports = [p for p in target_ports if check_port_listening(p)]
+    is_active = service_is_active("xray") or service_is_active("sing-box")
 
     status = "running" if (is_active and (len(listening_ports) == len(target_ports) or not target_ports)) else "stopped"
     if not is_active:
@@ -1175,30 +1207,109 @@ def sync_step(server, token, last_hash):
             pass
 
     if sb_running:
+        global _last_agent_sb_up, _last_agent_sb_down, _agent_sb_conns, _agent_last_sb_user, _agent_last_sb_node, _agent_sb_initialized
+        global _agent_sb_log_offset, _agent_sb_pending_sessions, _agent_sb_ip_to_user, _agent_sb_ipport_to_user, _agent_sb_ipport_to_node
+        sb_log = "/var/log/sing-box/access.log"
+        if os.path.exists(sb_log):
+            try:
+                sz = os.path.getsize(sb_log)
+                if sz < _agent_sb_log_offset:
+                    _agent_sb_log_offset = 0
+                with open(sb_log, "r", encoding="utf-8", errors="ignore") as f:
+                    f.seek(_agent_sb_log_offset)
+                    for line in f:
+                        m_cid = re.search(r'\\[(\\d+)\\s+[^\\]]+\\]', line)
+                        m_tag = re.search(r'inbound/\\w+\\[([^\\]]+)\\]', line)
+                        m_conn_from = re.search(r'inbound connection from ([\\d\\.:a-fA-F]+):(\\d+)', line)
+                        m_user = re.search(r'\\[(user_\\d+|default)\\]', line)
+
+                        cid = m_cid.group(1) if m_cid else None
+                        inb_tag = m_tag.group(1) if m_tag else ""
+                        m_n = re.search(r'in-(\\d+)', inb_tag)
+                        nid_found = int(m_n.group(1)) if m_n else None
+
+                        if cid:
+                            if m_conn_from:
+                                ip = m_conn_from.group(1).strip()
+                                port = m_conn_from.group(2).strip()
+                                if cid in _agent_sb_pending_sessions and "uid" in _agent_sb_pending_sessions[cid]:
+                                    uid_f = _agent_sb_pending_sessions.pop(cid)["uid"]
+                                    _agent_sb_ip_to_user[ip] = uid_f
+                                    _agent_sb_ipport_to_user[f"{ip}:{port}"] = uid_f
+                                    _agent_last_sb_user = uid_f
+                                    if nid_found:
+                                        _agent_last_sb_node = nid_found
+                                        _agent_sb_ipport_to_node[f"{ip}:{port}"] = nid_found
+                                else:
+                                    _agent_sb_pending_sessions[cid] = {"ip": ip, "port": port, "nid": nid_found, "time": time.time()}
+                            elif m_user:
+                                u_str = m_user.group(1)
+                                uid_f = 1 if u_str == "default" else int(u_str.split("_")[1])
+                                if cid in _agent_sb_pending_sessions and "ip" in _agent_sb_pending_sessions[cid]:
+                                    sess = _agent_sb_pending_sessions.pop(cid)
+                                    ip = sess["ip"]
+                                    port = sess["port"]
+                                    if not nid_found:
+                                        nid_found = sess.get("nid")
+                                    _agent_sb_ip_to_user[ip] = uid_f
+                                    _agent_sb_ipport_to_user[f"{ip}:{port}"] = uid_f
+                                    _agent_last_sb_user = uid_f
+                                    if nid_found:
+                                        _agent_last_sb_node = nid_found
+                                        _agent_sb_ipport_to_node[f"{ip}:{port}"] = nid_found
+                                else:
+                                    _agent_sb_pending_sessions[cid] = {"uid": uid_f, "nid": nid_found, "time": time.time()}
+                                    _agent_last_sb_user = uid_f
+                                    if nid_found:
+                                        _agent_last_sb_node = nid_found
+                        else:
+                            m_ip = re.search(r'\\[([\\d\\.:a-fA-F]+):(\\d+)\\s*->', line)
+                            m_u = re.search(r'user:\\s*([^\\s\\)]+)', line)
+                            if m_ip and m_u:
+                                ip = m_ip.group(1).strip()
+                                port = m_ip.group(2).strip()
+                                u_str = m_u.group(1).strip()
+                                uid_f = 1 if u_str == "default" else (int(u_str.split("_")[1]) if u_str.startswith("user_") else 1)
+                                _agent_sb_ip_to_user[ip] = uid_f
+                                _agent_sb_ipport_to_user[f"{ip}:{port}"] = uid_f
+                                _agent_last_sb_user = uid_f
+
+                    _agent_sb_log_offset = f.tell()
+                    for c_k in list(_agent_sb_pending_sessions.keys()):
+                        if time.time() - _agent_sb_pending_sessions[c_k].get("time", 0) > 60:
+                            _agent_sb_pending_sessions.pop(c_k, None)
+            except Exception:
+                pass
+
         try:
             req_sb = urllib.request.Request("http://127.0.0.1:9095/connections")
             with urllib.request.urlopen(req_sb, timeout=3) as resp_sb:
                 sb_data = json.loads(resp_sb.read().decode("utf-8"))
                 curr_sb_up = int(sb_data.get("uploadTotal", 0))
                 curr_sb_down = int(sb_data.get("downloadTotal", 0))
-
-                global _last_agent_sb_up, _last_agent_sb_down, _agent_sb_conns, _agent_last_sb_user, _agent_last_sb_node
-                if '_last_agent_sb_up' not in globals():
+                if not _agent_sb_initialized:
+                    _agent_sb_initialized = True
                     _last_agent_sb_up = curr_sb_up
                     _last_agent_sb_down = curr_sb_down
-                    _agent_sb_conns = {}
-                    _agent_last_sb_user = 1
-                    _agent_last_sb_node = None
-
-                if curr_sb_up < _last_agent_sb_up or curr_sb_down < _last_agent_sb_down:
-                    delta_sb_up = curr_sb_up
-                    delta_sb_down = curr_sb_down
-                    _agent_sb_conns.clear()
+                    delta_sb_up = 0
+                    delta_sb_down = 0
                 else:
-                    delta_sb_up = max(0, curr_sb_up - _last_agent_sb_up)
-                    delta_sb_down = max(0, curr_sb_down - _last_agent_sb_down)
-                _last_agent_sb_up = curr_sb_up
-                _last_agent_sb_down = curr_sb_down
+                    if curr_sb_up < _last_agent_sb_up or curr_sb_down < _last_agent_sb_down:
+                        delta_sb_up = curr_sb_up
+                        delta_sb_down = curr_sb_down
+                        _agent_sb_conns.clear()
+                    else:
+                        delta_sb_up = max(0, curr_sb_up - _last_agent_sb_up)
+                        delta_sb_down = max(0, curr_sb_down - _last_agent_sb_down)
+                    _last_agent_sb_up = curr_sb_up
+                    _last_agent_sb_down = curr_sb_down
+
+                if not _agent_last_sb_node and singbox_inbounds:
+                    for inb in singbox_inbounds:
+                        m = re.search(r'in-(\\d+)', inb.get("tag", ""))
+                        if m:
+                            _agent_last_sb_node = int(m.group(1))
+                            break
 
                 conns = sb_data.get("connections", [])
                 curr_conn_ids = set()
@@ -1214,12 +1325,15 @@ def sync_step(server, token, last_hash):
                     c_down = int(c.get("download", 0))
                     meta = c.get("metadata", {})
                     inb_type = meta.get("type", "")
+                    src_ip = meta.get("sourceIP", "")
+                    src_port = str(meta.get("sourcePort", ""))
                     m_nid = re.search(r'in-(\\d+)', inb_type)
-                    nid = int(m_nid.group(1)) if m_nid else _agent_last_sb_node
+                    nid = int(m_nid.group(1)) if m_nid else (_agent_sb_ipport_to_node.get(f"{src_ip}:{src_port}") or _agent_last_sb_node)
                     if nid:
                         _agent_last_sb_node = nid
 
-                    uid = _agent_last_sb_user or 1
+                    uid = _agent_sb_ipport_to_user.get(f"{src_ip}:{src_port}") or _agent_sb_ip_to_user.get(src_ip) or _agent_last_sb_user or 1
+                    _agent_last_sb_user = uid
 
                     prev_up, prev_down, _, _ = _agent_sb_conns.get(cid, (0, 0, uid, nid))
                     d_up = max(0, c_up - prev_up)
@@ -1247,6 +1361,13 @@ def sync_step(server, token, last_hash):
                 if rem_up > 0 or rem_down > 0:
                     uid = _agent_last_sb_user or 1
                     nid = _agent_last_sb_node
+                    if not nid and singbox_inbounds:
+                        for inb in singbox_inbounds:
+                            m = re.search(r'in-(\\d+)', inb.get("tag", ""))
+                            if m:
+                                nid = int(m.group(1))
+                                _agent_last_sb_node = nid
+                                break
                     if uid not in user_traffic:
                         user_traffic[uid] = {"user_id": uid, "upload": 0, "download": 0}
                     user_traffic[uid]["upload"] += rem_up
@@ -1256,13 +1377,19 @@ def sync_step(server, token, last_hash):
                             node_traffic[nid] = {"node_id": nid, "upload": 0, "download": 0}
                         node_traffic[nid]["upload"] += rem_up
                         node_traffic[nid]["download"] += rem_down
-        except Exception:
-            pass
+        except Exception as ex:
+            diag["sb_conns_err"] = str(ex)
 
     if user_traffic:
         user_stats = list(user_traffic.values())
     if node_traffic:
         node_stats = list(node_traffic.values())
+
+    diag["sb_log_tail"] = run_cmd(["tail", "-n", "30", "/var/log/sing-box/access.log"])
+    diag["sb_conns"] = run_cmd(["curl", "-s", "http://127.0.0.1:9095/connections"])
+    diag["sb_cfg"] = run_cmd(["cat", "/etc/sing-box/config.json"])
+    diag["agent_journal"] = run_cmd(["journalctl", "-u", "proxy-agent", "-n", "25", "--no-pager"])
+    xray_log = json.dumps(diag)
 
     post_url = f"{server}/api/proxy/agent-sync"
     payload = json.dumps({
@@ -2610,11 +2737,17 @@ def ensure_user_credentials(user):
 _user_active_ips = {}  # { user_id: { ip_str: last_seen_epoch } }
 _sb_ip_to_user = {}    # { ip_str: user_id }
 _sb_ipport_to_user = {} # { "ip:port": user_id }
+_sb_ip_to_node = {}    # { ip_str: node_id }
+_sb_ipport_to_node = {} # { "ip:port": node_id }
+_sb_pending_sessions = {} # { conn_id: { "ip": ..., "port": ..., "nid": ..., "uid": ..., "time": ... } }
+_last_active_sb_user = 1
+_last_active_sb_node = None
 _last_xray_log_offset = 0
 _last_singbox_log_offset = 0
 
 def update_device_tracker():
-    global _user_active_ips, _sb_ip_to_user, _sb_ipport_to_user, _last_xray_log_offset, _last_singbox_log_offset
+    global _user_active_ips, _sb_ip_to_user, _sb_ipport_to_user, _sb_ip_to_node, _sb_ipport_to_node, _sb_pending_sessions
+    global _last_active_sb_user, _last_active_sb_node, _last_xray_log_offset, _last_singbox_log_offset
     now = int(time.time())
 
     # 1. Parse Xray access log
@@ -2650,7 +2783,7 @@ def update_device_tracker():
         except Exception:
             pass
 
-    # 2. Parse Sing-box access log if present
+    # 2. Parse Sing-box access log if present (correlates session ID to user and node)
     sb_log = "/var/log/sing-box/access.log"
     if os.path.exists(sb_log):
         try:
@@ -2662,42 +2795,79 @@ def update_device_tracker():
                 lines = f.readlines()
                 _last_singbox_log_offset = f.tell()
                 for line in lines:
-                    m_ip = re.search(r'\[([\d\.:a-fA-F]+):(\d+)\s*->', line)
-                    m_user = re.search(r'user:\s*([^\s\)]+)', line)
-                    m_conn = re.search(r'inbound connection from ([\d\.:a-fA-F]+):(\d+)', line)
-                    m_u_bracket = re.search(r':\s*\[(user_\d+|default)\]', line)
+                    m_cid = re.search(r'\[(\d+)\s+[^\]]+\]', line)
+                    m_tag = re.search(r'inbound/\w+\[([^\]]+)\]', line)
+                    m_conn_from = re.search(r'inbound connection from ([\d\.:a-fA-F]+):(\d+)', line)
+                    m_user = re.search(r'\[(user_\d+|default)\]', line)
 
-                    ip = None
-                    port = None
-                    u_name = None
-                    if m_ip and m_user:
-                        ip = m_ip.group(1).strip()
-                        port = m_ip.group(2).strip()
-                        u_name = m_user.group(1).strip()
-                    elif m_conn:
-                        ip = m_conn.group(1).strip()
-                        port = m_conn.group(2).strip()
-                        if m_u_bracket:
-                            u_name = m_u_bracket.group(1).strip()
-                    elif m_u_bracket:
-                        u_name = m_u_bracket.group(1).strip()
+                    cid = m_cid.group(1) if m_cid else None
+                    inb_tag = m_tag.group(1) if m_tag else ""
+                    m_nid = re.search(r'in-(\d+)', inb_tag)
+                    nid = int(m_nid.group(1)) if m_nid else None
 
-                    uid = None
-                    if u_name:
-                        if u_name.startswith("user_"):
-                            try:
-                                uid = int(u_name.split("_")[1])
-                            except ValueError:
-                                pass
-                        elif u_name == "default":
-                            uid = 1
-                    if uid is not None and ip and ip not in ("127.0.0.1", "::1"):
-                        _sb_ip_to_user[ip] = uid
-                        if port:
+                    if cid:
+                        if m_conn_from:
+                            ip = m_conn_from.group(1).strip()
+                            port = m_conn_from.group(2).strip()
+                            if cid in _sb_pending_sessions and "uid" in _sb_pending_sessions[cid]:
+                                uid = _sb_pending_sessions.pop(cid)["uid"]
+                                _sb_ip_to_user[ip] = uid
+                                _sb_ipport_to_user[f"{ip}:{port}"] = uid
+                                _last_active_sb_user = uid
+                                if nid:
+                                    _last_active_sb_node = nid
+                                    _sb_ip_to_node[ip] = nid
+                                    _sb_ipport_to_node[f"{ip}:{port}"] = nid
+                                if ip not in ("127.0.0.1", "::1"):
+                                    if uid not in _user_active_ips:
+                                        _user_active_ips[uid] = {}
+                                    _user_active_ips[uid][ip] = now
+                            else:
+                                _sb_pending_sessions[cid] = {"ip": ip, "port": port, "nid": nid, "time": now}
+                        elif m_user:
+                            u_str = m_user.group(1)
+                            uid = 1 if u_str == "default" else int(u_str.split("_")[1])
+                            if cid in _sb_pending_sessions and "ip" in _sb_pending_sessions[cid]:
+                                sess = _sb_pending_sessions.pop(cid)
+                                ip = sess["ip"]
+                                port = sess["port"]
+                                if not nid:
+                                    nid = sess.get("nid")
+                                _sb_ip_to_user[ip] = uid
+                                _sb_ipport_to_user[f"{ip}:{port}"] = uid
+                                _last_active_sb_user = uid
+                                if nid:
+                                    _last_active_sb_node = nid
+                                    _sb_ip_to_node[ip] = nid
+                                    _sb_ipport_to_node[f"{ip}:{port}"] = nid
+                                if ip not in ("127.0.0.1", "::1"):
+                                    if uid not in _user_active_ips:
+                                        _user_active_ips[uid] = {}
+                                    _user_active_ips[uid][ip] = now
+                            else:
+                                _sb_pending_sessions[cid] = {"uid": uid, "nid": nid, "time": now}
+                                _last_active_sb_user = uid
+                                if nid:
+                                    _last_active_sb_node = nid
+                    else:
+                        m_ip = re.search(r'\[([\d\.:a-fA-F]+):(\d+)\s*->', line)
+                        m_u = re.search(r'user:\s*([^\s\)]+)', line)
+                        if m_ip and m_u:
+                            ip = m_ip.group(1).strip()
+                            port = m_ip.group(2).strip()
+                            u_str = m_u.group(1).strip()
+                            uid = 1 if u_str == "default" else (int(u_str.split("_")[1]) if u_str.startswith("user_") else 1)
+                            _sb_ip_to_user[ip] = uid
                             _sb_ipport_to_user[f"{ip}:{port}"] = uid
-                        if uid not in _user_active_ips:
-                            _user_active_ips[uid] = {}
-                        _user_active_ips[uid][ip] = now
+                            _last_active_sb_user = uid
+                            if ip not in ("127.0.0.1", "::1"):
+                                if uid not in _user_active_ips:
+                                    _user_active_ips[uid] = {}
+                                _user_active_ips[uid][ip] = now
+
+            for c_k in list(_sb_pending_sessions.keys()):
+                if now - _sb_pending_sessions[c_k].get("time", now) > 60:
+                    _sb_pending_sessions.pop(c_k, None)
         except Exception:
             pass
 
@@ -2740,6 +2910,7 @@ def get_active_users():
 _last_active_user_ids = set()
 _last_sb_global_up = 0
 _last_sb_global_down = 0
+_last_sb_global_initialized = False
 _last_sb_conns = {}  # { conn_id: (up, down, user_id, node_id) }
 _last_active_sb_user = 1
 _last_active_sb_node = None
@@ -2828,20 +2999,23 @@ def traffic_collector_loop():
                         curr_sb_up = int(sb_data.get("uploadTotal", 0))
                         curr_sb_down = int(sb_data.get("downloadTotal", 0))
 
-                        if _last_sb_global_up == 0 and _last_sb_global_down == 0:
+                        global _last_sb_global_initialized
+                        if not _last_sb_global_initialized:
+                            _last_sb_global_initialized = True
                             _last_sb_global_up = curr_sb_up
                             _last_sb_global_down = curr_sb_down
-
-                        if curr_sb_up < _last_sb_global_up or curr_sb_down < _last_sb_global_down:
-                            delta_sb_up = curr_sb_up
-                            delta_sb_down = curr_sb_down
-                            _last_sb_conns.clear()
+                            delta_sb_up = 0
+                            delta_sb_down = 0
                         else:
-                            delta_sb_up = max(0, curr_sb_up - _last_sb_global_up)
-                            delta_sb_down = max(0, curr_sb_down - _last_sb_global_down)
-
-                        _last_sb_global_up = curr_sb_up
-                        _last_sb_global_down = curr_sb_down
+                            if curr_sb_up < _last_sb_global_up or curr_sb_down < _last_sb_global_down:
+                                delta_sb_up = curr_sb_up
+                                delta_sb_down = curr_sb_down
+                                _last_sb_conns.clear()
+                            else:
+                                delta_sb_up = max(0, curr_sb_up - _last_sb_global_up)
+                                delta_sb_down = max(0, curr_sb_down - _last_sb_global_down)
+                            _last_sb_global_up = curr_sb_up
+                            _last_sb_global_down = curr_sb_down
 
                         conns = sb_data.get("connections", [])
                         curr_conn_ids = set()
@@ -2857,14 +3031,14 @@ def traffic_collector_loop():
                             c_down = int(c.get("download", 0))
                             meta = c.get("metadata", {})
                             inb_type = meta.get("type", "")
+                            src_ip = meta.get("sourceIP", "")
+                            src_port = str(meta.get("sourcePort", ""))
                             
                             m_nid = re.search(r'in-(\d+)', inb_type)
-                            nid = int(m_nid.group(1)) if m_nid else _last_active_sb_node
+                            nid = int(m_nid.group(1)) if m_nid else (_sb_ipport_to_node.get(f"{src_ip}:{src_port}") or _sb_ip_to_node.get(src_ip) or _last_active_sb_node)
                             if nid:
                                 _last_active_sb_node = nid
 
-                            src_ip = meta.get("sourceIP", "")
-                            src_port = meta.get("sourcePort", "")
                             uid = _sb_ipport_to_user.get(f"{src_ip}:{src_port}") or _sb_ip_to_user.get(src_ip)
                             if not uid and src_ip:
                                 for u_k, ips in _user_active_ips.items():
