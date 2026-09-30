@@ -4068,7 +4068,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.22"
+CURRENT_VERSION = "v2.5.23"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
