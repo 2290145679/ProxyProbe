@@ -47,6 +47,7 @@ while [ $# -gt 0 ]; do
 	--uninstall) UNINSTALL=1; shift ;;
 	--proxy) shift ;;
 	--no-proxy | --skip-proxy) NO_PROXY=1; shift ;;
+	--no-monitor | --skip-monitor | --only-proxy | --proxy-only) NO_MONITOR=1; shift ;;
 	--xray) INSTALL_XRAY=1; shift ;;
 	--no-xray | --skip-xray) INSTALL_XRAY=0; shift ;;
 	--singbox) INSTALL_SINGBOX=1; shift ;;
@@ -58,6 +59,44 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+
+# 【纯代理模式（免装探针）】仅部署代理核心与节点管理守护，跳过任何探针监控服务
+if [ "${NO_MONITOR:-}" = "1" ]; then
+	if [ -z "$TOKEN" ] && [ -n "$REGISTER" ]; then
+		case "$SERVER" in *://*) ;; *) SERVER="https://$SERVER" ;; esac
+		echo "[+] 正在使用批量注册密钥换取节点凭据..."
+		TOKEN=$(curl -fsSL ${INSECURE:+ -k} --max-time 15 -H "Authorization: Bearer $REGISTER" -X POST "$SERVER/api/register") || {
+			echo "注册密钥无效或网络请求失败" >&2
+			exit 1
+		}
+	fi
+	[ -n "$SERVER" ] && [ -n "$TOKEN" ] || {
+		echo "usage: install.sh --no-monitor --server URL (--token TOKEN | --register KEY) [options]" >&2
+		exit 2
+	}
+	echo ""
+	echo "=================================================="
+	echo "[+] 已选择【纯代理模式（免装探针）】，正在安装代理核心与节点守护程序..."
+	echo "=================================================="
+	PROXY_ARGS=""
+	[ "$INSTALL_XRAY" = "1" ] && PROXY_ARGS="$PROXY_ARGS --xray"
+	[ "$INSTALL_XRAY" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-xray"
+	[ "$INSTALL_SINGBOX" = "1" ] && PROXY_ARGS="$PROXY_ARGS --singbox"
+	[ "$INSTALL_SINGBOX" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-singbox"
+	[ "$INSTALL_REALM" = "1" ] && PROXY_ARGS="$PROXY_ARGS --realm"
+	[ "$INSTALL_REALM" = "0" ] && PROXY_ARGS="$PROXY_ARGS --no-realm"
+	[ -n "${INSECURE:-}" ] && PROXY_ARGS="$PROXY_ARGS --insecure"
+
+	CURL_FETCH="curl -fsSL"
+	[ -n "${INSECURE:-}" ] && CURL_FETCH="curl -fsSLk"
+
+	$CURL_FETCH "${SERVER%/}/proxy-agent.sh" | bash -s -- --server "$SERVER" --token "$TOKEN" $PROXY_ARGS
+	echo ""
+	echo "=================================================="
+	echo "[✓] 纯代理节点部署完成！当前服务器未安装任何探针监控组件。"
+	echo "=================================================="
+	exit 0
+fi
 
 # Removes exactly what an install writes and nothing else, for both init
 # systems: the one present now need not be the one the install found, and

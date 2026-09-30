@@ -263,7 +263,13 @@ function installCommand(
   seconds: number,
   iface: string | undefined,
   cores: CoreOptions = DEFAULT_CORE_OPTIONS,
+  noMonitor: boolean = false,
 ) {
+  site = provisioningSite(site)
+  if (noMonitor) {
+    const flags = coreFlags(cores)
+    return site && `curl -fsSL ${site}/proxy-agent.sh | bash -s -- --server ${site}${site.startsWith("http://") ? " --insecure" : ""} --token ${token} ${flags.join(" ")}`
+  }
   return scriptCommand(site, (s) => [
     `--server ${s}`,
     ...(s.startsWith("http://") ? ["--insecure"] : []),
@@ -279,7 +285,19 @@ function registerCommand(
   key: string,
   iface: string | undefined,
   cores: CoreOptions = DEFAULT_CORE_OPTIONS,
+  noMonitor: boolean = false,
 ) {
+  site = provisioningSite(site)
+  if (noMonitor) {
+    const flags = coreFlags(cores)
+    return scriptCommand(site, (s) => [
+      `--server ${s}`,
+      ...(s.startsWith("http://") ? ["--insecure"] : []),
+      `--register ${key}`,
+      `--no-monitor`,
+      ...flags,
+    ])
+  }
   return scriptCommand(site, (s) => [
     `--server ${s}`,
     ...(s.startsWith("http://") ? ["--insecure"] : []),
@@ -293,12 +311,50 @@ function uninstallCommand(site: string) {
   return scriptCommand(site, () => ["--uninstall"])
 }
 
+function InstallModeSelector({
+  onlyProxy,
+  onChange,
+}: {
+  onlyProxy: boolean
+  onChange: (onlyProxy: boolean) => void
+}) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold">安装模式</span>
+          {onlyProxy ? (
+            <Badge variant="secondary" className="text-[10px] px-1.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 font-medium">
+              纯代理模式 (免装探针)
+            </Badge>
+          ) : (
+            <Badge variant="secondary" className="text-[10px] px-1.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 font-medium">
+              全功能模式 (探针监控 + 代理节点)
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-muted-foreground font-medium">免装探针</span>
+          <Switch checked={onlyProxy} onCheckedChange={onChange} />
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground leading-relaxed">
+        {onlyProxy
+          ? "仅部署代理核心与节点管理守护，零系统监控，不采集 CPU/内存/进程，适合低配玩具机或注重隐私者。"
+          : "同时部署探针监控与代理核心，提供实时 CPU/内存/网络/磁盘硬件性能监控与多协议节点纳管。"}
+      </p>
+    </div>
+  )
+}
+
 function CoreOptionsSelector({
   cores,
   onChange,
+  onlyProxy = false,
 }: {
   cores: CoreOptions
   onChange: (cores: CoreOptions) => void
+  onlyProxy?: boolean
 }) {
   const isNone = !cores.xray && !cores.singbox && !cores.realm
 
@@ -310,7 +366,7 @@ function CoreOptionsSelector({
         </h4>
         {isNone && (
           <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10">
-            仅探针监控（不安装任何代理核心）
+            {onlyProxy ? "警告：纯代理模式请至少勾选一种代理核心" : "仅探针监控（不安装任何代理核心）"}
           </Badge>
         )}
       </div>
@@ -368,6 +424,7 @@ function CreateNode({
 }) {
   const [name, setName] = useState("")
   const [cores, setCores] = useState<CoreOptions>(DEFAULT_CORE_OPTIONS)
+  const [onlyProxy, setOnlyProxy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [createdInfo, setCreatedInfo] = useState<{ id: number; token: string; name: string } | null>(null)
 
@@ -405,7 +462,7 @@ function CreateNode({
   }
 
   const command = createdInfo
-    ? installCommand(site, createdInfo.token, 1, undefined, cores)
+    ? installCommand(site, createdInfo.token, 1, undefined, cores, onlyProxy)
     : ""
 
   return (
@@ -416,7 +473,7 @@ function CreateNode({
           <DialogDescription>
             {createdInfo
               ? "服务器已成功添加。请在目标服务器终端复制并执行以下命令完成部署："
-              : "配置服务器名称并选择需要预装的代理核心组件："}
+              : "配置服务器名称与安装模式，按需选择代理核心："}
           </DialogDescription>
         </DialogHeader>
 
@@ -431,7 +488,8 @@ function CreateNode({
               />
             </Field>
 
-            <CoreOptionsSelector cores={cores} onChange={setCores} />
+            <InstallModeSelector onlyProxy={onlyProxy} onChange={setOnlyProxy} />
+            <CoreOptionsSelector cores={cores} onChange={setCores} onlyProxy={onlyProxy} />
 
             <DialogFooter className="border-t pt-4">
               <Button type="button" variant="ghost" onClick={onClose}>取消</Button>
@@ -442,7 +500,8 @@ function CreateNode({
           </form>
         ) : (
           <div className="space-y-4">
-            <CoreOptionsSelector cores={cores} onChange={setCores} />
+            <InstallModeSelector onlyProxy={onlyProxy} onChange={setOnlyProxy} />
+            <CoreOptionsSelector cores={cores} onChange={setCores} onlyProxy={onlyProxy} />
 
             <div className="space-y-2 border-t pt-3">
               <div className="flex items-center justify-between">
@@ -777,8 +836,9 @@ function RegisterDialog({ site, reg, onClose }: {
   onClose: () => void
 }) {
   const [cores, setCores] = useState<CoreOptions>(DEFAULT_CORE_OPTIONS)
+  const [onlyProxy, setOnlyProxy] = useState(false)
   const iface = useIfaceOption(undefined)
-  const command = reg.left > 0 && iface.valid ? registerCommand(site, reg.key, iface.flag, cores) : ""
+  const command = reg.left > 0 && iface.valid ? registerCommand(site, reg.key, iface.flag, cores, onlyProxy) : ""
   const clock = `${Math.floor(reg.left / 60)}:${String(reg.left % 60).padStart(2, "0")}`
 
   return (
@@ -787,17 +847,25 @@ function RegisterDialog({ site, reg, onClose }: {
         <DialogHeader>
           <DialogTitle>批量添加服务器</DialogTitle>
         </DialogHeader>
-        <div className="space-y-5">
+        <div className="space-y-4">
           {/* One string: JSX turns a line break inside CJK text into a visible space. */}
           <p className="text-sm text-muted-foreground">
             {"开一个一小时的注册窗口。期间这条命令在任意机器上跑一次，那台机器就会自己出现在列表里，" +
               "名字取自它的 hostname。命令里没有任何一台机器的凭证，可以直接进循环。"}
           </p>
-          <CoreOptionsSelector cores={cores} onChange={setCores} />
-          <section className="space-y-3">
-            <h3 className="text-sm font-medium">网络选项</h3>
-            <IfaceOption option={iface} batch />
-          </section>
+          <InstallModeSelector onlyProxy={onlyProxy} onChange={setOnlyProxy} />
+          <CoreOptionsSelector cores={cores} onChange={setCores} onlyProxy={onlyProxy} />
+          {!onlyProxy ? (
+            <section className="space-y-3">
+              <h3 className="text-sm font-medium">网络选项</h3>
+              <IfaceOption option={iface} batch />
+            </section>
+          ) : (
+            <div className="rounded-md border border-dashed p-2.5 text-xs text-muted-foreground bg-muted/10 flex items-center justify-between">
+              <span>已启用纯代理模式</span>
+              <Badge variant="outline" className="text-[10px] text-indigo-500 border-indigo-500/30">自动跳过探针服务安装</Badge>
+            </div>
+          )}
           {reg.left > 0 ? (
             <section className="space-y-2 border-t pt-5">
               <h3 className="text-sm font-medium">安装命令</h3>
@@ -894,10 +962,11 @@ function InstallDialog({ node, site, onClose, onRotated }: {
   const [rotating, setRotating] = useState(false)
   const [confirmRotate, setConfirmRotate] = useState(false)
   const [cores, setCores] = useState<CoreOptions>(DEFAULT_CORE_OPTIONS)
+  const [onlyProxy, setOnlyProxy] = useState(false)
   const iface = useIfaceOption(currentIface(node))
 
   const seconds = Math.min(3600, Math.max(1, Math.round(Number(interval) || 1)))
-  const command = token && iface.valid ? installCommand(site, token, seconds, iface.flag, cores) : ""
+  const command = token && iface.valid ? installCommand(site, token, seconds, iface.flag, cores, onlyProxy) : ""
 
   async function rotate() {
     setRotating(true)
@@ -923,25 +992,33 @@ function InstallDialog({ node, site, onClose, onRotated }: {
             调整安装选项以生成定制安装命令：
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-5">
-          <CoreOptionsSelector cores={cores} onChange={setCores} />
+        <div className="space-y-4">
+          <InstallModeSelector onlyProxy={onlyProxy} onChange={setOnlyProxy} />
+          <CoreOptionsSelector cores={cores} onChange={setCores} onlyProxy={onlyProxy} />
 
-          <section className="space-y-3">
-            <h3 className="text-sm font-medium">探针监控选项</h3>
-            <OptionRow title="上报间隔" hint="1–3600 秒，默认 1 秒">
-              <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
-                <Input
-                  inputMode="numeric"
-                  value={interval}
-                  onChange={(e) => setInterval(e.target.value.replace(/\D/g, ""))}
-                  aria-label="上报间隔（秒）"
-                  className="tnum h-8 w-20 bg-background text-right"
-                />
-                秒
-              </span>
-            </OptionRow>
-            <IfaceOption option={iface} />
-          </section>
+          {!onlyProxy ? (
+            <section className="space-y-3">
+              <h3 className="text-sm font-medium">探针监控选项</h3>
+              <OptionRow title="上报间隔" hint="1–3600 秒，默认 1 秒">
+                <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                  <Input
+                    inputMode="numeric"
+                    value={interval}
+                    onChange={(e) => setInterval(e.target.value.replace(/\D/g, ""))}
+                    aria-label="上报间隔（秒）"
+                    className="tnum h-8 w-20 bg-background text-right"
+                  />
+                  秒
+                </span>
+              </OptionRow>
+              <IfaceOption option={iface} />
+            </section>
+          ) : (
+            <div className="rounded-md border border-dashed p-2.5 text-xs text-muted-foreground bg-muted/10 flex items-center justify-between">
+              <span>已启用纯代理模式</span>
+              <Badge variant="outline" className="text-[10px] text-indigo-500 border-indigo-500/30">无需配置探针上报参数</Badge>
+            </div>
+          )}
 
           <section className="space-y-2 border-t pt-5">
             <h3 className="text-sm font-medium">安装命令</h3>
@@ -1133,6 +1210,8 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
   const [dragging, setDragging] = useState<number | null>(null)
   const orderBeforeDrag = useRef<number[]>([])
 
+  const [proxyOnlineMap, setProxyOnlineMap] = useState<Record<number, boolean>>({})
+
   useEffect(() => {
     fetch("/api/proxy/license/status")
       .then(r => r.json())
@@ -1141,7 +1220,20 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
         try { localStorage.setItem("proxyprobe_license_status", JSON.stringify(d)) } catch {}
       })
       .catch(() => {})
-  }, [])
+
+    fetch("/api/proxy/servers")
+      .then(r => r.json())
+      .then(d => {
+        if (d.servers && Array.isArray(d.servers)) {
+          const map: Record<number, boolean> = {}
+          d.servers.forEach((s: any) => {
+            if (s.proxy_online) map[s.id] = true
+          })
+          setProxyOnlineMap(map)
+        }
+      })
+      .catch(() => {})
+  }, [nodes])
   const byId = new Map(nodes.map((node) => [node.id, node]))
   const orderedIds = new Set(manualOrder)
   const order = [
@@ -1342,13 +1434,23 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
                   <Addresses node={n} />
                 </TableCell>
                 <TableCell>
-                  <Badge variant={n.online ? "default" : "secondary"} className="font-normal">
-                    {n.online ? "在线" : "离线"}
-                  </Badge>
+                  {n.online ? (
+                    <Badge variant="default" className="font-normal">
+                      在线
+                    </Badge>
+                  ) : proxyOnlineMap[n.id] ? (
+                    <Badge className="font-normal bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20" title="该服务器未安装探针监控，但代理核心与守护程序正常在线运行">
+                      纯代理在线
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="font-normal">
+                      离线
+                    </Badge>
+                  )}
                   {!n.public && <Badge variant="outline" className="ml-1 font-normal">不公开</Badge>}
                   {/* Under the badge, not inside it: the column is a tenth of
                       the table and the three do not share one line. */}
-                  {!n.online && n.last_seen > 0 && Date.now() / 1000 - n.last_seen >= 60 && (
+                  {!n.online && !proxyOnlineMap[n.id] && n.last_seen > 0 && Date.now() / 1000 - n.last_seen >= 60 && (
                     <div className="tnum mt-1 text-xs text-muted-foreground">
                       {uptime(Date.now() / 1000 - n.last_seen)}
                     </div>

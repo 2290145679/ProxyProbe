@@ -6880,6 +6880,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "realm_installed": r_inst,
                     "realm_running": r_run,
                     "realm_version": st.get("realm_version", ""),
+                    "proxy_online": True if is_local else bool(now - last_seen < 90),
                     "last_seen": last_seen
                 })
             self.send_json({"servers": servers})
