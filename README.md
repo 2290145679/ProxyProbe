@@ -1,7 +1,7 @@
 # 🚀 ProxyProbe - 分布式服务器监控与 Xray / Sing-box / Realm 代理拓扑管理系统
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v2.5.23-blue.svg" alt="Release">
+  <img src="https://img.shields.io/badge/Release-v2.5.24-blue.svg" alt="Release">
   <img src="https://img.shields.io/badge/Routing-Smart_Rules_Center-brightgreen.svg" alt="Smart Routing Rules">
   <img src="https://img.shields.io/badge/Update-One--Click_Upgrade-orange.svg" alt="One-Click Upgrade">
   <img src="https://img.shields.io/badge/Dual_Core-Xray_%2B_Sing--box_%2B_Realm-success.svg" alt="Cores">

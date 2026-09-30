@@ -917,7 +917,8 @@ def sync_step(server, token, last_hash):
 
     inbounds = data.get("inbounds", [])
     singbox_inbounds = data.get("singbox_inbounds", [])
-    config_repr = json.dumps({"xray": inbounds, "singbox": singbox_inbounds}, sort_keys=True)
+    realm_endpoints = data.get("realm_endpoints", [])
+    config_repr = json.dumps({"xray": inbounds, "singbox": singbox_inbounds, "realm": realm_endpoints}, sort_keys=True)
     curr_hash = hashlib.sha256(config_repr.encode("utf-8")).hexdigest()
 
     if curr_hash != last_hash:
@@ -1038,6 +1039,44 @@ def sync_step(server, token, last_hash):
             else:
                 print(f"[{time.strftime('%X')}] Sing-box 配置校验失败: {sb_chk.stderr}", flush=True)
 
+        # 3. Realm 端口转发中转规则同步
+        realm_installed = os.path.exists(REALM_BIN)
+        if realm_installed:
+            active_eps = [
+                {"listen": ep["listen"], "remote": ep["remote"]}
+                for ep in realm_endpoints
+                if ep.get("listen") and ep.get("remote")
+            ]
+            if not active_eps:
+                active_eps = [{"listen": "127.0.0.1:39998", "remote": "127.0.0.1:39999"}]
+            realm_cfg = {
+                "log": {"level": "warn"},
+                "network": {"no_tcp": False, "use_udp": True},
+                "endpoints": active_eps
+            }
+            try:
+                os.makedirs(os.path.dirname(REALM_CONFIG), exist_ok=True)
+                tmp_realm = os.path.join(os.path.dirname(REALM_CONFIG), "config.tmp.json")
+                with open(tmp_realm, "w", encoding="utf-8") as f:
+                    json.dump(realm_cfg, f, indent=2)
+                os.replace(tmp_realm, REALM_CONFIG)
+                register_service_if_missing("realm", f"{REALM_BIN} -c {REALM_CONFIG}", desc="Realm Port Forwarding Service")
+                
+                r_ports = []
+                for ep in realm_endpoints:
+                    try:
+                        p = int(ep["listen"].split(":")[-1])
+                        if p > 0:
+                            r_ports.append(p)
+                    except Exception:
+                        pass
+                if r_ports:
+                    allow_ports(r_ports)
+                service_action("restart", "realm")
+                print(f"[{time.strftime('%X')}] Realm 转发配置已生效并重启成功，共 {len(realm_endpoints)} 个转发规则", flush=True)
+            except Exception as e:
+                print(f"[{time.strftime('%X')}] Realm 配置更新失败: {e}", flush=True)
+
         if xray_ok:
             last_hash = curr_hash
 
@@ -1055,7 +1094,15 @@ def sync_step(server, token, last_hash):
 
     xr_ports = [inb.get("port") for inb in inbounds if inb.get("port")]
     sb_ports = [inb.get("listen_port") for inb in singbox_inbounds if inb.get("listen_port")]
-    target_ports = xr_ports + sb_ports
+    realm_ports = []
+    for ep in realm_endpoints:
+        try:
+            p = int(ep["listen"].split(":")[-1])
+            if p > 0:
+                realm_ports.append(p)
+        except Exception:
+            pass
+    target_ports = xr_ports + sb_ports + realm_ports
     listening_ports = [p for p in target_ports if check_port_listening(p)]
     
     # 自动自愈：若有目标端口未正常监听，强制刷新防火墙规则并重启服务
@@ -1067,8 +1114,12 @@ def sync_step(server, token, last_hash):
         allow_ports(sb_ports)
         service_action("restart", "sing-box")
         time.sleep(1)
+    if realm_ports and any(not check_port_listening(p) for p in realm_ports):
+        allow_ports(realm_ports)
+        service_action("restart", "realm")
+        time.sleep(1)
     listening_ports = [p for p in target_ports if check_port_listening(p)]
-    is_active = service_is_active("xray") or service_is_active("sing-box")
+    is_active = service_is_active("xray") or service_is_active("sing-box") or (service_is_active("realm") if realm_endpoints else False)
 
     status = "running" if (is_active and (len(listening_ports) == len(target_ports) or not target_ports)) else "stopped"
     if not is_active:
@@ -4068,7 +4119,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.23"
+CURRENT_VERSION = "v2.5.24"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -5927,15 +5978,30 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
             xray_nodes = [n for n in server_nodes if n["protocol"] not in ("hysteria2", "tuic", "anytls") and not n.get("is_relay")]
             singbox_nodes = [n for n in server_nodes if n["protocol"] in ("hysteria2", "tuic", "anytls") and not n.get("is_relay")]
+            relay_nodes = [n for n in server_nodes if n.get("is_relay")]
+
             inbounds = build_inbounds_for_nodes(xray_nodes)
             singbox_inbounds = build_singbox_inbounds_for_nodes(singbox_nodes)
+
+            realm_endpoints = []
+            for n in relay_nodes:
+                l_port = int(n.get("port") or 0)
+                r_host = (n.get("remote_host") or "").strip()
+                r_port = int(n.get("remote_port") or 0)
+                if l_port > 0 and r_host and r_port > 0:
+                    realm_endpoints.append({
+                        "listen": f"0.0.0.0:{l_port}",
+                        "remote": f"{r_host}:{r_port}"
+                    })
+
             self.send_json({
                 "ok": True,
                 "node_id": node_id,
                 "server_name": node_row["name"],
                 "inbounds": inbounds,
                 "xray_inbounds": inbounds,
-                "singbox_inbounds": singbox_inbounds
+                "singbox_inbounds": singbox_inbounds,
+                "realm_endpoints": realm_endpoints
             })
             return
 

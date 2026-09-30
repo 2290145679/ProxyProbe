@@ -2,6 +2,19 @@
 
 本文档记录 **ProxyProbe** 的所有主要版本演进、核心功能迭代与 Bug 修复历史。
 
+## 🌟 [v2.5.24] - 2026-09-30
+
+### 🔄 Realm 远程中转落地节点热同步 (Realm Remote Relay Auto-Sync)
+- **打通远程中转机规则同步**：修复主控端 `/api/proxy/agent-sync` 未下发 Realm 中转规则给远程被控节点的缺陷，自动提取 `is_relay = 1` 规则并打包 `realm_endpoints` 动态下发。
+- **被控端守护进程自愈与防火墙联动**：被控节点 `proxy_agent.py` 收到中转转发规则后，自动写入 `/etc/realm/config.json`，放行对应防火墙端口，并平滑重载 `realm` 服务，实现中转落地端口毫秒级监听生效。
+- **纯中转节点状态感知**：完善被控端进程与端口健康感知，即使该节点仅运行 Realm 转发而无 Xray/Sing-box 入站，也能精准上报 `running` 在线状态，杜绝假死报 `stopped`。
+
+### 🔑 商业发卡中心密钥展示与复制修复 (License Generator Copy & Display Fix)
+- **前后端字段名称对齐**：修复快捷签发许可证时因前端读取 `data.short_codes` / `data.short_code` 而后端返回 `license_keys` / `license_id` 导致的密钥文本框显示空白问题。
+- **全方位防呆容灾解析**：前端增加对 `short_codes`、`license_keys`、`licenses`、`short_code`、`license_id` 等多字段回退提取机制，并优化剪贴板复制异常时的友好提示。
+
+---
+
 ## 🌟 [v2.5.23] - 2026-09-30
 
 ### 🚀 纯节点免探针部署模式 (Pure Proxy Node Mode)
