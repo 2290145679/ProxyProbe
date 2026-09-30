@@ -1169,7 +1169,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
             )}
           </div>
         )}
-        <div className="p-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b bg-card">
+        <div className="p-4 sm:p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b bg-card">
           <div>
             <h3 className="font-semibold text-base">已配置的代理节点</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -1177,36 +1177,15 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={openUnlockConfig}
-              className="text-xs h-8 gap-1.5 border-dashed hover:border-primary/50"
-              title="自定义流媒体与 AI 解锁检测展示项 (可隐藏或仅选择其中两个)"
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <Button 
+              size="sm" 
+              onClick={openCreateDialog}
+              className="order-1 sm:order-4 flex-1 sm:flex-initial text-xs h-8 gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm font-medium"
             >
-              <SlidersHorizontal className="size-3.5 text-primary" />
-              <span>AI与流媒体解锁</span>
-              {isUnlockColVisible ? (
-                <Badge variant="secondary" className="text-[10px] h-5 px-1.5 bg-primary/10 text-primary font-mono border-none">
-                  {unlockEnabled.length} 项
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-muted-foreground border-dashed">
-                  已隐藏
-                </Badge>
-              )}
+              <Plus className="size-3.5" />
+              新建节点
             </Button>
-
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs shrink-0 select-none">
-              <Layers className="size-3.5 text-muted-foreground" />
-              <span className="text-[11px] font-medium text-foreground">按服务器归类</span>
-              <Switch
-                checked={groupByServer}
-                onCheckedChange={setGroupByServer}
-                className="scale-75"
-              />
-            </div>
 
             <Button 
               size="sm" 
@@ -1222,20 +1201,43 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                 }
                 setBatchDialogOpen(true)
               }}
-              className="text-xs h-8 gap-1.5 border-primary/40 text-primary hover:bg-primary/10 shadow-sm font-medium"
+              className="order-2 sm:order-3 flex-1 sm:flex-initial text-xs h-8 gap-1.5 border-primary/40 text-primary hover:bg-primary/10 shadow-sm font-medium"
             >
               <Sparkles className="size-3.5" />
               一键全家桶
             </Button>
 
-            <Button 
-              size="sm" 
-              onClick={openCreateDialog}
-              className="text-xs h-8 gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={openUnlockConfig}
+              className="order-3 sm:order-1 flex-1 sm:flex-initial text-xs h-8 gap-1.5 border-dashed hover:border-primary/50"
+              title="自定义流媒体与 AI 解锁检测展示项 (可隐藏或仅选择其中两个)"
             >
-              <Plus className="size-3.5" />
-              新建节点
+              <SlidersHorizontal className="size-3.5 text-primary" />
+              <span>AI与流媒体解锁</span>
+              {isUnlockColVisible ? (
+                <Badge variant="secondary" className="text-[10px] h-5 px-1.5 bg-primary/10 text-primary font-mono border-none">
+                  {unlockEnabled.length} 项
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-muted-foreground border-dashed">
+                  已隐藏
+                </Badge>
+              )}
             </Button>
+
+            <div className="order-4 sm:order-2 flex items-center justify-between sm:justify-start gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs shrink-0 select-none">
+              <div className="flex items-center gap-1.5">
+                <Layers className="size-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-medium text-foreground">按服务器归类</span>
+              </div>
+              <Switch
+                checked={groupByServer}
+                onCheckedChange={setGroupByServer}
+                className="scale-75"
+              />
+            </div>
           </div>
         </div>
 

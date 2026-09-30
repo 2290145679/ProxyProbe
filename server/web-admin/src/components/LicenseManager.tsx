@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { ShieldCheck, KeyRound, Copy, Check, RefreshCw, AlertTriangle, Clock, XCircle, Sparkles, Server, Network, Users } from "lucide-react"
+import { ShieldCheck, KeyRound, Copy, Check, RefreshCw, AlertTriangle, Clock, XCircle, Sparkles, Server, Network, Users, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
@@ -56,8 +56,31 @@ export function LicenseManager() {
   })
   const [loading, setLoading] = useState(false)
   const [activating, setActivating] = useState(false)
+  const [recovering, setRecovering] = useState(false)
   const [licenseInput, setLicenseInput] = useState("")
   const [copied, setCopied] = useState(false)
+
+  const handleRecover = async () => {
+    try {
+      setRecovering(true)
+      const res = await fetch("/api/proxy/license/recover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
+      const data = await res.json()
+      if (res.ok && data.ok) {
+        toast.success(data.message || "恭喜，已成功找回并恢复商业授权！")
+        setStatus(data.status)
+        fetchStatus()
+      } else {
+        toast.error(data.message || "未在官方授权中心检索到本机已绑定的有效授权")
+      }
+    } catch {
+      toast.error("网络连接异常，无法连接官方授权中心")
+    } finally {
+      setRecovering(false)
+    }
+  }
 
   const fetchStatus = async () => {
     try {
@@ -145,16 +168,30 @@ export function LicenseManager() {
             探针基础监控无限添加、终身免费；激活商业授权即可解锁多协议节点与海量用户订阅体系
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={fetchStatus}
-          disabled={loading}
-          className="self-start sm:self-auto gap-1 text-xs"
-        >
-          <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-          刷新状态
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRecover}
+            disabled={recovering || loading}
+            className="gap-1.5 text-xs text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800"
+            title="根据当前服务器硬件机器码向官方授权中心自动检索并找回商业授权"
+          >
+            <RotateCcw className={`size-3.5 ${recovering ? "animate-spin" : ""}`} />
+            {recovering ? "正在找回..." : "自动找回授权"}
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchStatus}
+            disabled={loading}
+            className="gap-1 text-xs"
+          >
+            <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+            刷新状态
+          </Button>
+        </div>
       </div>
 
       {/* 授权状态概览卡片 */}
@@ -367,6 +404,28 @@ export function LicenseManager() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleActivate} className="space-y-4">
+            {!status?.active && (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 rounded-lg bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/60 text-xs">
+                <div className="flex items-center gap-2.5 text-indigo-950 dark:text-indigo-200">
+                  <RotateCcw className="size-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                  <span>
+                    曾经激活过该服务器？重装系统或卸载面板后，若机器码未变可直接<strong>自动找回原授权</strong>。
+                  </span>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRecover}
+                  disabled={recovering}
+                  className="shrink-0 gap-1.5 text-xs font-medium border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100/60 dark:hover:bg-indigo-900/50 h-8"
+                >
+                  <RotateCcw className={`size-3.5 ${recovering ? "animate-spin" : ""}`} />
+                  {recovering ? "正在检索中..." : "一键自动找回原授权"}
+                </Button>
+              </div>
+            )}
+
             <textarea
               className="w-full h-24 font-mono text-xs p-3 bg-muted/20 border rounded-md focus:outline-none focus:ring-1 focus:ring-ring resize-none"
               placeholder="请粘贴您的专属商业授权码（如: PP-XXXX-XXXX-XXXX-XXXX）或离线激活密钥"

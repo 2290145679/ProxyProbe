@@ -22,11 +22,12 @@ MASTER_PUBLIC_KEY_HEX = "6637fdfd836e83fd31aa7c02698ab615d882bdb7533aaf2f8335948
 
 # 官方预留固定授权中心域名与多重容灾候选列表 (在线优先，域名解析与备用 IP 双轨保障)
 DEFAULT_AUTH_DOMAIN = "auth.yohoo.xyz"
-DEFAULT_AUTH_SERVER = os.environ.get("PROXYPROBE_AUTH_SERVER", f"http://{DEFAULT_AUTH_DOMAIN}")
+DEFAULT_AUTH_SERVER = os.environ.get("PROXYPROBE_AUTH_SERVER", f"https://{DEFAULT_AUTH_DOMAIN}")
 AUTH_SERVER_CANDIDATES = [
+    f"https://{DEFAULT_AUTH_DOMAIN}",
     f"http://{DEFAULT_AUTH_DOMAIN}:18888",
     f"http://{DEFAULT_AUTH_DOMAIN}",
-    f"https://{DEFAULT_AUTH_DOMAIN}",
+    "http://189.24.108.25:18888",
     "http://156.226.173.102:18888",
     "http://127.0.0.1:18888"
 ]
@@ -748,3 +749,105 @@ def start_heartbeat_thread(db_path: str, auth_url: str = DEFAULT_AUTH_SERVER):
     t = threading.Thread(target=_worker, daemon=True, name="license_heartbeat")
     t.start()
     return t
+
+
+def auto_recover_license_from_auth(db_conn, auth_url: str = DEFAULT_AUTH_SERVER) -> tuple:
+    """
+    根据当前服务器硬件机器码 (Machine ID)，自动向官方授权中心查询并找回历史已激活/绑定的商业许可证。
+    适用于服务器重装面板、卸载后重装、丢失本地数据库等场景。
+    返回 (success: bool, msg: str, status_dict)
+    """
+    init_license_tables(db_conn)
+    curr_mid = get_machine_id()
+    if not curr_mid or curr_mid == "ANY" or len(curr_mid) < 8:
+        return False, "本机硬件识别码无效，无法找回授权", None
+
+    now = int(time.time())
+    candidate_urls = [auth_url] + [c for c in AUTH_SERVER_CANDIDATES if c != auth_url]
+    seen = set()
+    deduped_candidates = []
+    for u in candidate_urls:
+        if u not in seen:
+            seen.add(u)
+            deduped_candidates.append(u)
+
+    # 创建标准 SSL context，必要时支持未认证 fallback
+    ssl_context = None
+    try:
+        import ssl
+        ssl_context = ssl.create_default_context()
+    except Exception:
+        pass
+
+    last_error_msg = ""
+    for srv in deduped_candidates:
+        try:
+            req_data = json.dumps({
+                "machine_id": curr_mid,
+                "timestamp": now
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{srv}/api/v1/license/recover",
+                data=req_data,
+                headers={"Content-Type": "application/json", "User-Agent": "ProxyProbe-Core/2.0"}
+            )
+            try:
+                resp = urllib.request.urlopen(req, timeout=3.5, context=ssl_context)
+            except Exception as ssl_err:
+                try:
+                    import ssl
+                    unverified_ctx = ssl._create_unverified_context()
+                    resp = urllib.request.urlopen(req, timeout=3.5, context=unverified_ctx)
+                except Exception:
+                    raise ssl_err
+
+            with resp:
+                body = json.loads(resp.read().decode("utf-8"))
+
+            if body.get("ok"):
+                if body.get("found"):
+                    license_id = (body.get("license_id") or "").strip()
+                    raw_token = (body.get("raw_token") or "").strip()
+                    key_to_save = license_id if (license_id and license_id.startswith("PP-")) else raw_token
+
+                    # 优先调用完整 save_license_key
+                    if key_to_save:
+                        ok, msg, status = save_license_key(db_conn, key_to_save, auth_url=srv)
+                        if ok:
+                            return True, f"已自动成功找回并激活商业授权！(套餐: {status.get('plan_name', '')}，有效期至: {status.get('expire_date', '')})", status
+
+                    # 若直接具备合法非对称 raw_token，则离线验签入库兜底
+                    if raw_token:
+                        payload, err = parse_and_verify_license(raw_token)
+                        if not err and payload:
+                            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_key', ?)", (license_id or raw_token,))
+                            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_raw_token', ?)", (raw_token,))
+                            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_revoked', '0')")
+                            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_activated_ts', ?)", (str(now),))
+                            db_conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('license_last_sync_ts', ?)", (str(now),))
+                            db_conn.execute("INSERT INTO license_log (timestamp, action, status, detail) VALUES (?, 'recover', 'success', ?)",
+                                            (now, f"Recovered License: {license_id or raw_token} via {srv}"))
+                            db_conn.commit()
+                            status = get_current_license_status(db_conn)
+                            return True, f"已成功找回商业授权！(套餐: {status.get('plan_name', '')}，有效期至: {status.get('expire_date', '')})", status
+
+                    return False, "授权中心检索到授权，但本地解析验签未通过", None
+                else:
+                    return False, body.get("message") or f"未在授权中心查询到该机器识别码 ({curr_mid}) 的已绑定授权", None
+            else:
+                last_error_msg = body.get("message") or "授权中心响应错误"
+        except urllib.error.HTTPError as he:
+            try:
+                err_body = json.loads(he.read().decode("utf-8"))
+                if not err_body.get("found"):
+                    return False, err_body.get("message") or f"未查询到该机器识别码 ({curr_mid}) 的授权记录", None
+            except Exception:
+                pass
+            last_error_msg = f"HTTP {he.code}"
+            continue
+        except Exception as e:
+            last_error_msg = str(e)
+            continue
+
+    return False, last_error_msg or "无法连接官方授权中心，请检查服务器外网网络连接", None
+

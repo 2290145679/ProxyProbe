@@ -43,6 +43,7 @@ SINGBOX_CERT = "/etc/sing-box/cert.pem"
 SINGBOX_KEY = "/etc/sing-box/key.pem"
 REALM_BIN = "/usr/local/bin/realm"
 REALM_CONFIG = "/etc/realm/config.json"
+_LAST_AUTO_RECOVER_ATTEMPT_TS = 0
 
 def ensure_server_cert():
     if not os.path.exists(SINGBOX_CERT) or not os.path.exists(SINGBOX_KEY):
@@ -5662,6 +5663,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
             conn = get_db()
             lic_status = license_guard.get_current_license_status(conn)
             
+            # 若当前处于未激活免费模式，在后台异步静默尝试根据机器码找回历史商业授权 (每 3 分钟最多尝试一次)
+            if lic_status.get("type") == "free":
+                now_ts = int(time.time())
+                global _LAST_AUTO_RECOVER_ATTEMPT_TS
+                if (now_ts - _LAST_AUTO_RECOVER_ATTEMPT_TS) > 180:
+                    _LAST_AUTO_RECOVER_ATTEMPT_TS = now_ts
+                    def _async_silent_recover():
+                        try:
+                            c = get_db()
+                            license_guard.auto_recover_license_from_auth(c)
+                            c.close()
+                        except Exception:
+                            pass
+                    threading.Thread(target=_async_silent_recover, daemon=True, name="license_silent_recover").start()
+
             # 统计当前资源占用
             server_count = conn.execute("SELECT COUNT(*) FROM node").fetchone()[0]
             node_count = conn.execute("SELECT COUNT(*) FROM proxy_node").fetchone()[0]
@@ -7246,6 +7262,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": msg}, 400)
             return
 
+        # License auto-recover API (根据当前服务器硬件机器码向官方授权中心自动检索并找回商业授权)
+        if path == "/api/proxy/license/recover":
+            if not check_auth(self.headers) and self.client_address[0] not in ("127.0.0.1", "::1"):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            conn = get_db()
+            ok, msg, lic_status = license_guard.auto_recover_license_from_auth(conn)
+            conn.close()
+            if ok:
+                self.send_json({"ok": True, "message": msg, "status": lic_status})
+            else:
+                self.send_json({"ok": False, "message": msg}, 400)
+            return
+
         if path == "/api/proxy/auth/send-code":
             email = (req.get("email") or "").strip().lower()
             action_type = (req.get("action_type") or req.get("purpose") or "register").strip()
@@ -8610,7 +8640,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     init_db()
-    license_guard.start_heartbeat_thread(DB_PATH, "http://156.226.173.102:18888")
+    license_guard.start_heartbeat_thread(DB_PATH)
+    # 服务启动初始化：若当前处于未激活免费模式，在后台延时 2 秒尝试一次根据机器码自动找回商业授权
+    def _initial_license_recover():
+        time.sleep(2)
+        try:
+            c = sqlite3.connect(DB_PATH)
+            st = license_guard.get_current_license_status(c)
+            if not st.get("active"):
+                license_guard.auto_recover_license_from_auth(c)
+            c.close()
+        except Exception:
+            pass
+    threading.Thread(target=_initial_license_recover, daemon=True, name="init_license_recover").start()
     t = threading.Thread(target=traffic_collector_loop, daemon=True)
     t.start()
     t_backup = threading.Thread(target=telegram_backup_loop, daemon=True)
