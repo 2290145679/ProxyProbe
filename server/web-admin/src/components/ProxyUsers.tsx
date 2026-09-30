@@ -39,6 +39,9 @@ export type ManagedUser = {
   traffic_limit_bytes: number
   device_limit?: number
   online_devices?: number
+  is_online?: boolean
+  last_active_at?: number
+  last_active_desc?: string
   upload_bytes: number
   download_bytes: number
   total_used_bytes: number
@@ -61,6 +64,29 @@ function formatBytes(bytes: number) {
 function formatDate(ts: number) {
   if (!ts || ts === 0) return "永久有效"
   return new Date(ts * 1000).toLocaleDateString()
+}
+
+function formatTimeAgo(ts?: number) {
+  if (!ts || ts <= 0) return "从未在线"
+  const now = Math.floor(Date.now() / 1000)
+  const diff = Math.max(0, now - ts)
+  if (diff < 60) return "刚刚"
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
+  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} 天前`
+  return `${Math.floor(diff / (86400 * 30))} 个月前`
+}
+
+function formatFullDateTime(ts?: number) {
+  if (!ts || ts <= 0) return "暂无在线记录"
+  return new Date(ts * 1000).toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
 }
 
 export function ProxyUsers() {
@@ -401,6 +427,8 @@ export function ProxyUsers() {
               </span>
               <span>
                 客户端用户配额：<strong>{users.filter(u => !u.is_admin).length} / {licenseStatus.max_users || licenseStatus.limits?.max_users || (licenseStatus.active ? 12 : 1)} 户</strong>
+                <span className="mx-2 text-muted-foreground/30">|</span>
+                实时在线：<strong className="text-emerald-600 dark:text-emerald-400">{users.filter(u => u.is_online).length}</strong> 户
                 {users.filter(u => !u.is_admin).length >= (licenseStatus.max_users || licenseStatus.limits?.max_users || (licenseStatus.active ? 12 : 1)) && (
                   <span className="text-amber-500 font-medium ml-1.5">(配额已满，升级套餐以添加更多)</span>
                 )}
@@ -419,6 +447,7 @@ export function ProxyUsers() {
               <tr>
                 <th className="py-3 px-4 font-semibold w-14">ID</th>
                 <th className="py-3 px-4 font-semibold">用户名</th>
+                <th className="py-3 px-4 font-semibold">在线状态</th>
                 <th className="py-3 px-4 font-semibold">流量使用情况</th>
                 <th className="py-3 px-4 font-semibold">设备限制</th>
                 <th className="py-3 px-4 font-semibold">到期时间</th>
@@ -457,6 +486,37 @@ export function ProxyUsers() {
                           {u.vip_level || "vip1"}
                         </Badge>
                       </div>
+                    </td>
+
+                    {/* 在线状态 */}
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      {u.is_online ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                            在线
+                          </span>
+                          {(u.online_devices ?? 0) > 1 && (
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              ({u.online_devices}台)
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5" title={formatFullDateTime(u.last_active_at)}>
+                          <span className="inline-flex rounded-full h-2 w-2 bg-muted-foreground/30"></span>
+                          <span className="text-[11px] text-muted-foreground cursor-help font-mono">
+                            {u.last_active_at && u.last_active_at > 0 ? (
+                              <>离线 · {formatTimeAgo(u.last_active_at)}</>
+                            ) : (
+                              "从未在线"
+                            )}
+                          </span>
+                        </div>
+                      )}
                     </td>
 
                     <td className="py-3.5 px-4 min-w-[200px]">
@@ -816,6 +876,31 @@ export function ProxyUsers() {
                 onChange={e => setEditForm(prev => ({ ...prev, password: e.target.value }))}
               />
             </div>
+
+            {editingUser && (
+              <div className="rounded-md bg-muted/40 p-2.5 text-xs flex items-center justify-between border">
+                <span className="text-muted-foreground">当前在线状态</span>
+                <div className="flex items-center gap-1.5 font-medium">
+                  {editingUser.is_online ? (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </span>
+                      在线 {(editingUser.online_devices || 0) > 0 ? `(${editingUser.online_devices}台活跃)` : ""}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground font-mono" title={formatFullDateTime(editingUser.last_active_at)}>
+                      {editingUser.last_active_at && editingUser.last_active_at > 0 ? (
+                        <>离线 · {formatTimeAgo(editingUser.last_active_at)}</>
+                      ) : (
+                        "从未在线"
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             <DialogFooter className="pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setEditOpen(false)}>

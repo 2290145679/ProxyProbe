@@ -39,6 +39,7 @@ export type DashboardSummary = {
   unhealthy_nodes: number
   total_users: number
   active_users: number
+  online_users?: number
   total_upload_bytes: number
   total_download_bytes: number
   total_traffic_bytes: number
@@ -386,21 +387,24 @@ export function ProxyDashboard({ onNavigate }: { onNavigate?: (tab: string) => v
           </div>
         </Card>
 
-        {/* 指标 3：活跃用户数 */}
+        {/* 指标 3：活跃与在线用户数 */}
         <Card className="p-4 sm:p-5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">订阅用户状态</span>
+            <span className="text-xs font-medium text-muted-foreground">用户与连接状态</span>
             <Users className="size-4 text-purple-500" />
           </div>
           <div className="my-2">
-            <div className="text-2xl sm:text-3xl font-bold tracking-tight">
-              {summary ? summary.active_users : 0}
-              <span className="text-sm font-normal text-muted-foreground ml-1.5">
-                / {summary ? summary.total_users : 0} 人
+            <div className="text-2xl sm:text-3xl font-bold tracking-tight flex items-baseline gap-2 flex-wrap">
+              <span>{summary?.online_users ?? 0}</span>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                实时在线
+              </span>
+              <span className="text-xs font-normal text-muted-foreground ml-auto">
+                有效 {summary ? summary.active_users : 0} / 总计 {summary ? summary.total_users : 0} 户
               </span>
             </div>
             <div className="text-xs text-muted-foreground mt-1 truncate">
-              {summary ? `${summary.active_users} 个订阅有效 · ${summary.total_users - summary.active_users} 个到期或禁用` : "加载中..."}
+              {summary ? `${summary.online_users ?? 0} 户正在连通 · ${summary.active_users} 户订阅正常` : "加载中..."}
             </div>
           </div>
           <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">

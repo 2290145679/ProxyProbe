@@ -1368,6 +1368,7 @@ def sync_step(server, token, last_hash):
                 sum_active_up = 0
                 sum_active_down = 0
 
+                active_uids = set()
                 for c in conns:
                     cid = c.get("id")
                     if not cid:
@@ -1386,6 +1387,8 @@ def sync_step(server, token, last_hash):
 
                     uid = _agent_sb_ipport_to_user.get(f"{src_ip}:{src_port}") or _agent_sb_ip_to_user.get(src_ip) or _agent_last_sb_user or 1
                     _agent_last_sb_user = uid
+                    if uid:
+                        active_uids.add(uid)
 
                     prev_up, prev_down, _, _ = _agent_sb_conns.get(cid, (0, 0, uid, nid))
                     d_up = max(0, c_up - prev_up)
@@ -1434,6 +1437,7 @@ def sync_step(server, token, last_hash):
 
     if user_traffic:
         user_stats = list(user_traffic.values())
+        active_uids.update(user_traffic.keys())
     if node_traffic:
         node_stats = list(node_traffic.values())
 
@@ -1460,7 +1464,8 @@ def sync_step(server, token, last_hash):
         "realm_version": "Realm 2.9.6" if realm_installed else "",
         "log": xray_log,
         "user_stats": user_stats,
-        "node_stats": node_stats
+        "node_stats": node_stats,
+        "active_users": list(active_uids)
     }).encode("utf-8")
     
     post_req = urllib.request.Request(
@@ -1821,6 +1826,20 @@ def init_db():
         try:
             conn.execute("ALTER TABLE proxy_user ADD COLUMN theme_style TEXT DEFAULT 'default'")
         except sqlite3.OperationalError:
+            pass
+
+        # Migration: ensure last_active_at exists
+        try:
+            conn.execute("ALTER TABLE proxy_user ADD COLUMN last_active_at INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
+        # Initialize in-memory last seen cache
+        try:
+            cur_seen = conn.execute("SELECT id, last_active_at FROM proxy_user WHERE last_active_at > 0")
+            for r in cur_seen.fetchall():
+                _user_last_seen[r["id"]] = r["last_active_at"]
+        except Exception:
             pass
 
         # Migration: ensure admin user exists in proxy_user
@@ -2788,6 +2807,7 @@ def ensure_user_credentials(user):
     return u_uuid, u_pwd
 
 _user_active_ips = {}  # { user_id: { ip_str: last_seen_epoch } }
+_user_last_seen = {}   # { user_id: last_seen_epoch }
 _sb_ip_to_user = {}    # { ip_str: user_id }
 _sb_ipport_to_user = {} # { "ip:port": user_id }
 _sb_ip_to_node = {}    # { ip_str: node_id }
@@ -2798,8 +2818,25 @@ _last_active_sb_node = None
 _last_xray_log_offset = 0
 _last_singbox_log_offset = 0
 
+def format_time_ago(ts, now=None):
+    if not ts or ts <= 0:
+        return "从未在线"
+    if now is None:
+        now = int(time.time())
+    diff = max(0, now - int(ts))
+    if diff < 60:
+        return "刚刚"
+    elif diff < 3600:
+        return f"{diff // 60} 分钟前"
+    elif diff < 86400:
+        return f"{diff // 3600} 小时前"
+    elif diff < 86400 * 30:
+        return f"{diff // 86400} 天前"
+    else:
+        return f"{diff // (86400 * 30)} 个月前"
+
 def update_device_tracker():
-    global _user_active_ips, _sb_ip_to_user, _sb_ipport_to_user, _sb_ip_to_node, _sb_ipport_to_node, _sb_pending_sessions
+    global _user_active_ips, _user_last_seen, _sb_ip_to_user, _sb_ipport_to_user, _sb_ip_to_node, _sb_ipport_to_node, _sb_pending_sessions
     global _last_active_sb_user, _last_active_sb_node, _last_xray_log_offset, _last_singbox_log_offset
     now = int(time.time())
 
@@ -2830,6 +2867,7 @@ def update_device_tracker():
                             elif email in ("default", "default@vless", "default@trojan", "default@vmess"):
                                 uid = 1
                             if uid is not None and ip not in ("127.0.0.1", "::1"):
+                                _user_last_seen[uid] = now
                                 if uid not in _user_active_ips:
                                     _user_active_ips[uid] = {}
                                 _user_active_ips[uid][ip] = now
@@ -2872,6 +2910,7 @@ def update_device_tracker():
                                     _sb_ip_to_node[ip] = nid
                                     _sb_ipport_to_node[f"{ip}:{port}"] = nid
                                 if ip not in ("127.0.0.1", "::1"):
+                                    _user_last_seen[uid] = now
                                     if uid not in _user_active_ips:
                                         _user_active_ips[uid] = {}
                                     _user_active_ips[uid][ip] = now
@@ -2894,6 +2933,7 @@ def update_device_tracker():
                                     _sb_ip_to_node[ip] = nid
                                     _sb_ipport_to_node[f"{ip}:{port}"] = nid
                                 if ip not in ("127.0.0.1", "::1"):
+                                    _user_last_seen[uid] = now
                                     if uid not in _user_active_ips:
                                         _user_active_ips[uid] = {}
                                     _user_active_ips[uid][ip] = now
@@ -2914,6 +2954,7 @@ def update_device_tracker():
                             _sb_ipport_to_user[f"{ip}:{port}"] = uid
                             _last_active_sb_user = uid
                             if ip not in ("127.0.0.1", "::1"):
+                                _user_last_seen[uid] = now
                                 if uid not in _user_active_ips:
                                     _user_active_ips[uid] = {}
                                 _user_active_ips[uid][ip] = now
@@ -3109,6 +3150,7 @@ def traffic_collector_loop():
                             _last_sb_conns[cid] = (c_up, c_down, uid, nid)
 
                             if d_up > 0 or d_down > 0:
+                                _user_last_seen[uid] = now
                                 sum_active_up += d_up
                                 sum_active_down += d_down
                                 if uid not in user_traffic:
@@ -3128,6 +3170,7 @@ def traffic_collector_loop():
                         rem_down = max(0, delta_sb_down - sum_active_down)
                         if rem_up > 0 or rem_down > 0:
                             fallback_uid = _last_active_sb_user or 1
+                            _user_last_seen[fallback_uid] = now
                             fallback_nid = _last_active_sb_node
                             if not fallback_nid:
                                 try:
@@ -3160,9 +3203,9 @@ def traffic_collector_loop():
                     for uid, tf in user_traffic.items():
                         conn.execute("""
                             UPDATE proxy_user
-                            SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                            SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?, last_active_at = ?
                             WHERE id = ?
-                        """, (tf["up"], tf["down"], uid))
+                        """, (tf["up"], tf["down"], now, uid))
                     for nid, tf in node_traffic.items():
                         conn.execute("""
                             UPDATE proxy_node
@@ -4119,7 +4162,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.24"
+CURRENT_VERSION = "v2.5.25"
 
 def get_local_version() -> str:
     ver_file = "/opt/monitor/VERSION"
@@ -6031,6 +6074,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             is_dev_over = is_user_over_device_limit(user)
             online_devs = get_user_online_device_count(user["id"])
             device_limit = user.get("device_limit", 0)
+            uid = user.get("id")
+            last_active = _user_last_seen.get(uid) or user.get("last_active_at") or 0
+            is_online = ((last_active > 0 and (now - last_active) < 180) or (online_devs > 0)) and (user.get("enabled", 1) == 1)
             
             status_text = "disabled" if user.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else ("over_device_limit" if is_dev_over else "active")))
             
@@ -6050,6 +6096,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "traffic_limit_bytes": limit,
                     "device_limit": device_limit,
                     "online_devices": online_devs,
+                    "last_active_at": last_active,
+                    "is_online": bool(is_online),
+                    "last_active_desc": format_time_ago(last_active, now),
                     "upload_bytes": user.get("upload_bytes", 0),
                     "download_bytes": user.get("download_bytes", 0),
                     "total_used_bytes": used,
@@ -6494,6 +6543,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "unhealthy_nodes": unhealthy_nodes,
                     "total_users": len(users),
                     "active_users": sum(1 for u in users if u.get("enabled", 1) == 1),
+                    "online_users": sum(1 for u in users if (_user_last_seen.get(u["id"], 0) > (now - 180) or get_user_online_device_count(u["id"]) > 0) and u.get("enabled", 1) == 1),
                     "total_upload_bytes": sum(n.get("upload_bytes") or 0 for n in active_nodes),
                     "total_download_bytes": sum(n.get("download_bytes") or 0 for n in active_nodes),
                     "total_traffic_bytes": total_node_traffic,
@@ -6772,6 +6822,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             users = [dict(r) for r in cur.fetchall()]
             conn.close()
             now = int(time.time())
+            ONLINE_WINDOW = 180
             for u in users:
                 u.pop("password_hash", None)
                 limit = u.get("traffic_limit_bytes", 0)
@@ -6780,8 +6831,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 is_expired = u.get("expires_at", 0) > 0 and now > u.get("expires_at", 0)
                 is_over = limit > 0 and used >= limit
                 is_dev_over = is_user_over_device_limit(u)
+                uid = u["id"]
+                last_active = _user_last_seen.get(uid) or u.get("last_active_at") or 0
+                online_devs = get_user_online_device_count(uid)
+                is_online = ((last_active > 0 and (now - last_active) < ONLINE_WINDOW) or (online_devs > 0)) and (u.get("enabled", 1) == 1)
                 u["device_limit"] = u.get("device_limit", 0)
-                u["online_devices"] = get_user_online_device_count(u["id"])
+                u["online_devices"] = online_devs
+                u["last_active_at"] = last_active
+                u["is_online"] = bool(is_online)
+                u["last_active_desc"] = format_time_ago(last_active, now)
                 u["total_used_bytes"] = used
                 u["remaining_bytes"] = remaining
                 u["status"] = "disabled" if u.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else ("over_device_limit" if is_dev_over else "active")))
@@ -7178,11 +7236,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         up = int(st.get("upload") or 0)
                         down = int(st.get("download") or 0)
                         if uid and (up > 0 or down > 0):
+                            _user_last_seen[uid] = now
                             conn.execute("""
                                 UPDATE proxy_user
-                                SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?
+                                SET upload_bytes = upload_bytes + ?, download_bytes = download_bytes + ?, last_active_at = ?
                                 WHERE id = ?
-                            """, (up, down, uid))
+                            """, (up, down, now, uid))
+            active_users = req.get("active_users", [])
+            if active_users:
+                for uid in active_users:
+                    if uid:
+                        _user_last_seen[uid] = now
+                        if uid not in _user_active_ips:
+                            _user_active_ips[uid] = {}
+                        _user_active_ips[uid][f"remote_{node_id}"] = now
             node_stats = req.get("node_stats", [])
             if node_stats:
                 with conn:
