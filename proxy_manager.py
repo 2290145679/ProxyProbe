@@ -534,10 +534,11 @@ else
 #!/sbin/openrc-run
 name="proxy-agent"
 description="Monitor Proxy Agent Daemon"
+supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=0
 command="$PY_BIN"
 command_args="-u /opt/monitor/proxy_agent.py --server $HUB_SERVER --token $HUB_TOKEN"
-command_background=true
-pidfile="/run/proxy-agent.pid"
 output_log="/var/log/proxy-agent.log"
 error_log="/var/log/proxy-agent.log"
 
@@ -619,6 +620,26 @@ SINGBOX_BIN = "/usr/local/bin/sing-box"
 SINGBOX_CONFIG = "/etc/sing-box/config.json"
 REALM_BIN = "/usr/local/bin/realm"
 REALM_CONFIG = "/etc/realm/config.json"
+HASH_FILE = "/opt/monitor/.proxy_config.hash"
+
+def read_saved_hash():
+    if os.path.exists(HASH_FILE):
+        try:
+            with open(HASH_FILE, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return None
+
+def save_saved_hash(h):
+    if not h:
+        return
+    try:
+        os.makedirs(os.path.dirname(HASH_FILE), exist_ok=True)
+        with open(HASH_FILE, "w", encoding="utf-8") as f:
+            f.write(h.strip())
+    except Exception:
+        pass
 
 def is_systemd():
     return os.path.exists("/run/systemd/system") or (shutil.which("systemctl") is not None and os.path.exists("/etc/systemd"))
@@ -982,21 +1003,39 @@ def sync_step(server, token, last_hash):
 
         xray_ok = True
         if os.path.exists(XRAY_BIN):
-            test_res = subprocess.run([XRAY_BIN, "run", "-test", "-config", tmp_cfg, "-format", "json"], capture_output=True, text=True)
-            if test_res.returncode == 0:
-                os.replace(tmp_cfg, XRAY_CONFIG)
+            existing_xray_cfg = ""
+            if os.path.exists(XRAY_CONFIG):
                 try:
-                    os.makedirs("/usr/local/etc/xray", exist_ok=True)
-                    shutil.copyfile(XRAY_CONFIG, "/usr/local/etc/xray/config.json")
+                    with open(XRAY_CONFIG, "r", encoding="utf-8") as f:
+                        existing_xray_cfg = f.read()
                 except Exception:
                     pass
-                service_action("reload_restart", "xray")
-                time.sleep(1)
-                print(f"[{time.strftime('%X')}] Xray 配置生效并重启成功", flush=True)
+
+            with open(tmp_cfg, "r", encoding="utf-8") as f:
+                new_xray_cfg = f.read()
+
+            if existing_xray_cfg.strip() == new_xray_cfg.strip():
+                try:
+                    os.remove(tmp_cfg)
+                except Exception:
+                    pass
+                print(f"[{time.strftime('%X')}] Xray 配置内容完全一致，跳过重启，保障长连接零中断", flush=True)
             else:
-                xray_ok = False
-                err_msg = (test_res.stdout + " " + test_res.stderr).strip()
-                print(f"[{time.strftime('%X')}] Xray 配置校验失败: {err_msg}", flush=True)
+                test_res = subprocess.run([XRAY_BIN, "run", "-test", "-config", tmp_cfg, "-format", "json"], capture_output=True, text=True)
+                if test_res.returncode == 0:
+                    os.replace(tmp_cfg, XRAY_CONFIG)
+                    try:
+                        os.makedirs("/usr/local/etc/xray", exist_ok=True)
+                        shutil.copyfile(XRAY_CONFIG, "/usr/local/etc/xray/config.json")
+                    except Exception:
+                        pass
+                    service_action("reload_restart", "xray")
+                    time.sleep(1)
+                    print(f"[{time.strftime('%X')}] Xray 配置变更生效并重载成功", flush=True)
+                else:
+                    xray_ok = False
+                    err_msg = (test_res.stdout + " " + test_res.stderr).strip()
+                    print(f"[{time.strftime('%X')}] Xray 配置校验失败: {err_msg}", flush=True)
 
         if singbox_inbounds and not os.path.exists(SINGBOX_BIN):
             ensure_singbox_installed(server)
@@ -1031,13 +1070,32 @@ def sync_step(server, token, last_hash):
             os.makedirs("/etc/sing-box", exist_ok=True)
             with open(tmp_sb, "w", encoding="utf-8") as f:
                 json.dump(sb_config, f, indent=2)
-            sb_chk = subprocess.run([SINGBOX_BIN, "check", "-c", tmp_sb], capture_output=True, text=True)
-            if sb_chk.returncode == 0:
-                os.replace(tmp_sb, SINGBOX_CONFIG)
-                service_action("restart", "sing-box")
-                print(f"[{time.strftime('%X')}] Sing-box 配置生效并重启成功", flush=True)
+
+            existing_sb_cfg = ""
+            if os.path.exists(SINGBOX_CONFIG):
+                try:
+                    with open(SINGBOX_CONFIG, "r", encoding="utf-8") as f:
+                        existing_sb_cfg = f.read()
+                except Exception:
+                    pass
+
+            with open(tmp_sb, "r", encoding="utf-8") as f:
+                new_sb_cfg = f.read()
+
+            if existing_sb_cfg.strip() == new_sb_cfg.strip():
+                try:
+                    os.remove(tmp_sb)
+                except Exception:
+                    pass
+                print(f"[{time.strftime('%X')}] Sing-box 配置内容完全一致，跳过重启，保障长连接零中断", flush=True)
             else:
-                print(f"[{time.strftime('%X')}] Sing-box 配置校验失败: {sb_chk.stderr}", flush=True)
+                sb_chk = subprocess.run([SINGBOX_BIN, "check", "-c", tmp_sb], capture_output=True, text=True)
+                if sb_chk.returncode == 0:
+                    os.replace(tmp_sb, SINGBOX_CONFIG)
+                    service_action("restart", "sing-box")
+                    print(f"[{time.strftime('%X')}] Sing-box 配置变更生效并重启成功", flush=True)
+                else:
+                    print(f"[{time.strftime('%X')}] Sing-box 配置校验失败: {sb_chk.stderr}", flush=True)
 
         # 3. Realm 端口转发中转规则同步
         realm_installed = os.path.exists(REALM_BIN)
@@ -1059,26 +1117,46 @@ def sync_step(server, token, last_hash):
                 tmp_realm = os.path.join(os.path.dirname(REALM_CONFIG), "config.tmp.json")
                 with open(tmp_realm, "w", encoding="utf-8") as f:
                     json.dump(realm_cfg, f, indent=2)
-                os.replace(tmp_realm, REALM_CONFIG)
-                register_service_if_missing("realm", f"{REALM_BIN} -c {REALM_CONFIG}", desc="Realm Port Forwarding Service")
-                
-                r_ports = []
-                for ep in realm_endpoints:
+
+                existing_realm_cfg = ""
+                if os.path.exists(REALM_CONFIG):
                     try:
-                        p = int(ep["listen"].split(":")[-1])
-                        if p > 0:
-                            r_ports.append(p)
+                        with open(REALM_CONFIG, "r", encoding="utf-8") as f:
+                            existing_realm_cfg = f.read()
                     except Exception:
                         pass
-                if r_ports:
-                    allow_ports(r_ports)
-                service_action("restart", "realm")
-                print(f"[{time.strftime('%X')}] Realm 转发配置已生效并重启成功，共 {len(realm_endpoints)} 个转发规则", flush=True)
+
+                with open(tmp_realm, "r", encoding="utf-8") as f:
+                    new_realm_cfg = f.read()
+
+                if existing_realm_cfg.strip() == new_realm_cfg.strip():
+                    try:
+                        os.remove(tmp_realm)
+                    except Exception:
+                        pass
+                    print(f"[{time.strftime('%X')}] Realm 配置内容完全一致，跳过重启", flush=True)
+                else:
+                    os.replace(tmp_realm, REALM_CONFIG)
+                    register_service_if_missing("realm", f"{REALM_BIN} -c {REALM_CONFIG}", desc="Realm Port Forwarding Service")
+                    
+                    r_ports = []
+                    for ep in realm_endpoints:
+                        try:
+                            p = int(ep["listen"].split(":")[-1])
+                            if p > 0:
+                                r_ports.append(p)
+                        except Exception:
+                            pass
+                    if r_ports:
+                        allow_ports(r_ports)
+                    service_action("restart", "realm")
+                    print(f"[{time.strftime('%X')}] Realm 转发配置已生效并重启成功，共 {len(realm_endpoints)} 个转发规则", flush=True)
             except Exception as e:
                 print(f"[{time.strftime('%X')}] Realm 配置更新失败: {e}", flush=True)
 
         if xray_ok:
             last_hash = curr_hash
+            save_saved_hash(curr_hash)
 
     # 2. 状态检测与端口监听真实检测
     is_xr_active = service_is_active("xray")
@@ -1142,7 +1220,11 @@ def sync_step(server, token, last_hash):
             chk = subprocess.run([sys.executable, "-m", "py_compile", current_file + ".new"], capture_output=True)
             if chk.returncode == 0:
                 os.replace(current_file + ".new", current_file)
-                service_action("restart", "proxy-agent")
+                print(f"[{time.strftime('%X')}] 代理守护程序已更新，正在无缝热重载自身...", flush=True)
+                try:
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                except Exception:
+                    service_action("restart", "proxy-agent")
             else:
                 try:
                     os.remove(current_file + ".new")
@@ -1485,7 +1567,7 @@ def main():
         sys.exit(1)
 
     print(f"Proxy agent started. Hub: {server}, Token: {token[:8]}...", flush=True)
-    last_hash = None
+    last_hash = read_saved_hash()
     while True:
         try:
             # 动态检测 /opt/monitor/agent.env 是否切换了面板（例如从面板A重新对接到面板B）
@@ -5350,8 +5432,20 @@ def apply_singbox_config():
         ]
     }
 
+    new_cfg_str = json.dumps(config, indent=2)
+    existing_cfg_str = ""
+    if os.path.exists(SINGBOX_CONFIG):
+        try:
+            with open(SINGBOX_CONFIG, "r", encoding="utf-8") as f:
+                existing_cfg_str = f.read()
+        except Exception:
+            pass
+
+    if existing_cfg_str.strip() == new_cfg_str.strip():
+        return True, "Sing-box 配置无变化，跳过重启保持长连接零中断"
+
     with open(SINGBOX_CONFIG, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
+        f.write(new_cfg_str)
 
     test_res = subprocess.run([SINGBOX_BIN, "check", "-c", SINGBOX_CONFIG], capture_output=True, text=True)
     if test_res.returncode == 0:
@@ -5625,8 +5719,20 @@ def apply_realm_config():
         "endpoints": endpoints
     }
 
+    new_cfg_str = json.dumps(config, indent=2)
+    existing_cfg_str = ""
+    if os.path.exists(REALM_CONFIG):
+        try:
+            with open(REALM_CONFIG, "r", encoding="utf-8") as f:
+                existing_cfg_str = f.read()
+        except Exception:
+            pass
+
+    if existing_cfg_str.strip() == new_cfg_str.strip():
+        return True, "Realm 配置无变化，跳过重启"
+
     with open(REALM_CONFIG, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
+        f.write(new_cfg_str)
 
     if relay_ports:
         allow_ports(relay_ports)
@@ -5707,8 +5813,20 @@ def apply_xray_config():
         }
     }
 
+    new_cfg_str = json.dumps(config, indent=2)
+    existing_cfg_str = ""
+    if os.path.exists(XRAY_CONFIG):
+        try:
+            with open(XRAY_CONFIG, "r", encoding="utf-8") as f:
+                existing_cfg_str = f.read()
+        except Exception:
+            pass
+
+    if existing_cfg_str.strip() == new_cfg_str.strip():
+        return True, "Xray 配置无变化，跳过重启保持长连接零中断"
+
     with open(XRAY_CONFIG, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
+        f.write(new_cfg_str)
 
     test_res = subprocess.run([XRAY_BIN, "run", "-test", "-config", XRAY_CONFIG], capture_output=True, text=True)
     if test_res.returncode == 0:
