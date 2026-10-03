@@ -68,18 +68,7 @@ for _i, _arg in enumerate(sys.argv):
             PORT = int(sys.argv[_i + 1])
         except ValueError:
             pass
-LOCAL_HOSTS = {"189.24.108.25", "127.0.0.1", "localhost", "test.yohoo.xyz", "tz.yohoo.xyz", ""}
-
-def get_request_base_url(headers=None):
-    if headers:
-        host = headers.get("X-Forwarded-Host") or headers.get("Host") or ""
-        host = host.split(",")[0].strip()
-        proto = headers.get("X-Forwarded-Proto") or ("https" if headers.get("X-Forwarded-Ssl") == "on" else "http")
-        proto = proto.split(",")[0].strip()
-        if host:
-            return f"{proto}://{host}"
-    local_ip = get_local_ip() or "127.0.0.1"
-    return f"http://{local_ip}"
+LOCAL_HOSTS = {"189.24.108.25", "127.0.0.1", "localhost", "::1", "test.yohoo.xyz", "tz.yohoo.xyz", ""}
 
 def get_local_ip(family=socket.AF_INET):
     try:
@@ -92,6 +81,58 @@ def get_local_ip(family=socket.AF_INET):
         return ip
     except Exception:
         return ""
+
+def is_private_ip(addr):
+    if not addr:
+        return True
+    try:
+        import ipaddress
+        ip = ipaddress.ip_address(str(addr).strip())
+        return ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local
+    except Exception:
+        return False
+
+_SERVER_PUBLIC_IP_CACHE = {"ip": "", "ts": 0}
+
+def get_server_public_ip():
+    now = time.time()
+    if _SERVER_PUBLIC_IP_CACHE["ip"] and (now - _SERVER_PUBLIC_IP_CACHE["ts"] < 300):
+        return _SERVER_PUBLIC_IP_CACHE["ip"]
+    
+    # 1. 优先尝试本地出站套接字探测 (最快且不消耗网络请求)
+    ip = get_local_ip(socket.AF_INET)
+    if ip and not is_private_ip(ip):
+        _SERVER_PUBLIC_IP_CACHE["ip"] = ip
+        _SERVER_PUBLIC_IP_CACHE["ts"] = now
+        LOCAL_HOSTS.add(ip)
+        return ip
+        
+    # 2. 多源公网 IP 接口快速获取 (超时 2 秒防阻塞)
+    for url in ("https://api.ipify.org", "https://icanhazip.com", "https://ip.sb"):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "curl/7.68.0"})
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                text = resp.read().decode("utf-8").strip()
+                if text and not is_private_ip(text):
+                    _SERVER_PUBLIC_IP_CACHE["ip"] = text
+                    _SERVER_PUBLIC_IP_CACHE["ts"] = now
+                    LOCAL_HOSTS.add(text)
+                    return text
+        except Exception:
+            continue
+
+    return ip or ""
+
+def get_request_base_url(headers=None):
+    if headers:
+        host = headers.get("X-Forwarded-Host") or headers.get("Host") or ""
+        host = host.split(",")[0].strip()
+        proto = headers.get("X-Forwarded-Proto") or ("https" if headers.get("X-Forwarded-Ssl") == "on" else "http")
+        proto = proto.split(",")[0].strip()
+        if host:
+            return f"{proto}://{host}"
+    local_ip = get_server_public_ip() or get_local_ip() or "127.0.0.1"
+    return f"http://{local_ip}"
 
 def format_host_for_uri(host):
     if not host:
@@ -651,6 +692,30 @@ def save_saved_hash(h):
             f.write(h.strip())
     except Exception:
         pass
+
+def get_agent_public_ip():
+    try:
+        target = ("8.8.8.8", 80)
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(1.0)
+        s.connect(target)
+        ip = s.getsockname()[0]
+        s.close()
+        import ipaddress
+        if not ipaddress.ip_address(ip).is_private:
+            return ip
+    except Exception:
+        pass
+    for url in ("https://api.ipify.org", "https://icanhazip.com", "https://ip.sb"):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "curl/7.68.0"})
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                text = resp.read().decode("utf-8").strip()
+                if text:
+                    return text
+        except Exception:
+            continue
+    return ""
 
 def is_systemd():
     return os.path.exists("/run/systemd/system") or (shutil.which("systemctl") is not None and os.path.exists("/etc/systemd"))
@@ -1547,6 +1612,7 @@ def sync_step(server, token, last_hash):
         "token": token,
         "status": status,
         "version": version,
+        "ipv4": get_agent_public_ip(),
         "ports": target_ports,
         "listening_ports": listening_ports,
         "xray_installed": 1 if xr_installed else 0,
@@ -3395,13 +3461,17 @@ def resolve_server_host(r):
         return ipv4
     if pub_ip and not is_private_ip(pub_ip):
         return pub_ip
+    server_ip = get_server_public_ip()
+    if server_ip and not is_private_ip(server_ip):
+        return server_ip
     return ipv4 or pub_ip or "127.0.0.1"
 
 def is_local_node(node):
     s_id = node.get("server_id", 0)
-    s_host = node.get("server_host", "")
-    s_name = node.get("server_name", "")
-    return s_id == 0 or (s_host in LOCAL_HOSTS) or (s_name == "本机")
+    s_host = str(node.get("server_host", "")).strip()
+    s_name = str(node.get("server_name", "")).strip()
+    pub_ip = get_server_public_ip()
+    return s_id == 0 or (s_host in LOCAL_HOSTS) or (pub_ip and s_host == pub_ip) or (s_name in ("本机", "localhost"))
 
 _IPV6_CAPABLE_CACHE = {"ts": 0, "val": False}
 
@@ -4257,7 +4327,7 @@ def get_server_country_map():
     except Exception:
         return {}
 
-CURRENT_VERSION = "v2.5.25"
+CURRENT_VERSION = "v2.5.27"
 
 def is_legacy_migration_needed() -> bool:
     """
@@ -4284,6 +4354,14 @@ def get_local_version() -> str:
                         return v
             except Exception:
                 pass
+    # 若 VERSION 文件缺失，自动在运行目录写入缺省版本号，杜绝版本恒定误判为有更新
+    try:
+        ver_path = os.path.join(BASE_DIR, "VERSION")
+        os.makedirs(os.path.dirname(ver_path), exist_ok=True)
+        with open(ver_path, "w", encoding="utf-8") as f:
+            f.write(CURRENT_VERSION + "\n")
+    except Exception:
+        pass
     return CURRENT_VERSION
 
 _update_cache = {
@@ -6225,10 +6303,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                             filtered.append(n)
                 nodes = filtered
 
+            hub_ip = get_server_public_ip()
             for n in nodes:
                 sid = n.get("server_id")
-                if sid in node_ip_map and is_private_ip(n.get("server_host")):
+                cur_host = str(n.get("server_host", "")).strip()
+                if sid in node_ip_map and not is_private_ip(node_ip_map[sid]) and node_ip_map[sid] not in ('127.0.0.1', 'localhost'):
                     n["server_host"] = node_ip_map[sid]
+                elif is_private_ip(cur_host) or cur_host in ('127.0.0.1', 'localhost', ''):
+                    if hub_ip and not is_private_ip(hub_ip):
+                        n["server_host"] = hub_ip
 
             if is_clash:
                 yaml_content = generate_clash_yaml(nodes, user=user, server_country_map=server_country_map)
@@ -6255,46 +6338,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 return
 
             links = [format_node_link(n, user=user, server_country_map=server_country_map) for n in nodes if format_node_link(n, user=user, server_country_map=server_country_map)]
-            info_links = []
-            if user:
-                for title in build_subscription_info_nodes(user):
-                    info_links.append(f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:0?security=none#{quote(title)}")
-            all_links = info_links + links
-            import base64
-            encoded = base64.b64encode("\n".join(all_links).encode("utf-8"))
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Subscription-Userinfo", sub_userinfo)
-            self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.txt"')
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
-            return
-
-            cur = conn.execute("SELECT * FROM proxy_node WHERE enabled = 1 ORDER BY id DESC")
-            nodes = [dict(r) for r in cur.fetchall()]
-            cur_nodes = conn.execute("SELECT id, ip, ipv4 FROM node")
-            node_ip_map = {r["id"]: resolve_server_host(dict(r)) for r in cur_nodes.fetchall()}
-            conn.close()
-
-            for n in nodes:
-                sid = n.get("server_id")
-                if sid in node_ip_map and is_private_ip(n.get("server_host")):
-                    n["server_host"] = node_ip_map[sid]
-
-            if is_clash:
-                yaml_content = generate_clash_yaml(nodes, user=user)
-                encoded = yaml_content.encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/yaml; charset=utf-8")
-                self.send_header("Subscription-Userinfo", sub_userinfo)
-                self.send_header("Content-Disposition", f'attachment; filename="{user.get("username", "sub")}.yaml"')
-                self.send_header("Content-Length", str(len(encoded)))
-                self.end_headers()
-                self.wfile.write(encoded)
-                return
-
-            links = [format_node_link(n, user=user) for n in nodes if format_node_link(n, user=user)]
             info_links = []
             if user:
                 for title in build_subscription_info_nodes(user):
@@ -7242,6 +7285,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/proxy/servers":
             conn = get_db()
+            hub_pub_ip = get_server_public_ip()
             # 自动级联自愈：彻底清除在 node 表中已被删除的服务器残留的节点与旧状态，杜绝重加服务器时的数据冲突
             existing_node_ids = {r[0] for r in conn.execute("SELECT id FROM node").fetchall()}
             with conn:
@@ -7255,6 +7299,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 del_status_ids = [st["node_id"] for st in orphaned_statuses if st["node_id"] not in existing_node_ids]
                 if del_status_ids:
                     conn.execute(f"DELETE FROM node_proxy_status WHERE node_id IN ({','.join('?' for _ in del_status_ids)})", del_status_ids)
+
+                # 自动级联自愈：若 node 表或 proxy_node 表中有 127.0.0.1 或空 IP，自动修复为本机公网 IP
+                if hub_pub_ip and not is_private_ip(hub_pub_ip):
+                    conn.execute("""
+                        UPDATE node 
+                        SET ip = CASE WHEN (ip IN ('', '127.0.0.1') OR ip LIKE '127.%') THEN ? ELSE ip END,
+                            ipv4 = CASE WHEN (ipv4 IN ('', '127.0.0.1') OR ipv4 LIKE '127.%') THEN ? ELSE ipv4 END
+                        WHERE (ip IN ('', '127.0.0.1') OR ipv4 IN ('', '127.0.0.1') OR ip LIKE '127.%' OR ipv4 LIKE '127.%')
+                    """, (hub_pub_ip, hub_pub_ip))
+                    conn.execute("""
+                        UPDATE proxy_node
+                        SET server_host = ?
+                        WHERE server_host IN ('127.0.0.1', 'localhost', '') OR server_host LIKE '127.%'
+                    """, (hub_pub_ip,))
 
             cur = conn.execute("SELECT id, name, ip, ipv4, ipv6, token FROM node ORDER BY sort ASC, id ASC")
             remote_nodes = [dict(r) for r in cur.fetchall()]
@@ -7271,7 +7329,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             local_realm_installed = os.path.exists(REALM_BIN)
             local_realm_running = subprocess.run(["systemctl", "is-active", "--quiet", "realm"]).returncode == 0
 
-            local_ipv4 = get_local_ip(socket.AF_INET) or "189.24.108.25"
+            local_ipv4 = hub_pub_ip or get_local_ip(socket.AF_INET) or "127.0.0.1"
             local_ipv6 = get_local_ip(socket.AF_INET6)
 
             servers = []
@@ -7280,12 +7338,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 raw_ipv4 = (r.get("ipv4") or "").strip()
                 pub_ip = (r.get("ip") or r.get("country_ip") or "").strip()
                 host = resolve_server_host(r)
+                if host in ("127.0.0.1", "localhost", "") or is_private_ip(host):
+                    if hub_pub_ip and not is_private_ip(hub_pub_ip):
+                        host = hub_pub_ip
                 if raw_ipv4 and not is_private_ip(raw_ipv4):
                     r_ipv4 = raw_ipv4
                 elif pub_ip and not is_private_ip(pub_ip):
                     r_ipv4 = pub_ip
                 else:
-                    r_ipv4 = host or raw_ipv4 or pub_ip
+                    r_ipv4 = host or hub_pub_ip or raw_ipv4 or pub_ip
                 r_ipv6 = (r.get("ipv6") or "").strip()
                 is_local = (host in LOCAL_HOSTS)
                 st = status_map.get(r["id"], {})
@@ -7521,6 +7582,42 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 return
             
             node_id = row["id"]
+
+            # 自动提取并持久化有效公网 IP，更新 node 表并自愈 proxy_node 表中残留的 127.0.0.1
+            client_ip = ""
+            xff = self.headers.get("X-Forwarded-For")
+            if xff:
+                client_ip = xff.split(",")[0].strip()
+            elif self.headers.get("CF-Connecting-IP"):
+                client_ip = self.headers.get("CF-Connecting-IP").strip()
+            elif self.client_address:
+                client_ip = str(self.client_address[0]).strip()
+
+            reported_ip = str(req.get("ipv4") or req.get("ip") or "").strip()
+            valid_ip = ""
+            if reported_ip and not is_private_ip(reported_ip):
+                valid_ip = reported_ip
+            elif client_ip and not is_private_ip(client_ip):
+                valid_ip = client_ip
+            else:
+                hub_ip = get_server_public_ip()
+                if hub_ip and not is_private_ip(hub_ip):
+                    valid_ip = hub_ip
+
+            if valid_ip and not is_private_ip(valid_ip):
+                with conn:
+                    conn.execute("""
+                        UPDATE node 
+                        SET ip = CASE WHEN (ip IN ('', '127.0.0.1') OR ip LIKE '127.%' OR ip LIKE '10.%' OR ip LIKE '192.168.%') THEN ? ELSE ip END,
+                            ipv4 = CASE WHEN (ipv4 IN ('', '127.0.0.1') OR ipv4 LIKE '127.%' OR ipv4 LIKE '10.%' OR ipv4 LIKE '192.168.%') THEN ? ELSE ipv4 END
+                        WHERE id = ?
+                    """, (valid_ip, valid_ip, node_id))
+                    conn.execute("""
+                        UPDATE proxy_node
+                        SET server_host = ?
+                        WHERE server_id = ? AND (server_host IN ('127.0.0.1', 'localhost', '') OR server_host LIKE '127.%')
+                    """, (valid_ip, node_id))
+
             status = req.get("status", "unknown")
             version = req.get("version", "")
             ports_json = json.dumps(req.get("ports", []))
@@ -9115,6 +9212,29 @@ if __name__ == "__main__":
         except Exception:
             pass
     threading.Thread(target=_initial_license_recover, daemon=True, name="init_license_recover").start()
+
+    def _initial_ip_heal():
+        time.sleep(1)
+        try:
+            pub_ip = get_server_public_ip()
+            if pub_ip and not is_private_ip(pub_ip):
+                c = sqlite3.connect(DB_PATH)
+                with c:
+                    c.execute("""
+                        UPDATE node 
+                        SET ip = CASE WHEN (ip IN ('', '127.0.0.1') OR ip LIKE '127.%') THEN ? ELSE ip END,
+                            ipv4 = CASE WHEN (ipv4 IN ('', '127.0.0.1') OR ipv4 LIKE '127.%') THEN ? ELSE ipv4 END
+                        WHERE (ip IN ('', '127.0.0.1') OR ipv4 IN ('', '127.0.0.1') OR ip LIKE '127.%' OR ipv4 LIKE '127.%')
+                    """, (pub_ip, pub_ip))
+                    c.execute("""
+                        UPDATE proxy_node
+                        SET server_host = ?
+                        WHERE server_host IN ('127.0.0.1', 'localhost', '') OR server_host LIKE '127.%'
+                    """, (pub_ip,))
+                c.close()
+        except Exception:
+            pass
+    threading.Thread(target=_initial_ip_heal, daemon=True, name="init_ip_heal").start()
     t = threading.Thread(target=traffic_collector_loop, daemon=True)
     t.start()
     t_backup = threading.Thread(target=telegram_backup_loop, daemon=True)

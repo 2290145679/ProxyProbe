@@ -640,21 +640,31 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     }
   }
 
-  const serverOptions: ProxyServer[] = (servers.length > 0 ? servers : nodes.map(n => ({
-    id: n.id,
-    name: n.name,
-    host: n.ip || n.ipv4 || "自动解析",
-    ipv4: n.ip || n.ipv4 || "",
-    ipv6: n.ipv6 || "",
-    is_local: false,
-    token: "",
-    xray_installed: false,
-    xray_running: false,
-    singbox_installed: false,
-    singbox_running: false,
-    realm_installed: false,
-    realm_running: false
-  }))).filter(s => s.id !== 0)
+  const serverOptions: ProxyServer[] = (servers.length > 0 ? servers : nodes.map(n => {
+    let host = n.ip || n.ipv4 || ""
+    if (host === "127.0.0.1" || host === "localhost" || !host) {
+      if (typeof window !== "undefined" && window.location.hostname && window.location.hostname !== "127.0.0.1" && window.location.hostname !== "localhost") {
+        host = window.location.hostname
+      } else {
+        host = "自动解析"
+      }
+    }
+    return {
+      id: n.id,
+      name: n.name,
+      host: host,
+      ipv4: host !== "自动解析" ? host : "",
+      ipv6: n.ipv6 || "",
+      is_local: false,
+      token: "",
+      xray_installed: false,
+      xray_running: false,
+      singbox_installed: false,
+      singbox_running: false,
+      realm_installed: false,
+      realm_running: false
+    }
+  })).filter(s => s.id !== 0)
 
   const currentSelectedServer = serverOptions.find(s => String(s.id) === form.server_id)
   const isSingboxProto = form.protocol === "hysteria2" || form.protocol === "tuic" || form.protocol === "anytls"
@@ -686,7 +696,12 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     const defaultServer = serverOptions[0]
     const sId = String(defaultServer.id)
     const sName = defaultServer.name
-    const sHost = defaultServer.host || defaultServer.ipv4 || ""
+    let sHost = defaultServer.host || defaultServer.ipv4 || ""
+    if (sHost === "127.0.0.1" || sHost === "localhost" || !sHost) {
+      if (typeof window !== "undefined" && window.location.hostname && window.location.hostname !== "127.0.0.1" && window.location.hostname !== "localhost") {
+        sHost = window.location.hostname
+      }
+    }
 
     setNodeMode("direct")
     setRelayTargetMode("link_existing")
@@ -745,6 +760,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         chosenHost = s.ipv6
       } else {
         setIpType("ipv4")
+      }
+    }
+    if (chosenHost === "127.0.0.1" || chosenHost === "localhost" || !chosenHost) {
+      if (typeof window !== "undefined" && window.location.hostname && window.location.hostname !== "127.0.0.1" && window.location.hostname !== "localhost") {
+        chosenHost = window.location.hostname
       }
     }
     setForm(prev => {
@@ -1760,7 +1780,12 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                     }
                   }
                   const targetNode = proxyNodes.find(n => String(n.id) === selectedTargetNodeId)
-                  const chosenHost = targetServer ? (ipType === "ipv6" && targetServer.ipv6 ? targetServer.ipv6 : (targetServer.host || targetServer.ipv4 || "")) : form.server_host
+                  let chosenHost = targetServer ? (ipType === "ipv6" && targetServer.ipv6 ? targetServer.ipv6 : (targetServer.host || targetServer.ipv4 || "")) : form.server_host
+                  if (chosenHost === "127.0.0.1" || chosenHost === "localhost" || !chosenHost) {
+                    if (typeof window !== "undefined" && window.location.hostname && window.location.hostname !== "127.0.0.1" && window.location.hostname !== "localhost") {
+                      chosenHost = window.location.hostname
+                    }
+                  }
                   const newName = computeNodeName(targetServer ? targetServer.name : form.server_name, form.protocol, "relay", includeServerPrefix, targetNode?.name)
                   setForm(prev => ({ 
                     ...prev, 

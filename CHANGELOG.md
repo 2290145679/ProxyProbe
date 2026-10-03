@@ -2,6 +2,33 @@
 
 本文档记录 **ProxyProbe** 的所有主要版本演进、核心功能迭代与 Bug 修复历史。
 
+## 🌟 [v2.5.27] - 2026-10-04
+
+### 🌐 节点 IP 智能自愈与公网自动识别 (Node IP Auto-Healing & Public IP Detection)
+- **同机部署回环 IP 智能替换**：彻底解决在面板本机添加探针节点识别为 `127.0.0.1` 导致新建节点与订阅链接输出回环地址的缺陷；
+- **全链路多源公网探测**：新增 `get_server_public_ip` 与被控端 `get_agent_public_ip`，支持多源接口极速探测 VPS 公网出口；
+- **数据库级联无损自愈**：在服务启动与进入节点管理时，自动识别并修复 `node` 表空 IP 与 `proxy_node` 表中的回环地址；
+- **订阅分发兜底保障**：Clash / Sing-box / Base64 订阅生成器内建回环地址自动替换为当前机器公网 IP 或主控域名；
+- **前端输入防呆增强**：新建直连与中转节点时，所属服务器 IP 默认自动继承当前浏览器访问域名或公网出口，杜绝误录入回环地址。
+
+### 🚀 版本标识持久化与更新误报彻底修复 (VERSION Persistence & False Update Prompt Fix)
+- **部署脚本持久化写入**：在 `deploy-hub.sh` 与 `hhub.sh` 中增加 `$ROOT/VERSION` 持久化写入逻辑，消除全新安装后版本号文件缺失的漏洞；
+- **缺省版本动态补偿**：服务端若未检测到 `VERSION` 文件，自动写入当前稳定版本号，彻底解决反复弹出“发现新版本”的体验困扰；
+- **全自动热升级版本同步**：在线无损热升级与命令行升级无缝同步写入最新版本号。
+
+### ⚡ 订阅全内核标准规范兼容 (Subscription Protocol Standards Alignment)
+- **Clash / Mihomo 加密算法兼容**：修复 Shadowsocks 2022 订阅遗漏 `cipher: 2022-blake3-aes-128-gcm` 导致 Clash 报错 `missing cipher` 的问题；
+- **Sing-box 1.14 最新标准规范**：移除非法的顶级 `"version": 1` 字段，补齐 `dns-out` 规则路由，全面规范 `utls: { enabled: true, fingerprint: "chrome" }` 嵌套结构；
+- **全自动多平台配置校验**：保障 Clash Verge / Mihomo / Sing-box 1.14+ 客户端 100% 导入即用。
+
+## 🌟 [v2.5.26] - 2026-10-03
+
+### 🏛️ 独立专属架构部署与原探针隔离共存 (Isolated Architecture & Coexistence)
+- **独立目录架构迁移**：默认安装目录正式全面迁移至 `/opt/proxyprobe`，与原作者极简探针 100% 物理隔离，支持在同一台机器上同时运行二者且互不干扰；
+- **老面板平滑迁移守护**：针对运行在 `/opt/monitor` 的旧版实例，安全冻结直接在线升级，Web 管理面板呈现一键迁移指引卡片与复制指令；
+- **全自动一键平滑迁移**：新增 `hhub migrate` 指令，支持全量快照备份、数据与配置平滑搬迁、服务单元自动重构及老目录归档，全程无损耗时约 5 秒；
+- **订阅自动地区策略组**：Clash 与 Sing-box 订阅新增智能识别节点地区，自动生成香港、日本、美国等动态分组，且仅包含该用户有权限的有效节点。
+
 ## 🌟 [v2.5.25] - 2026-09-30
 
 ### 🟢 客户端用户实时在线感知与离线时长计算 (Real-Time User Online Status & Inactivity Tracker)

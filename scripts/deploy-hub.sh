@@ -361,6 +361,12 @@ curl -fsSL "${RELEASE_BASE}/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || \
   wget -qO "/usr/local/bin/hhub" "${RELEASE_BASE}/hhub.sh" 2>/dev/null || true
 chmod +x "/usr/local/bin/hhub" 2>/dev/null || true
 
+# VERSION（系统版本标识）—— 从公开发行库下载并持久化写入，防更新误报
+info "正在写入系统版本标识..."
+curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
+  wget -qO "$ROOT/VERSION" "${RELEASE_BASE}/VERSION" 2>/dev/null || true
+[ -s "$ROOT/VERSION" ] || echo "v2.5.27" > "$ROOT/VERSION"
+
 # 前端 dist —— 从公开发行库下载 web-admin-dist.tar.gz
 info "正在下载前端资源..."
 mkdir -p "$WEB_DIST"

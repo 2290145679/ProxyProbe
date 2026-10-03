@@ -669,6 +669,7 @@ upgrade_system() {
 
     # 6. 更新版本标识文件
     curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || true
+    [ -s "$ROOT/VERSION" ] || echo "v2.5.27" > "$ROOT/VERSION"
 
     # 确保 Caddyfile 路由配置正确
     if [ -f /etc/caddy/Caddyfile ]; then
