@@ -1072,5 +1072,6 @@ case "${1:-}" in
     update|upgrade) upgrade_system; exit 0 ;;
     migrate|migration) migrate_system; exit 0 ;;
     backup) manage_backup; exit 0 ;;
+    uninstall) uninstall_proxyprobe; exit 0 ;;
     *) main_menu ;;
 esac
