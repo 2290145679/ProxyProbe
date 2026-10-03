@@ -243,6 +243,17 @@ WantedBy=multi-user.target
 CADDY_SVC
   fi
 fi
+
+# 确保 caddy 用户和运行时证书存储目录存在且归属正确
+groupadd --system caddy 2>/dev/null || true
+useradd --system --gid caddy --create-home --home-dir /var/lib/caddy \
+  --shell /usr/sbin/nologin caddy 2>/dev/null || true
+mkdir -p /var/lib/caddy
+if id caddy >/dev/null 2>&1; then
+  chown -R caddy:caddy /var/lib/caddy 2>/dev/null || true
+  chmod 750 /var/lib/caddy 2>/dev/null || true
+fi
+
 info "Caddy 已就绪: $(caddy version 2>/dev/null || /usr/local/bin/caddy version 2>/dev/null || echo 'ok')"
 
 # ---- 步骤 3: 下载 ProxyProbe monitor-hub ----
@@ -416,6 +427,12 @@ info "proxy-manager 已启动（端口 $PM_PORT）"
 header "步骤 6/8 · 配置 Caddy 反向代理"
 
 mkdir -p /etc/caddy
+# 确保 Caddy 运行时证书存储目录与权限正确
+mkdir -p /var/lib/caddy
+if id caddy >/dev/null 2>&1; then
+  chown -R caddy:caddy /var/lib/caddy 2>/dev/null || true
+  chmod 750 /var/lib/caddy 2>/dev/null || true
+fi
 
 if [ "$IS_IP" = "1" ]; then
   # 纯 IP 模式：使用标准 HTTP 监听，禁用 ACME，并为探针主控注入 Header 避免 Origin 拒绝
@@ -530,6 +547,11 @@ systemctl enable --force caddy.service 2>/dev/null || {
   mkdir -p /etc/systemd/system/multi-user.target.wants
   ln -sf /etc/systemd/system/caddy.service /etc/systemd/system/multi-user.target.wants/caddy.service
 }
+mkdir -p /var/lib/caddy
+if id caddy >/dev/null 2>&1; then
+  chown -R caddy:caddy /var/lib/caddy 2>/dev/null || true
+  chmod 750 /var/lib/caddy 2>/dev/null || true
+fi
 systemctl restart caddy.service
 sleep 3
 info "Caddy 已配置并启动"

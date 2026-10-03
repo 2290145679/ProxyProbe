@@ -32,6 +32,14 @@ GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 RELEASE_REPO="2290145679/ProxyProbe-Release"
 RELEASE_BASE="https://raw.githubusercontent.com/${RELEASE_REPO}/main"
 
+_ensure_caddy_runtime_dir() {
+    mkdir -p /var/lib/caddy
+    if id caddy >/dev/null 2>&1; then
+        chown -R caddy:caddy /var/lib/caddy 2>/dev/null || true
+        chmod 750 /var/lib/caddy 2>/dev/null || true
+    fi
+}
+
 # ---- 读取当前配置 ----
 get_current_config() {
     # 1. 尝试从 Caddyfile 解析域名/IP、外部 Web 端口及协议 (HTTP/HTTPS)
@@ -167,6 +175,7 @@ except Exception:
 restart_all() {
     echo ""
     info "正在重启所有 ProxyProbe 服务..."
+    _ensure_caddy_runtime_dir
     systemctl restart monitor-hub proxy-manager caddy
     sleep 2
     info "服务重启完成！"
@@ -335,6 +344,7 @@ change_domain() {
 
     info "正在重新生成 Caddyfile 与系统服务配置..."
     mkdir -p /etc/caddy
+    _ensure_caddy_runtime_dir
 
     if [ "$NEW_IS_IP" = "1" ]; then
         # 纯 IP 模式配置 (HTTP)
@@ -661,6 +671,7 @@ upgrade_system() {
     fi
 
     # 重启服务
+    _ensure_caddy_runtime_dir
     systemctl daemon-reload
     systemctl restart proxy-manager monitor-hub caddy
     caddy reload --config /etc/caddy/Caddyfile --force 2>/dev/null || true
@@ -912,6 +923,7 @@ EOF
 
     info "步骤 6/6: 重启系统服务以应用全新独立架构..."
     systemctl daemon-reload
+    _ensure_caddy_runtime_dir
     systemctl restart proxy-manager monitor-hub caddy
     caddy reload --config /etc/caddy/Caddyfile --force 2>/dev/null || true
 
