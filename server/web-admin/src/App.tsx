@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { ExternalLink, LogOut, Moon, Palette, Sun } from "lucide-react"
+import { AlertTriangle, ExternalLink, LogOut, Moon, Palette, Sun } from "lucide-react"
 import { Toaster } from "sonner"
 
 import { Admin } from "@/components/Admin"
@@ -252,13 +252,27 @@ export default function App() {
             size="sm"
             onClick={() => setUpdateDialogOpen(true)}
             className={`h-8 text-xs px-2 sm:px-2.5 gap-1.5 shrink-0 ${
-              updateInfo?.has_update
+              updateInfo?.need_migration
+                ? "border-amber-500/50 bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 shadow-xs animate-pulse"
+                : updateInfo?.has_update
                 ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 shadow-xs"
                 : "border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted"
             }`}
-            title={updateInfo?.has_update ? `发现新版本 ${updateInfo.latest_version}，点击查看并升级` : `当前系统版本 ${updateInfo?.current_version || "v2.5.0"}，点击检查更新`}
+            title={
+              updateInfo?.need_migration
+                ? "系统检测到旧版目录 /opt/monitor，点击查看【hhub migrate】一键平滑迁移指南"
+                : updateInfo?.has_update
+                ? `发现新版本 ${updateInfo.latest_version}，点击查看并升级`
+                : `当前系统版本 ${updateInfo?.current_version || "v2.5.0"}，点击检查更新`
+            }
           >
-            {updateInfo?.has_update ? (
+            {updateInfo?.need_migration ? (
+              <>
+                <AlertTriangle className="size-3.5 text-amber-500 shrink-0" />
+                <span className="font-semibold text-amber-600 dark:text-amber-400 hidden sm:inline">架构待迁移</span>
+                <span className="font-semibold text-amber-600 dark:text-amber-400 sm:hidden">待迁移</span>
+              </>
+            ) : updateInfo?.has_update ? (
               <>
                 <span className="relative flex size-2 shrink-0">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />

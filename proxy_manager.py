@@ -34,7 +34,9 @@ if getattr(sys, 'frozen', False):
     else:
         os.environ.pop('LD_LIBRARY_PATH', None)
 
-DB_PATH = "/opt/monitor/data/monitor.db"
+BASE_DIR = "/opt/proxyprobe" if os.path.exists("/opt/proxyprobe") else "/opt/monitor"
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DB_PATH = os.path.join(DATA_DIR, "proxyprobe.db") if os.path.exists(os.path.join(DATA_DIR, "proxyprobe.db")) else os.path.join(DATA_DIR, "monitor.db")
 XRAY_BIN = "/usr/local/bin/xray"
 XRAY_CONFIG = "/etc/xray/config.json"
 SINGBOX_BIN = "/usr/local/bin/sing-box"
@@ -141,26 +143,32 @@ if [ $EXPLICIT_CORES -eq 0 ]; then
   INSTALL_REALM=0
 fi
 
-# 自动从本机已有的 monitor-agent 探针服务中探测主控端地址与 Token
+# 自动从本机已有的探针服务中探测主控端地址与 Token (优先 /opt/proxyprobe，兼容 /opt/monitor)
 if [ -z "$HUB_SERVER" ] || [ -z "$HUB_TOKEN" ]; then
-  if [ -f /opt/monitor/agent.env ]; then
-    echo "[+] 检测到 /opt/monitor/agent.env 探针配置，正在自动提取环境参数..."
-    ENV_SERVER=$(grep -E '^MONITOR_SERVER=' /opt/monitor/agent.env 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true)
-    ENV_TOKEN=$(grep -E '^MONITOR_TOKEN=' /opt/monitor/agent.env 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true)
-    [ -n "$ENV_SERVER" ] && HUB_SERVER="$ENV_SERVER"
-    [ -n "$ENV_TOKEN" ] && HUB_TOKEN="$ENV_TOKEN"
-  fi
-  if [ -z "$HUB_SERVER" ] || [ -z "$HUB_TOKEN" ]; then
-    if [ -f /etc/systemd/system/monitor-agent.service ]; then
-      echo "[+] 检测到 /etc/systemd/system/monitor-agent.service，正在自动解析参数..."
-      EXEC_LINE=$(grep 'ExecStart=' /etc/systemd/system/monitor-agent.service 2>/dev/null || true)
-      if [ -z "$HUB_SERVER" ]; then
-        HUB_SERVER=$(echo "$EXEC_LINE" | grep -oE '--server [^ ]+' | awk '{print $2}' || true)
-      fi
-      if [ -z "$HUB_TOKEN" ]; then
-        HUB_TOKEN=$(echo "$EXEC_LINE" | grep -oE '--token [^ ]+' | awk '{print $2}' || true)
-      fi
+  for env_file in /opt/proxyprobe/agent.env /opt/monitor/agent.env; do
+    if [ -f "$env_file" ]; then
+      echo "[+] 检测到 $env_file 探针配置，正在自动提取环境参数..."
+      ENV_SERVER=$(grep -E '^MONITOR_SERVER=' "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true)
+      ENV_TOKEN=$(grep -E '^MONITOR_TOKEN=' "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true)
+      [ -n "$ENV_SERVER" ] && HUB_SERVER="$ENV_SERVER"
+      [ -n "$ENV_TOKEN" ] && HUB_TOKEN="$ENV_TOKEN"
+      [ -n "$HUB_SERVER" ] && [ -n "$HUB_TOKEN" ] && break
     fi
+  done
+  if [ -z "$HUB_SERVER" ] || [ -z "$HUB_TOKEN" ]; then
+    for svc_file in /etc/systemd/system/proxyprobe-agent.service /etc/systemd/system/monitor-agent.service; do
+      if [ -f "$svc_file" ]; then
+        echo "[+] 检测到 $svc_file，正在自动解析参数..."
+        EXEC_LINE=$(grep 'ExecStart=' "$svc_file" 2>/dev/null || true)
+        if [ -z "$HUB_SERVER" ]; then
+          HUB_SERVER=$(echo "$EXEC_LINE" | grep -oE '--server [^ ]+' | awk '{print $2}' || true)
+        fi
+        if [ -z "$HUB_TOKEN" ]; then
+          HUB_TOKEN=$(echo "$EXEC_LINE" | grep -oE '--token [^ ]+' | awk '{print $2}' || true)
+        fi
+        [ -n "$HUB_SERVER" ] && [ -n "$HUB_TOKEN" ] && break
+      fi
+    done
   fi
 fi
 
@@ -213,7 +221,7 @@ ARCH=$(uname -m)
 
 # 2. 按需安装 Xray 核心 (解压包括 geoip.dat 与 geosite.dat)
 if [ "$INSTALL_XRAY" = "1" ]; then
-  mkdir -p /etc/xray /var/log/xray /opt/monitor /usr/local/share/xray /usr/local/etc/xray
+  mkdir -p /etc/xray /var/log/xray /opt/proxyprobe /opt/monitor /usr/local/share/xray /usr/local/etc/xray
   XRAY_ARCH="64"
   if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     XRAY_ARCH="arm64-v8a"
@@ -416,7 +424,7 @@ fi
 
 # 4. 按需安装并配置 Realm 端口转发核心 (TCP/UDP 高速端口转发)
 if [ "$INSTALL_REALM" = "1" ]; then
-  mkdir -p /etc/realm /opt/monitor
+  mkdir -p /etc/realm /opt/proxyprobe /opt/monitor
   R_ARCH="x86_64"
   if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     R_ARCH="aarch64"
@@ -502,23 +510,26 @@ else
 fi
 
 # 5. 下载远端代理守护进程脚本
+TARGET_AGENT_DIR="/opt/proxyprobe"
+mkdir -p "$TARGET_AGENT_DIR"
 echo "[+] 正在拉取代理同步守护程序..."
-$CURL_OPTS "$HUB_SERVER/api/proxy/agent-client-script" -o /opt/monitor/proxy_agent.py 2>/dev/null || true
-chmod +x /opt/monitor/proxy_agent.py 2>/dev/null || true
+$CURL_OPTS "$HUB_SERVER/api/proxy/agent-client-script" -o "$TARGET_AGENT_DIR/proxy_agent.py" 2>/dev/null || true
+chmod +x "$TARGET_AGENT_DIR/proxy_agent.py" 2>/dev/null || true
 
 # 6. 配置 proxy-agent 守护进程服务
 PY_BIN=$(command -v python3 || echo "/usr/bin/python3")
 if [ "$INIT" = "systemd" ]; then
   cat > /etc/systemd/system/proxy-agent.service << EOF
 [Unit]
-Description=Monitor Proxy Agent Daemon
+Description=ProxyProbe Agent Daemon
 After=network.target
 
 [Service]
 Type=simple
 User=root
+EnvironmentFile=-/opt/proxyprobe/agent.env
 EnvironmentFile=-/opt/monitor/agent.env
-ExecStart=$PY_BIN -u /opt/monitor/proxy_agent.py --server $HUB_SERVER --token $HUB_TOKEN
+ExecStart=$PY_BIN -u $TARGET_AGENT_DIR/proxy_agent.py --server $HUB_SERVER --token $HUB_TOKEN
 Restart=always
 RestartSec=5
 
@@ -533,12 +544,12 @@ else
   cat > /etc/init.d/proxy-agent << EOF
 #!/sbin/openrc-run
 name="proxy-agent"
-description="Monitor Proxy Agent Daemon"
+description="ProxyProbe Agent Daemon"
 supervisor="supervise-daemon"
 respawn_delay=5
 respawn_max=0
 command="$PY_BIN"
-command_args="-u /opt/monitor/proxy_agent.py --server $HUB_SERVER --token $HUB_TOKEN"
+command_args="-u $TARGET_AGENT_DIR/proxy_agent.py --server $HUB_SERVER --token $HUB_TOKEN"
 output_log="/var/log/proxy-agent.log"
 error_log="/var/log/proxy-agent.log"
 
@@ -578,7 +589,7 @@ if [ "$INSTALL_REALM" = "1" ]; then
     echo "  - Realm: [警告] 核心文件缺失或网络下载失败！"
   fi
 fi
-if [ -f /opt/monitor/proxy_agent.py ]; then
+if [ -f "$TARGET_AGENT_DIR/proxy_agent.py" ]; then
   echo "  - 守护进程: proxy-agent 已就绪并启动"
 else
   echo "  - 守护进程: [警告] proxy_agent.py 拉取失败，请检查主控连接！"
@@ -620,7 +631,7 @@ SINGBOX_BIN = "/usr/local/bin/sing-box"
 SINGBOX_CONFIG = "/etc/sing-box/config.json"
 REALM_BIN = "/usr/local/bin/realm"
 REALM_CONFIG = "/etc/realm/config.json"
-HASH_FILE = "/opt/monitor/.proxy_config.hash"
+HASH_FILE = "/opt/proxyprobe/.proxy_config.hash" if os.path.exists("/opt/proxyprobe") else "/opt/monitor/.proxy_config.hash"
 
 def read_saved_hash():
     if os.path.exists(HASH_FILE):
@@ -726,18 +737,20 @@ def register_service_if_missing(name, exec_start, desc="", working_dir=""):
 
 def read_env_file():
     srv, tok = "", ""
-    env_file = "/opt/monitor/agent.env"
-    if os.path.exists(env_file):
-        try:
-            with open(env_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("MONITOR_SERVER="):
-                        srv = line.split("=", 1)[1].strip("'").strip('"')
-                    elif line.startswith("MONITOR_TOKEN="):
-                        tok = line.split("=", 1)[1].strip("'").strip('"')
-        except Exception:
-            pass
+    for env_file in ("/opt/proxyprobe/agent.env", "/opt/monitor/agent.env"):
+        if os.path.exists(env_file):
+            try:
+                with open(env_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("MONITOR_SERVER="):
+                            srv = line.split("=", 1)[1].strip("'").strip('"')
+                        elif line.startswith("MONITOR_TOKEN="):
+                            tok = line.split("=", 1)[1].strip("'").strip('"')
+                if srv and tok:
+                    break
+            except Exception:
+                pass
     return srv.rstrip("/"), tok
 
 def get_params():
@@ -1801,7 +1814,7 @@ def init_db():
             pass
 
         try:
-            os.makedirs("/opt/monitor/uploads/apps", exist_ok=True)
+            os.makedirs(os.path.join(BASE_DIR, "uploads", "apps"), exist_ok=True)
         except Exception:
             pass
 
@@ -4246,16 +4259,31 @@ def get_server_country_map():
 
 CURRENT_VERSION = "v2.5.25"
 
+def is_legacy_migration_needed() -> bool:
+    """
+    判断当前系统是否仍运行在旧版目录 /opt/monitor 中。
+    旧版目录停止直接 Web 在线覆盖升级，需引导管理员在 SSH 终端执行一键迁移指令 hhub migrate。
+    """
+    try:
+        cur_file = os.path.abspath(__file__)
+        if "/opt/monitor" in cur_file:
+            return True
+        if not os.path.exists("/opt/proxyprobe") and os.path.exists("/opt/monitor"):
+            return True
+    except Exception:
+        pass
+    return False
+
 def get_local_version() -> str:
-    ver_file = "/opt/monitor/VERSION"
-    if os.path.exists(ver_file):
-        try:
-            with open(ver_file, "r", encoding="utf-8") as f:
-                v = f.read().strip()
-                if v:
-                    return v
-        except Exception:
-            pass
+    for ver_file in (os.path.join(BASE_DIR, "VERSION"), "/opt/proxyprobe/VERSION", "/opt/monitor/VERSION"):
+        if os.path.exists(ver_file):
+            try:
+                with open(ver_file, "r", encoding="utf-8") as f:
+                    v = f.read().strip()
+                    if v:
+                        return v
+            except Exception:
+                pass
     return CURRENT_VERSION
 
 _update_cache = {
@@ -4313,11 +4341,16 @@ def check_system_update(force=False):
     except Exception:
         has_update = (latest_ver != cur_ver and latest_ver != "")
 
+    need_migration = is_legacy_migration_needed()
+
     result = {
         "ok": True,
         "current_version": cur_ver,
         "latest_version": latest_ver,
         "has_update": has_update,
+        "need_migration": need_migration,
+        "migration_cmd": "hhub migrate",
+        "migration_reason": "ProxyProbe 现已全面升级为独立安装目录 (/opt/proxyprobe)，与原版极简探针 100% 独立共存、配置完全隔离。为保障生产数据库与配置安全，旧目录已停止直接在线覆盖，请在 SSH 终端执行一键迁移指令平滑切换至新架构！",
         "title": title or f"ProxyProbe {latest_ver} 最新版本",
         "changelog": changelog,
         "release_date": release_date,
@@ -4335,9 +4368,10 @@ def trigger_background_upgrade():
         if os.path.exists(hhub_bin) and os.access(hhub_bin, os.X_OK):
             subprocess.Popen([hhub_bin, "upgrade"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
-            script_path = "/opt/monitor/scripts/hhub.sh"
-            if os.path.exists(script_path):
-                subprocess.Popen(["bash", script_path, "upgrade"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for sp in (os.path.join(BASE_DIR, "scripts", "hhub.sh"), "/opt/proxyprobe/scripts/hhub.sh", "/opt/monitor/scripts/hhub.sh"):
+                if os.path.exists(sp):
+                    subprocess.Popen(["bash", sp, "upgrade"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    break
     t = threading.Thread(target=_run, daemon=True)
     t.start()
 
@@ -4545,6 +4579,79 @@ def get_active_singbox_rules():
         return json.loads(DEFAULT_SINGBOX_GLOBAL_RULES)
     
     return json.loads(DEFAULT_SINGBOX_SMART_RULES)
+
+REGION_MAP = {
+    "HK": ("🇭🇰 香港地区", 1),
+    "TW": ("🇹🇼 台湾地区", 2),
+    "JP": ("🇯🇵 日本地区", 3),
+    "SG": ("🇸🇬 新加坡地区", 4),
+    "US": ("🇺🇸 美国地区", 5),
+    "KR": ("🇰🇷 韩国地区", 6),
+    "UK": ("🇬🇧 英国地区", 7),
+    "GB": ("🇬🇧 英国地区", 7),
+    "DE": ("🇩🇪 德国地区", 8),
+    "FR": ("🇫🇷 法国地区", 9),
+    "CA": ("🇨🇦 加拿大地区", 10),
+    "AU": ("🇦🇺 澳大利亚地区", 11),
+    "RU": ("🇷🇺 俄罗斯地区", 12),
+    "MY": ("🇲🇾 马来西亚地区", 13),
+    "TH": ("🇹🇭 泰国地区", 14),
+    "IN": ("🇮🇳 印度地区", 15),
+    "PH": ("🇵🇭 菲律宾地区", 16),
+    "VN": ("🇻🇳 越南地区", 17),
+}
+
+KEYWORD_RULES = [
+    (r"(?:香港|hong\s*kong|hongkong|hkg|\bhk\b|🇭🇰)", "HK"),
+    (r"(?:台湾|taiwan|taipei|taichung|\btw\b|tpe|🇹🇼)", "TW"),
+    (r"(?:日本|japan|tokyo|osaka|东京|大阪|\bjp\b|🇯🇵)", "JP"),
+    (r"(?:新加坡|singapore|lion\s*city|狮城|\bsg\b|sin|🇸🇬)", "SG"),
+    (r"(?:美国|united\s*states|america|usa|los\s*angeles|san\s*jose|seattle|new\s*york|硅谷|洛杉矶|圣何塞|西雅图|纽约|\bus\b|美西|美东|🇺🇸)", "US"),
+    (r"(?:韩国|korea|seoul|首尔|\bkr\b|kor|🇰🇷)", "KR"),
+    (r"(?:英国|united\s*kingdom|london|great\s*britain|伦敦|\buk\b|\bgb\b|gbr|🇬🇧)", "UK"),
+    (r"(?:德国|germany|frankfurt|berlin|法兰克福|柏林|\bde\b|deu|🇩🇪)", "DE"),
+    (r"(?:法国|france|paris|巴黎|\bfr\b|fra|🇫🇷)", "FR"),
+    (r"(?:加拿大|canada|toronto|vancouver|多伦多|温哥华|\bca\b|can|🇨🇦)", "CA"),
+    (r"(?:澳大利亚|australia|sydney|melbourne|澳洲|悉尼|墨尔本|\bau\b|aus|🇦🇺)", "AU"),
+    (r"(?:俄罗斯|russia|moscow|莫斯科|\bru\b|rus|🇷🇺)", "RU"),
+    (r"(?:马来西亚|malaysia|kuala\s*lumpur|吉隆坡|\bmy\b|mys|🇲🇾)", "MY"),
+    (r"(?:泰国|thailand|bangkok|曼谷|\bth\b|tha|🇹🇭)", "TH"),
+    (r"(?:印度|india|mumbai|孟买|\bin\b|ind|🇮🇳)", "IN"),
+    (r"(?:菲律宾|philippines|manila|马尼拉|\bph\b|phl|🇵🇭)", "PH"),
+    (r"(?:越南|vietnam|hanoi|ho\s*chi\s*minh|河内|胡志明|\bvn\b|vnm|🇻🇳)", "VN"),
+]
+
+def detect_node_region(node, server_country_map=None):
+    """
+    智能推断节点所属地区与国旗标识
+    支持：节点名称关键词、落地目标服务器名称、中转出口解析、后台关联服务器物理国家代码
+    """
+    name = (node.get("name") or "").strip()
+    target_text = name
+    if "➔" in name:
+        target_text = name.split("➔")[-1]
+    elif "->" in name:
+        target_text = name.split("->")[-1]
+
+    # 1. 优先从落地出口名称或目标文本中提取关键词
+    for pattern, code in KEYWORD_RULES:
+        if re.search(pattern, target_text, re.IGNORECASE):
+            return REGION_MAP.get(code, (f"{code} 地区", 99))
+
+    # 2. 从关联服务器国家代码映射提取 (ISO 2-letter, 如 HK/JP/US/DE)
+    sid = node.get("server_id")
+    if server_country_map and sid in server_country_map:
+        code = str(server_country_map[sid]).strip().upper()
+        if code in REGION_MAP:
+            return REGION_MAP[code]
+
+    # 3. 从全名或所属服务器名称匹配
+    full_text = f"{name} {node.get('server_name', '')}"
+    for pattern, code in KEYWORD_RULES:
+        if re.search(pattern, full_text, re.IGNORECASE):
+            return REGION_MAP.get(code, (f"{code} 地区", 99))
+
+    return ("🌐 其他地区", 999)
 
 def generate_clash_yaml(nodes, user=None, warning_msg=None, server_country_map=None):
     if warning_msg:
@@ -4774,6 +4881,45 @@ rules:
     if not names:
         names = ["DIRECT"]
 
+    # 动态为当前用户实际拥有的节点识别并构建地区策略组
+    region_groups = {}
+    for node, name in zip(nodes, names):
+        if name == "DIRECT":
+            continue
+        reg_title, reg_rank = detect_node_region(node, server_country_map)
+        if reg_title not in region_groups:
+            region_groups[reg_title] = (reg_rank, [])
+        region_groups[reg_title][1].append(name)
+
+    sorted_regions = sorted(region_groups.items(), key=lambda x: (x[1][0], x[0]))
+    region_group_names = [r[0] for r in sorted_regions]
+
+    proxy_groups = [
+        {
+            "name": "节点选择",
+            "type": "select",
+            "proxies": ["自动选择"] + region_group_names + info_names + names
+        },
+        {
+            "name": "自动选择",
+            "type": "url-test",
+            "url": "http://www.gstatic.com/generate_204",
+            "interval": 300,
+            "tolerance": 50,
+            "proxies": list(names)
+        }
+    ]
+
+    for reg_name, (reg_rank, reg_nodes) in sorted_regions:
+        proxy_groups.append({
+            "name": reg_name,
+            "type": "url-test",
+            "url": "http://www.gstatic.com/generate_204",
+            "interval": 300,
+            "tolerance": 50,
+            "proxies": reg_nodes
+        })
+
     clash_cfg = {
         "port": 7890,
         "socks-port": 7891,
@@ -4782,21 +4928,7 @@ rules:
         "log-level": "info",
         "unified-delay": True,
         "proxies": info_proxies + proxies,
-        "proxy-groups": [
-            {
-                "name": "节点选择",
-                "type": "select",
-                "proxies": ["自动选择"] + info_names + names
-            },
-            {
-                "name": "自动选择",
-                "type": "url-test",
-                "url": "http://www.gstatic.com/generate_204",
-                "interval": 300,
-                "tolerance": 50,
-                "proxies": list(names)
-            }
-        ],
+        "proxy-groups": proxy_groups,
         "rules": get_active_clash_rules()
     }
 
@@ -4847,6 +4979,8 @@ rules:
         lines.append("    type: select")
         lines.append("    proxies:")
         lines.append("      - \"自动选择\"")
+        for rname in region_group_names:
+            lines.append(f"      - \"{rname}\"")
         for iname in info_names:
             lines.append(f"      - \"{iname}\"")
         for n in names:
@@ -4859,6 +4993,15 @@ rules:
         lines.append("    proxies:")
         for n in names:
             lines.append(f"      - \"{n}\"")
+        for reg_name, (reg_rank, reg_nodes) in sorted_regions:
+            lines.append(f"  - name: \"{reg_name}\"")
+            lines.append("    type: url-test")
+            lines.append("    url: http://www.gstatic.com/generate_204")
+            lines.append("    interval: 300")
+            lines.append("    tolerance: 50")
+            lines.append("    proxies:")
+            for rn in reg_nodes:
+                lines.append(f"      - \"{rn}\"")
         lines.append("rules:")
         for r in clash_cfg["rules"]:
             lines.append(f"  - {r}")
@@ -5058,27 +5201,51 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
             node_tags.append(tag)
 
     valid_nodes = [t for t in node_tags if not t.startswith("📊") and not t.startswith("⏳")]
-    selector_tags = (["AUTO"] + valid_nodes + ["DIRECT"]) if valid_nodes else ["DIRECT"]
+
+    # 动态为当前用户实际拥有的节点识别并构建地区策略组
+    region_groups = {}
+    for node, tag in zip(nodes, valid_nodes):
+        reg_title, reg_rank = detect_node_region(node, server_country_map)
+        if reg_title not in region_groups:
+            region_groups[reg_title] = (reg_rank, [])
+        region_groups[reg_title][1].append(tag)
+
+    sorted_regions = sorted(region_groups.items(), key=lambda x: (x[1][0], x[0]))
+    region_group_tags = [r[0] for r in sorted_regions]
+
+    selector_tags = (["AUTO"] + region_group_tags + valid_nodes + ["DIRECT"]) if valid_nodes else ["DIRECT"]
     urltest_tags = valid_nodes if valid_nodes else ["DIRECT"]
+
+    sb_proxy_groups = [
+        {
+            "type": "selector",
+            "tag": "PROXY",
+            "outbounds": selector_tags,
+            "default": selector_tags[0]
+        },
+        {
+            "type": "urltest",
+            "tag": "AUTO",
+            "outbounds": urltest_tags,
+            "url": "https://www.gstatic.com/generate_204",
+            "interval": "3m",
+            "tolerance": 50
+        }
+    ]
+
+    for reg_name, (reg_rank, reg_tags) in sorted_regions:
+        sb_proxy_groups.append({
+            "type": "urltest",
+            "tag": reg_name,
+            "outbounds": reg_tags,
+            "url": "https://www.gstatic.com/generate_204",
+            "interval": "3m",
+            "tolerance": 50
+        })
 
     config = {
         "version": 1,
-        "outbounds": [
-            {
-                "type": "selector",
-                "tag": "PROXY",
-                "outbounds": selector_tags,
-                "default": selector_tags[0]
-            },
-            {
-                "type": "urltest",
-                "tag": "AUTO",
-                "outbounds": urltest_tags,
-                "url": "https://www.gstatic.com/generate_204",
-                "interval": "3m",
-                "tolerance": 50
-            }
-        ] + outbounds + [
+        "outbounds": sb_proxy_groups + outbounds + [
             {
                 "type": "direct",
                 "tag": "DIRECT"
@@ -5459,7 +5626,12 @@ def install_local_xray():
     os.makedirs("/usr/local/share/xray", exist_ok=True)
     os.makedirs("/usr/local/etc/xray", exist_ok=True)
     
-    local_zip = "/opt/monitor/scripts/Xray-linux-64.zip"
+    local_zip = os.path.join(BASE_DIR, "scripts", "Xray-linux-64.zip")
+    if not os.path.exists(local_zip):
+        for alt_zip in ("/opt/proxyprobe/scripts/Xray-linux-64.zip", "/opt/monitor/scripts/Xray-linux-64.zip"):
+            if os.path.exists(alt_zip):
+                local_zip = alt_zip
+                break
     tmp_dir = "/tmp/xray_inst"
     os.makedirs(tmp_dir, exist_ok=True)
     
@@ -5518,7 +5690,12 @@ def install_local_singbox():
     os.makedirs("/etc/sing-box", exist_ok=True)
     os.makedirs("/var/log/sing-box", exist_ok=True)
     
-    local_tar = "/opt/monitor/scripts/sing-box-linux-amd64.tar.gz"
+    local_tar = os.path.join(BASE_DIR, "scripts", "sing-box-linux-amd64.tar.gz")
+    if not os.path.exists(local_tar):
+        for alt_tar in ("/opt/proxyprobe/scripts/sing-box-linux-amd64.tar.gz", "/opt/monitor/scripts/sing-box-linux-amd64.tar.gz"):
+            if os.path.exists(alt_tar):
+                local_tar = alt_tar
+                break
     tmp_dir = "/tmp/sb_inst"
     os.makedirs(tmp_dir, exist_ok=True)
     
@@ -5587,7 +5764,12 @@ def uninstall_local_singbox():
 
 def install_local_realm():
     os.makedirs("/etc/realm", exist_ok=True)
-    local_tar = "/opt/monitor/scripts/realm-x86_64-unknown-linux-musl.tar.gz"
+    local_tar = os.path.join(BASE_DIR, "scripts", "realm-x86_64-unknown-linux-musl.tar.gz")
+    if not os.path.exists(local_tar):
+        for alt_tar in ("/opt/proxyprobe/scripts/realm-x86_64-unknown-linux-musl.tar.gz", "/opt/monitor/scripts/realm-x86_64-unknown-linux-musl.tar.gz"):
+            if os.path.exists(alt_tar):
+                local_tar = alt_tar
+                break
     tmp_dir = "/tmp/realm_inst"
     os.makedirs(tmp_dir, exist_ok=True)
 
@@ -6773,6 +6955,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             if qs.get("action", [""])[0] in ("1", "run", "upgrade"):
                 if not check_auth(self.headers):
                     self.send_json({"ok": False, "error": "Unauthorized: 请先登录管理员账号"}, 401)
+                    return
+                if is_legacy_migration_needed():
+                    self.send_json({
+                        "ok": False,
+                        "need_migration": True,
+                        "migration_cmd": "hhub migrate",
+                        "error": "系统检测到当前面板仍运行在旧版目录 /opt/monitor。为保护您的数据库与配置安全，并平滑切换至全新独立架构 /opt/proxyprobe，请在 SSH 终端执行一次【hhub migrate】完成一键迁移！"
+                    }, 400)
                     return
                 trigger_background_upgrade()
                 self.send_json({"ok": True, "message": "升级指令已下发，系统正在后台无损热升级..."})
@@ -8424,6 +8614,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
         elif path in ("/api/proxy/system/upgrade", "/api/proxy/system/upgrade/", "/api/proxy/upgrade", "/api/proxy/upgrade/", "/api/system/upgrade", "/api/system/upgrade/"):
             if not check_auth(self.headers):
                 self.send_json({"ok": False, "error": "Unauthorized: 请先登录管理员账号"}, 401)
+                return
+            if is_legacy_migration_needed():
+                self.send_json({
+                    "ok": False,
+                    "need_migration": True,
+                    "migration_cmd": "hhub migrate",
+                    "error": "系统检测到当前面板仍运行在旧版目录 /opt/monitor。为保护您的数据库与配置安全，并平滑切换至全新独立架构 /opt/proxyprobe，请在 SSH 终端执行一次【hhub migrate】完成一键迁移！"
+                }, 400)
                 return
             trigger_background_upgrade()
             self.send_json({"ok": True, "message": "升级指令已下发，系统正在后台无损热升级..."})

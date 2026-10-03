@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import {
+  AlertTriangle,
   ArrowRight,
   Check,
   CheckCircle2,
@@ -33,6 +34,9 @@ export type UpdateInfo = {
   changelog?: string[]
   release_date?: string
   release_url?: string
+  need_migration?: boolean
+  migration_cmd?: string
+  migration_reason?: string
 }
 
 export function UpdateDialog({
@@ -133,6 +137,11 @@ export function UpdateDialog({
 
   // 触发在线无损热升级
   const handleUpgrade = async () => {
+    if (info?.need_migration) {
+      toast.warning("系统需要进行独立目录架构迁移，请在 SSH 终端执行【hhub migrate】完成平滑迁移！")
+      return
+    }
+
     if (!confirm(`确定要立即将 ProxyProbe 升级到最新版本【${info?.latest_version}】吗？升级过程全自动无损，不会丢失任何配置和数据。`)) {
       return
     }
@@ -207,6 +216,7 @@ export function UpdateDialog({
   const curVer = info?.current_version || "v2.5.4"
   const latestVer = info?.latest_version || curVer
   const hasUpdate = !!info?.has_update
+  const needMigration = !!info?.need_migration
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -233,6 +243,51 @@ export function UpdateDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* 架构独立迁移警告提示卡片 */}
+        {needMigration && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="size-5 text-amber-500 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-amber-600 dark:text-amber-400">
+                  全新独立架构迁移提示
+                </h4>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {info?.migration_reason ||
+                    "检测到当前面板仍运行在旧版目录 /opt/monitor。为彻底解决与原作者极简探针在同一台服务器上的共存冲突，ProxyProbe 现已完全独立部署于 /opt/proxyprobe。旧路径已被冻结升级，请执行一次一键无损迁移即可无缝升级。"}
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-lg border bg-background/90 p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-mono text-muted-foreground flex items-center gap-1.5">
+                  <Terminal className="size-3.5 text-primary" />
+                  <span>请在 SSH 终端执行一键迁移：</span>
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1 border-amber-500/40 hover:bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  onClick={async () => {
+                    const ok = await copyToClipboard(info?.migration_cmd || "hhub migrate")
+                    if (ok) toast.success("一键迁移命令已成功复制到剪贴板！")
+                  }}
+                >
+                  <Copy className="size-3" /> 一键复制
+                </Button>
+              </div>
+              <code className="block font-mono text-xs bg-muted/70 px-3 py-2 rounded text-foreground font-semibold">
+                {info?.migration_cmd || "hhub migrate"}
+              </code>
+              <p className="text-[11px] text-muted-foreground">
+                💡 迁移指令将全自动生成快照备份、搬迁数据库与配置、重定向系统服务，全程无损耗时约 5 秒。
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* 版本对比展示卡片 */}
         <div className="rounded-xl border bg-muted/20 p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -246,7 +301,11 @@ export function UpdateDialog({
             <div className="space-y-0.5 text-right">
               <div className="flex items-center justify-end gap-1.5">
                 <span className="text-[11px] text-muted-foreground">最新可用版本</span>
-                {hasUpdate ? (
+                {needMigration ? (
+                  <Badge className="bg-amber-500 hover:bg-amber-600 text-white text-[10px] px-1.5 py-0 font-medium">
+                    待一键迁移
+                  </Badge>
+                ) : hasUpdate ? (
                   <Badge className="bg-amber-500 hover:bg-amber-600 text-white text-[10px] px-1.5 py-0 font-medium">
                     有更新
                   </Badge>
@@ -309,7 +368,13 @@ export function UpdateDialog({
 
         {/* 操作区 */}
         <div className="space-y-2.5 pt-1">
-          {hasUpdate ? (
+          {needMigration ? (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-center space-y-2">
+              <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                ⚠️ 旧版目录在线升级已冻结。请先执行上述【hhub migrate】命令完成架构平滑迁移。
+              </p>
+            </div>
+          ) : hasUpdate ? (
             <div className="space-y-2">
               <Button
                 onClick={handleUpgrade}

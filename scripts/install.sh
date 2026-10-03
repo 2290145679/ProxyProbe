@@ -11,7 +11,7 @@ PATH="$PATH:/usr/sbin:/sbin"
 
 # Binary and token in one directory, the same one the hub uses, giving a node a
 # single path to inspect and a single path to remove.
-ROOT="/opt/monitor"
+ROOT="/opt/proxyprobe"
 BIN="$ROOT/monitor-agent"
 ENV_FILE="$ROOT/agent.env"
 UNIT_FILE="/etc/systemd/system/monitor-agent.service"
@@ -114,7 +114,7 @@ if [ -n "$UNINSTALL" ]; then
 	systemctl disable --now realm 2>/dev/null || true
 	rm -f "$UNIT_FILE" "$RC_FILE" "$LOG_FILE" "$BIN" "$ENV_FILE"
 	rm -f /etc/systemd/system/proxy-agent.service /etc/systemd/system/xray.service /etc/systemd/system/sing-box.service /etc/systemd/system/realm.service
-	rm -f /opt/monitor/proxy_agent.py
+	rm -f "$ROOT/proxy_agent.py" /opt/monitor/proxy_agent.py 2>/dev/null || true
 	systemctl daemon-reload 2>/dev/null || true
 	userdel monitor-agent 2>/dev/null || true
 	rmdir "$ROOT" 2>/dev/null || true

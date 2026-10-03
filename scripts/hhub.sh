@@ -18,7 +18,10 @@ if [ "$(id -u)" != "0" ]; then
     die "请使用 root 用户或 sudo hhub 运行此管理工具"
 fi
 
-ROOT="/opt/monitor"
+ROOT="/opt/proxyprobe"
+if [ ! -d "/opt/proxyprobe" ] && [ -d "/opt/monitor" ]; then
+    ROOT="/opt/monitor"
+fi
 DATA="$ROOT/data"
 SCRIPTS_DIR="$ROOT/scripts"
 WEB_DIST="$ROOT/web-admin/dist"
@@ -276,7 +279,7 @@ change_internal_ports() {
         if grep -q -- '--port' /etc/systemd/system/proxy-manager.service; then
             sed -i -E "s/--port [0-9]+/--port ${NEW_PP}/" /etc/systemd/system/proxy-manager.service
         else
-            sed -i -E "s#(ExecStart=/usr/bin/python3 /opt/monitor/proxy_manager.py)#\1 --port ${NEW_PP}#" /etc/systemd/system/proxy-manager.service
+            sed -i -E "s#(ExecStart=.*python3 .*/proxy_manager.py)#\1 --port ${NEW_PP}#" /etc/systemd/system/proxy-manager.service
         fi
         sed -i -E "s/reverse_proxy 127\.0\.0\.1:${CUR_PM_PORT}/reverse_proxy 127.0.0.1:${NEW_PP}/g" /etc/caddy/Caddyfile
     fi
@@ -504,16 +507,17 @@ reset_admin_password() {
         warn "已随机生成新密码: ${BOLD}${NEW_PASS}${N}  ← 请务必牢记！"
     fi
 
-    _DB="/opt/monitor/data/monitor.db"
+    _DB="$DATA/proxyprobe.db"
+    [ ! -f "$_DB" ] && [ -f "$DATA/monitor.db" ] && _DB="$DATA/monitor.db"
     if [ ! -f "$_DB" ]; then
         err "数据库文件不存在: $_DB"; return
     fi
 
     ADMIN_PASS="$NEW_PASS" DB_PATH="$_DB" python3 - << 'PYEOF'
 import os, sqlite3, hashlib, secrets
-db_path = os.environ.get("DB_PATH", "/opt/monitor/data/monitor.db")
+db_path = os.environ.get("DB_PATH", "")
 admin_pass = os.environ.get("ADMIN_PASS", "")
-if not admin_pass:
+if not admin_pass or not db_path:
     exit(1)
 
 db = sqlite3.connect(db_path)
@@ -546,6 +550,25 @@ PYEOF
 upgrade_system() {
     echo ""
     echo -e "${BOLD}─── 一键检查并无损升级 ProxyProbe ───${N}"
+
+    # 架构安全拦截：旧版 /opt/monitor 目录冻结直接更新，引导一键迁移
+    if [ "$ROOT" = "/opt/monitor" ] && [ ! -d "/opt/proxyprobe" ]; then
+        echo ""
+        warn "【架构升级安全拦截】检测到当前 ProxyProbe 面板仍部署在旧版目录 /opt/monitor。"
+        warn "为保证数据库绝对安全，并彻底解决与原作者极简探针在同一台机器上的安装共存冲突，旧目录已停止直接更新。"
+        echo -e "  请直接执行全新独立架构一键平滑迁移命令: ${BOLD}${C}hhub migrate${N}"
+        echo -e "  迁移指令将全自动生成快照备份、搬迁数据并升级至最新独立版本！"
+        echo ""
+        read -r -p "  是否立即执行一键无损平滑迁移？(Y/n): " do_mig
+        if [[ ! "$do_mig" =~ ^[nN]$ ]]; then
+            migrate_system
+            return 0
+        else
+            warn "升级已取消。请在准备好后执行 [hhub migrate] 进行平滑迁移。"
+            return 0
+        fi
+    fi
+
     info "正在拉取最新代码与静态前端..."
 
     ARCH=$(uname -m)
@@ -567,7 +590,7 @@ upgrade_system() {
     # 确保 proxy-manager.service 执行的是最新的 ELF 二进制
     if [ -f "$ROOT/proxy-manager" ] && [ -x "$ROOT/proxy-manager" ]; then
         if grep -q "python3.*proxy_manager\.py" /etc/systemd/system/proxy-manager.service 2>/dev/null; then
-            sed -i 's|ExecStart=.*python3.*/proxy_manager\.py.*|ExecStart=/opt/monitor/proxy-manager --port 28090|' /etc/systemd/system/proxy-manager.service
+            sed -i "s|ExecStart=.*python3.*/proxy_manager\\.py.*|ExecStart=$ROOT/proxy-manager --port 28090|" /etc/systemd/system/proxy-manager.service
             systemctl daemon-reload 2>/dev/null || true
             info "已自动将 proxy-manager 服务切换为编译二进制执行"
         fi
@@ -600,7 +623,7 @@ upgrade_system() {
     fi
 
     # 4.1 更新探针前台主题 web-theme dist（从 Release 库下载 tar.gz）
-    _THEME_DIST="/opt/monitor/data/themes/default/dist"
+    _THEME_DIST="$DATA/themes/default/dist"
     _TMP_THEME="/tmp/web-theme-dist-upgrade-$$.tar.gz"
     if curl -fsSL "${RELEASE_BASE}/web-theme-dist.tar.gz" -o "$_TMP_THEME" 2>/dev/null; then
         mkdir -p "$_THEME_DIST"
@@ -760,19 +783,145 @@ uninstall_proxyprobe() {
             systemctl daemon-reload
             
             rm -f /usr/local/bin/hhub /usr/local/bin/caddy
-            rm -rf /opt/monitor/web-admin /opt/monitor/scripts /opt/monitor/monitor-hub /opt/monitor/proxy_manager.py
+            rm -rf $ROOT/web-admin $ROOT/scripts $ROOT/monitor-hub $ROOT/proxy_manager.py $ROOT/proxy-manager
             
             if [ "$u_sel" = "2" ]; then
-                rm -rf /opt/monitor /etc/caddy /var/lib/caddy
+                rm -rf $ROOT /etc/caddy /var/lib/caddy
                 info "已彻底清除 ProxyProbe 的全部文件与数据库。"
             else
-                info "程序已卸载。数据库已保留在: /opt/monitor/data/"
+                info "程序已卸载。数据库已保留在: $ROOT/data/"
             fi
             info "卸载已完成！"
             exit 0
             ;;
         *) info "已取消卸载"; return ;;
     esac
+}
+
+# ---- 13. 系统架构平滑迁移 (/opt/monitor -> /opt/proxyprobe) ----
+migrate_system() {
+    clear
+    show_banner
+    echo -e "  ${BOLD}${Y}【ProxyProbe 独立架构无损迁移向导】${N}"
+    rule
+    
+    # 检查当前是否已经是 /opt/proxyprobe 且无旧目录
+    if [ -d "/opt/proxyprobe" ] && [ ! -d "/opt/monitor" ]; then
+        info "当前系统已经运行在全新独立架构目录 /opt/proxyprobe 中，无需重复迁移！"
+        return 0
+    fi
+
+    echo -e "  当前检测到系统运行在旧版目录: ${BOLD}${R}/opt/monitor${N}"
+    echo -e "  本次迁移将执行以下关键步骤："
+    echo -e "    1. 全量打包备份当前系统与数据库至 ${C}/root/proxyprobe_backup_*.tar.gz${N}"
+    echo -e "    2. 停止运行旧版服务 (proxy-manager, monitor-hub, caddy)"
+    echo -e "    3. 将数据、配置与程序平滑迁移至全新独立目录 ${BOLD}${G}/opt/proxyprobe${N}"
+    echo -e "    4. 自动重构 systemd 服务单元与 Caddyfile 路由路径"
+    echo -e "    5. 将 /opt/monitor 安全归档重命名，彻底解除与原作者极简探针的安装冲突"
+    echo -e "    6. 自动拉取最新版编译二进制并平滑重启服务"
+    echo ""
+    rule
+    
+    read -r -p "  确认立即执行平滑迁移吗？(Y/n): " confirm_mig
+    if [[ "$confirm_mig" =~ ^[nN]$ ]]; then
+        warn "迁移操作已取消"
+        return 0
+    fi
+
+    echo ""
+    info "步骤 1/6: 正在为当前系统创建全量快照备份..."
+    local backup_time=$(date +%Y%m%d_%H%M%S)
+    local backup_tar="/root/proxyprobe_migration_backup_${backup_time}.tar.gz"
+    if [ -d "/opt/monitor" ]; then
+        tar -czf "$backup_tar" -C /opt monitor 2>/dev/null || true
+    fi
+    if [ -f "$backup_tar" ]; then
+        info "快照备份成功保存至: $backup_tar"
+    else
+        warn "快照备份提示：未找到 /opt/monitor 打包文件，继续执行迁移..."
+    fi
+
+    info "步骤 2/6: 停止旧版后台服务..."
+    systemctl stop proxy-manager monitor-hub caddy 2>/dev/null || true
+
+    info "步骤 3/6: 正在平滑迁移文件至 /opt/proxyprobe..."
+    mkdir -p /opt/proxyprobe
+    if [ -d "/opt/monitor" ]; then
+        cp -a /opt/monitor/. /opt/proxyprobe/
+    fi
+
+    # 数据库路径兼容处理 (monitor.db 与 proxyprobe.db 互为符号链接确保完全无痛)
+    if [ -f "/opt/proxyprobe/data/monitor.db" ] && [ ! -f "/opt/proxyprobe/data/proxyprobe.db" ]; then
+        ln -sf /opt/proxyprobe/data/monitor.db /opt/proxyprobe/data/proxyprobe.db
+    elif [ -f "/opt/proxyprobe/data/proxyprobe.db" ] && [ ! -f "/opt/proxyprobe/data/monitor.db" ]; then
+        ln -sf /opt/proxyprobe/data/proxyprobe.db /opt/proxyprobe/data/monitor.db
+    fi
+
+    info "步骤 4/6: 重构 systemd 服务与 Web 代理配置..."
+    # 4.1 更新 proxy-manager.service
+    if [ -f /etc/systemd/system/proxy-manager.service ]; then
+        sed -i 's|/opt/monitor|/opt/proxyprobe|g' /etc/systemd/system/proxy-manager.service
+    else
+        cat > /etc/systemd/system/proxy-manager.service << 'EOF'
+[Unit]
+Description=Monitor Proxy Protocol Manager Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/proxyprobe
+ExecStart=/opt/proxyprobe/proxy-manager --port 28090
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    fi
+    sed -i 's|/opt/monitor|/opt/proxyprobe|g' /opt/proxyprobe/proxy-manager 2>/dev/null || true
+
+    # 4.2 更新 monitor-hub.service
+    if [ -f /etc/systemd/system/monitor-hub.service ]; then
+        sed -i 's|/opt/monitor|/opt/proxyprobe|g' /etc/systemd/system/monitor-hub.service
+    fi
+
+    # 4.3 更新 Caddyfile 中的静态资源路径
+    if [ -f /etc/caddy/Caddyfile ]; then
+        sed -i 's|/opt/monitor|/opt/proxyprobe|g' /etc/caddy/Caddyfile
+    fi
+
+    # 4.4 更新全局 hhub 命令指向
+    if [ -f /opt/proxyprobe/scripts/hhub.sh ]; then
+        chmod +x /opt/proxyprobe/scripts/hhub.sh
+        ln -sf /opt/proxyprobe/scripts/hhub.sh /usr/local/bin/hhub
+    fi
+
+    info "步骤 5/6: 归档旧版目录以彻底解除共存冲突..."
+    if [ -d "/opt/monitor" ]; then
+        mv -f /opt/monitor "/opt/monitor_legacy_${backup_time}"
+        info "已将旧版目录安全归档为: /opt/monitor_legacy_${backup_time}"
+        info "现在可以在本机自由安装原作者极简探针，二者 100% 互不干扰！"
+    fi
+
+    # 更新环境全局变量指向新路径
+    ROOT="/opt/proxyprobe"
+    DATA="$ROOT/data"
+    SCRIPTS_DIR="$ROOT/scripts"
+    WEB_DIST="$ROOT/web-admin/dist"
+
+    info "步骤 6/6: 重启系统服务以应用全新独立架构..."
+    systemctl daemon-reload
+    systemctl restart proxy-manager monitor-hub caddy
+    caddy reload --config /etc/caddy/Caddyfile --force 2>/dev/null || true
+
+    echo ""
+    info "=========================================================="
+    info "🎉 恭喜！ProxyProbe 独立架构已彻底迁移成功！"
+    info "当前独立安装根目录: /opt/proxyprobe"
+    info "原旧目录快照备份: $backup_tar"
+    info "现在本机可同时运行原作者极简探针与 ProxyProbe，毫无冲突！"
+    info "=========================================================="
 }
 
 # ---- 主交互循环 ----
@@ -800,6 +949,11 @@ main_menu() {
             echo -e "  域名: ${BOLD}${CUR_DOMAIN:-未配置}${N} (${C}域名模式 - HTTPS${N})  •  Web 端口: ${BOLD}${CUR_WEB_PORT}${N}  •  状态: $(systemctl is-active --quiet monitor-hub && echo -e "${G}运行中${N}" || echo -e "${R}停止${N}")"
         fi
         [ -n "$CUR_DOMAIN" ] && echo -e "  面板地址: ${C}${panel_url}${N}"
+        if [ "$ROOT" = "/opt/monitor" ]; then
+            echo -e "  安装目录: ${BOLD}${R}/opt/monitor (旧版目录 - 待迁移)${N}"
+        else
+            echo -e "  安装目录: ${BOLD}${G}/opt/proxyprobe (全新独立架构)${N}"
+        fi
         rule
         
         echo -e "  ${BOLD}【服务管理】${N}"
@@ -815,7 +969,12 @@ main_menu() {
         echo -e "    ${C}[8]${N} 重置/修改管理员密码"
         echo ""
         echo -e "  ${BOLD}【系统运维】${N}"
-        echo -e "    ${C}[9]${N} 一键无损热升级系统 (代码/前端/二进制)"
+        if [ "$ROOT" = "/opt/monitor" ]; then
+            echo -e "    ${Y}${BOLD}[M] 架构一键平滑迁移至 /opt/proxyprobe (强烈推荐)${N}"
+            echo -e "    ${C}[9]${N} 一键系统升级 (当前旧版目录已冻结更新，引导迁移)"
+        else
+            echo -e "    ${C}[9]${N} 一键无损热升级系统 (代码/前端/二进制)"
+        fi
         echo -e "   ${C}[10]${N} 实时监控服务运行日志"
         echo -e "   ${C}[11]${N} 数据库一键备份与恢复"
         echo -e "   ${C}[12]${N} 卸载 ProxyProbe"
@@ -823,7 +982,7 @@ main_menu() {
         echo -e "    ${C}[0]${N} 退出控制台"
         rule
 
-        read -r -p "  请输入选项 [0-12]: " opt
+        read -r -p "  请输入选项: " opt
         case "$opt" in
             1) view_status; press_any_key ;;
             2) restart_all; press_any_key ;;
@@ -837,13 +996,14 @@ main_menu() {
             10) view_logs ;;
             11) manage_backup; press_any_key ;;
             12) uninstall_proxyprobe ;;
+            m|M|migrate) migrate_system; press_any_key ;;
             0|q|Q|exit) clear; exit 0 ;;
             *) warn "无效选项，请重新选择"; sleep 1 ;;
         esac
     done
 }
 
-# 支持快捷子命令直接调用，如 `hhub status`, `hhub restart`, `hhub log`
+# 支持快捷子命令直接调用，如 `hhub status`, `hhub restart`, `hhub log`, `hhub migrate`
 case "${1:-}" in
     status) view_status; exit 0 ;;
     restart) restart_all; exit 0 ;;
@@ -851,6 +1011,7 @@ case "${1:-}" in
     start) start_all; exit 0 ;;
     log|logs) view_logs; exit 0 ;;
     update|upgrade) upgrade_system; exit 0 ;;
+    migrate|migration) migrate_system; exit 0 ;;
     backup) manage_backup; exit 0 ;;
     *) main_menu ;;
 esac

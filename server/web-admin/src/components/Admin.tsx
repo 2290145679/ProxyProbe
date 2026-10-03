@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, KeyRound, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users, XCircle } from "lucide-react"
+import { AlertTriangle, BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, KeyRound, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
@@ -1804,7 +1804,11 @@ function SettingsTab({
             </h3>
             <p className="text-xs text-muted-foreground">
               当前版本：<code className="text-primary font-mono font-semibold">{updateInfo?.current_version || "v2.5.3"}</code>
-              {updateInfo?.has_update ? (
+              {updateInfo?.need_migration ? (
+                <span className="ml-2 text-amber-600 dark:text-amber-400 font-semibold">
+                  (⚠️ 运行于旧版目录，待执行一键迁移)
+                </span>
+              ) : updateInfo?.has_update ? (
                 <span className="ml-2 text-amber-600 dark:text-amber-400 font-semibold">
                   (🔥 发现最新版本 {updateInfo.latest_version})
                 </span>
@@ -1818,11 +1822,17 @@ function SettingsTab({
           {onOpenUpdateDialog && (
             <Button
               size="sm"
-              variant={updateInfo?.has_update ? "default" : "outline"}
+              variant={updateInfo?.need_migration ? "destructive" : updateInfo?.has_update ? "default" : "outline"}
               onClick={onOpenUpdateDialog}
-              className="text-xs gap-1.5 h-8 shrink-0 self-start sm:self-auto"
+              className={`text-xs gap-1.5 h-8 shrink-0 self-start sm:self-auto ${
+                updateInfo?.need_migration ? "bg-amber-600 hover:bg-amber-700 text-white" : ""
+              }`}
             >
-              {updateInfo?.has_update ? (
+              {updateInfo?.need_migration ? (
+                <>
+                  <AlertTriangle className="size-3.5" /> 一键迁移指南
+                </>
+              ) : updateInfo?.has_update ? (
                 <>
                   <Rocket className="size-3.5" /> 立即升级系统
                 </>
@@ -4609,7 +4619,15 @@ export function Admin({
             </span>
           </div>
 
-          {updateInfo?.has_update ? (
+          {updateInfo?.need_migration ? (
+            <button
+              onClick={onOpenUpdateDialog}
+              className="w-full text-left rounded-md p-1.5 bg-amber-500/15 border border-amber-500/40 text-[10px] text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 transition-all flex items-center gap-1.5 font-semibold animate-pulse"
+            >
+              <AlertTriangle className="size-3 text-amber-500 shrink-0" />
+              <span className="truncate">架构待一键迁移</span>
+            </button>
+          ) : updateInfo?.has_update ? (
             <button
               onClick={onOpenUpdateDialog}
               className="w-full text-left rounded-md p-1.5 bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-all flex items-center gap-1.5 font-medium"

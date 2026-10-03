@@ -21,7 +21,7 @@ UNIT="/etc/systemd/system/monitor-hub.service"
 # and everything the hub writes -- database and themes/ -- under data/. One path
 # to back up, one to move to another host, and the same split the container image
 # uses, where data/ is mounted at /data.
-ROOT="/opt/monitor"
+ROOT="/opt/proxyprobe"
 BIN="$ROOT/monitor-hub"
 DATA="$ROOT/data"
 # A fixed data directory requires a fixed owner: DynamicUser= selects its uid at

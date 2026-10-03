@@ -39,7 +39,7 @@ GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 RELEASE_REPO="2290145679/ProxyProbe-Release"
 RELEASE_BASE="https://raw.githubusercontent.com/${RELEASE_REPO}/main"
 
-ROOT="/opt/monitor"
+ROOT="/opt/proxyprobe"
 DATA="$ROOT/data"
 WEB_DIST="$ROOT/web-admin/dist"
 SCRIPTS_DIR="$ROOT/scripts"
@@ -549,7 +549,7 @@ done
 if [ -f "$_DB" ]; then
   ADMIN_PASS="$ADMIN_PASS" DB_PATH="$_DB" python3 - << 'PYEOF'
 import os, sqlite3, hashlib, secrets
-db_path = os.environ.get("DB_PATH", "/opt/monitor/data/monitor.db")
+db_path = os.environ.get("DB_PATH", "/opt/proxyprobe/data/monitor.db")
 admin_pass = os.environ.get("ADMIN_PASS", "")
 if not admin_pass:
     exit(0)
