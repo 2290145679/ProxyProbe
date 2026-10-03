@@ -4468,27 +4468,23 @@ DEFAULT_CLASH_GLOBAL_RULES = """- GEOIP,LAN,DIRECT
 - MATCH,节点选择"""
 
 DEFAULT_SINGBOX_SMART_RULES = json.dumps([
-    {"protocol": "dns", "outbound": "dns-out"},
     {"ip_is_private": True, "outbound": "DIRECT"},
     {"clash_mode": "Direct", "outbound": "DIRECT"},
     {"clash_mode": "Global", "outbound": "PROXY"},
     {"domain_suffix": [".cn", "baidu.com", "qq.com", "weixin.com", "taobao.com", "bilibili.com", "jd.com", "163.com", "zhihu.com"], "outbound": "DIRECT"},
-    {"geoip": ["cn", "private"], "outbound": "DIRECT"},
     {"domain_suffix": ["openai.com", "chatgpt.com", "anthropic.com", "claude.ai", "google.com", "youtube.com", "github.com", "twitter.com", "x.com", "telegram.org", "netflix.com"], "outbound": "PROXY"},
     {"outbound": "PROXY"}
 ], indent=2, ensure_ascii=False)
 
 DEFAULT_SINGBOX_MINIMAL_RULES = json.dumps([
-    {"protocol": "dns", "outbound": "dns-out"},
     {"ip_is_private": True, "outbound": "DIRECT"},
     {"clash_mode": "Direct", "outbound": "DIRECT"},
     {"clash_mode": "Global", "outbound": "PROXY"},
-    {"geoip": ["cn", "private"], "outbound": "DIRECT"},
+    {"domain_suffix": [".cn", "baidu.com", "qq.com", "weixin.com", "taobao.com"], "outbound": "DIRECT"},
     {"outbound": "PROXY"}
 ], indent=2, ensure_ascii=False)
 
 DEFAULT_SINGBOX_GLOBAL_RULES = json.dumps([
-    {"protocol": "dns", "outbound": "dns-out"},
     {"ip_is_private": True, "outbound": "DIRECT"},
     {"clash_mode": "Direct", "outbound": "DIRECT"},
     {"outbound": "PROXY"}
@@ -4709,7 +4705,7 @@ rules:
                 "name": title,
                 "type": "socks5",
                 "server": "127.0.0.1",
-                "port": 0
+                "port": 65535
             })
             info_names.append(title)
 
@@ -4950,10 +4946,16 @@ rules:
             lines.append(f"    type: {p['type']}")
             lines.append(f"    server: \"{p['server']}\"")
             lines.append(f"    port: {p['port']}")
+            if "cipher" in p and p['cipher']:
+                lines.append(f"    cipher: {p['cipher']}")
             if "uuid" in p:
                 lines.append(f"    uuid: \"{p['uuid']}\"")
             if "password" in p:
                 lines.append(f"    password: \"{p['password']}\"")
+            if "username" in p and p['username']:
+                lines.append(f"    username: \"{p['username']}\"")
+            if "alterId" in p:
+                lines.append(f"    alterId: {p['alterId']}")
             if "network" in p:
                 lines.append(f"    network: {p['network']}")
             if "tls" in p:
@@ -4974,6 +4976,17 @@ rules:
                 lines.append(f"      short-id: \"{p['reality-opts']['short-id']}\"")
             if "client-fingerprint" in p:
                 lines.append(f"    client-fingerprint: {p['client-fingerprint']}")
+            if "xhttp-opts" in p:
+                lines.append("    xhttp-opts:")
+                lines.append(f"      path: \"{p['xhttp-opts'].get('path', '/xhttp')}\"")
+                lines.append(f"      mode: {p['xhttp-opts'].get('mode', 'auto')}")
+            if "ws-opts" in p:
+                lines.append("    ws-opts:")
+                lines.append(f"      path: \"{p['ws-opts'].get('path', '/ws-proxy')}\"")
+                if "headers" in p["ws-opts"]:
+                    lines.append("      headers:")
+                    for hk, hv in p["ws-opts"]["headers"].items():
+                        lines.append(f"        {hk}: \"{hv}\"")
         lines.append("proxy-groups:")
         lines.append("  - name: \"节点选择\"")
         lines.append("    type: select")
@@ -5071,6 +5084,10 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
                 "tls": {
                     "enabled": True,
                     "server_name": sni,
+                    "utls": {
+                        "enabled": True,
+                        "fingerprint": "chrome"
+                    },
                     "reality": {
                         "enabled": True,
                         "public_key": pbk,
@@ -5244,7 +5261,6 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
         })
 
     config = {
-        "version": 1,
         "outbounds": sb_proxy_groups + outbounds + [
             {
                 "type": "direct",
@@ -5253,10 +5269,6 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
             {
                 "type": "block",
                 "tag": "BLOCK"
-            },
-            {
-                "type": "dns",
-                "tag": "dns-out"
             }
         ],
         "route": {
@@ -6102,7 +6114,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         # 1. Client subscription endpoint (Authenticated via token)
-        if path == "/api/proxy/sub":
+        if path in ("/api/proxy/sub", "/sub"):
             token = qs.get("token", [""])[0]
             if not token:
                 self.send_response(403)

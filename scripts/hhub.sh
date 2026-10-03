@@ -355,6 +355,11 @@ http://${NEW_DOM}:${TARGET_PORT} {
         reverse_proxy 127.0.0.1:${CUR_PM_PORT}
     }
 
+    # 代理订阅短链接
+    handle /sub* {
+        reverse_proxy 127.0.0.1:${CUR_PM_PORT}
+    }
+
     # 子节点安装脚本（由 proxy-manager 动态生成）
     handle /proxy-agent.sh {
         reverse_proxy 127.0.0.1:${CUR_PM_PORT}
@@ -415,6 +420,11 @@ CADDY_EOF
 ${CADDY_SITE} {
     # 代理管理 API（订阅、用户、节点等）
     handle /api/proxy/* {
+        reverse_proxy 127.0.0.1:${CUR_PM_PORT}
+    }
+
+    # 代理订阅短链接
+    handle /sub* {
         reverse_proxy 127.0.0.1:${CUR_PM_PORT}
     }
 
