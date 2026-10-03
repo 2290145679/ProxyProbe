@@ -771,8 +771,8 @@ uninstall_proxyprobe() {
     echo -e "${BOLD}${R}─── 卸载 ProxyProbe ───${N}"
     warn "您即将卸载 ProxyProbe 探针监控与代理管理系统！"
     echo ""
-    echo "  [1] 安全卸载：停止并移除所有服务与程序，【保留】数据库与配置"
-    echo "  [2] 彻底清除：清除所有服务、程序，并【彻底删除】数据库与全部数据"
+    echo "  [1] 安全卸载：停止并移除主控服务与程序，【保留】数据库与配置"
+    echo "  [2] 彻底清除：清除所有主控与代理核心(Xray/Sing-box/Realm/Caddy)、停止守护进程，并【彻底删除】数据库与全部数据"
     echo "  [0] 取消退出"
     echo ""
     read -r -p "  请确认您的选择 [0-2]: " u_sel
@@ -781,9 +781,21 @@ uninstall_proxyprobe() {
             read -r -p "  ⚠️ 再次确认：确定要卸载吗？[y/N]: " u_confirm
             case "$u_confirm" in y|Y|yes) ;; *) info "已取消卸载"; return ;; esac
             
-            info "正在停止并禁用 systemd 服务..."
+            info "正在停止并禁用所有关联服务..."
+            # 停止主控与全部代理核心服务
             systemctl stop monitor-hub proxy-manager caddy 2>/dev/null || true
             systemctl disable monitor-hub proxy-manager caddy 2>/dev/null || true
+            
+            if [ "$u_sel" = "2" ]; then
+                # 彻底清除模式：停止代理核心及所有探针/客户端守护进程
+                systemctl stop xray sing-box realm monitor-agent proxy-agent 2>/dev/null || true
+                systemctl disable xray sing-box realm monitor-agent proxy-agent 2>/dev/null || true
+                rc-service monitor-agent stop 2>/dev/null || true
+                rc-service proxy-agent stop 2>/dev/null || true
+                rc-service xray stop 2>/dev/null || true
+                rc-service sing-box stop 2>/dev/null || true
+                pkill -9 -f "monitor-hub|proxy-manager|xray|sing-box|realm|monitor-agent|proxy-agent" 2>/dev/null || true
+            fi
             
             rm -f /etc/systemd/system/monitor-hub.service \
                   /etc/systemd/system/proxy-manager.service \
@@ -791,14 +803,49 @@ uninstall_proxyprobe() {
                   /etc/systemd/system/multi-user.target.wants/monitor-hub.service \
                   /etc/systemd/system/multi-user.target.wants/proxy-manager.service \
                   /etc/systemd/system/multi-user.target.wants/caddy.service
+            
+            if [ "$u_sel" = "2" ]; then
+                rm -f /etc/systemd/system/xray.service \
+                      /etc/systemd/system/sing-box.service \
+                      /etc/systemd/system/realm.service \
+                      /etc/systemd/system/monitor-agent.service \
+                      /etc/systemd/system/proxy-agent.service \
+                      /etc/systemd/system/multi-user.target.wants/xray.service \
+                      /etc/systemd/system/multi-user.target.wants/sing-box.service \
+                      /etc/systemd/system/multi-user.target.wants/realm.service \
+                      /etc/systemd/system/multi-user.target.wants/monitor-agent.service \
+                      /etc/systemd/system/multi-user.target.wants/proxy-agent.service
+                rm -f /etc/init.d/monitor-agent /etc/init.d/proxy-agent /etc/init.d/xray /etc/init.d/sing-box 2>/dev/null || true
+            fi
             systemctl daemon-reload
             
             rm -f /usr/local/bin/hhub /usr/local/bin/caddy
             rm -rf $ROOT/web-admin $ROOT/scripts $ROOT/monitor-hub $ROOT/proxy_manager.py $ROOT/proxy-manager
             
             if [ "$u_sel" = "2" ]; then
-                rm -rf $ROOT /etc/caddy /var/lib/caddy
-                info "已彻底清除 ProxyProbe 的全部文件与数据库。"
+                # 清除代理核心二进制与共享数据
+                rm -f /usr/local/bin/xray /usr/local/bin/sing-box /usr/local/bin/realm /usr/local/bin/monitor-agent
+                rm -rf /usr/local/share/xray /usr/local/etc/xray
+                
+                # 若系统通过 APT 安装了 Caddy，一并彻底 purge
+                if command -v apt-get >/dev/null 2>&1; then
+                    apt-get remove --purge -y -qq caddy 2>/dev/null || true
+                    rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+                fi
+                rm -f /usr/bin/caddy
+                
+                # 清除系统用户与组
+                userdel caddy 2>/dev/null || true
+                groupdel caddy 2>/dev/null || true
+                userdel monitor-agent 2>/dev/null || true
+                groupdel monitor-agent 2>/dev/null || true
+                
+                # 清除全部主目录、历史迁移备份目录及残留配置与日志
+                rm -rf /opt/proxyprobe /opt/monitor /opt/monitor_legacy*
+                rm -rf /etc/caddy /var/lib/caddy /etc/xray /etc/sing-box /etc/realm
+                rm -rf /var/log/xray /var/log/sing-box /var/log/proxy-agent.log /var/log/monitor-agent.log
+                rm -rf /tmp/sb_inst /tmp/xray_install /tmp/realm_inst /tmp/web-admin-dist* /tmp/proxy-manager* /tmp/monitor-hub* /tmp/caddy*
+                info "已彻底清除 ProxyProbe 的全部服务、代理核心、程序文件与数据库。"
             else
                 info "程序已卸载。数据库已保留在: $ROOT/data/"
             fi

@@ -112,12 +112,17 @@ if [ -n "$UNINSTALL" ]; then
 	systemctl disable --now xray 2>/dev/null || true
 	systemctl disable --now sing-box 2>/dev/null || true
 	systemctl disable --now realm 2>/dev/null || true
+	pkill -9 -f "monitor-agent|proxy-agent|xray|sing-box|realm" 2>/dev/null || true
 	rm -f "$UNIT_FILE" "$RC_FILE" "$LOG_FILE" "$BIN" "$ENV_FILE"
 	rm -f /etc/systemd/system/proxy-agent.service /etc/systemd/system/xray.service /etc/systemd/system/sing-box.service /etc/systemd/system/realm.service
 	rm -f "$ROOT/proxy_agent.py" /opt/monitor/proxy_agent.py 2>/dev/null || true
+	rm -f /usr/local/bin/xray /usr/local/bin/sing-box /usr/local/bin/realm /usr/local/bin/monitor-agent
+	rm -rf /usr/local/share/xray /usr/local/etc/xray
+	rm -rf /etc/xray /etc/sing-box /etc/realm /var/log/xray /var/log/sing-box
 	systemctl daemon-reload 2>/dev/null || true
 	userdel monitor-agent 2>/dev/null || true
-	rmdir "$ROOT" 2>/dev/null || true
+	groupdel monitor-agent 2>/dev/null || true
+	rm -rf "$ROOT" /opt/monitor 2>/dev/null || true
 	echo "monitor-agent and proxy services uninstalled"
 	exit 0
 fi
