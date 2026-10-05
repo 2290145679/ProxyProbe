@@ -34,6 +34,9 @@ export type ManagedUser = {
   username: string
   is_admin: number
   vip_level?: string
+  bandwidth_limit_mbps?: number
+  effective_speed_limit_mbps?: number
+  tier_speed_limit_mbps?: number
   sub_token: string
   sub_url: string
   traffic_limit_bytes: number
@@ -114,6 +117,7 @@ export function ProxyUsers() {
     username: "",
     password: "",
     vip_level: "vip1",
+    bandwidth_limit_mbps: "0",
     traffic_limit_gb: "200",
     expires_days: "30",
     device_limit: "0",
@@ -126,6 +130,7 @@ export function ProxyUsers() {
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null)
   const [editForm, setEditForm] = useState({
     vip_level: "vip1",
+    bandwidth_limit_mbps: "0",
     traffic_limit_gb: "",
     expires_date: "",
     password: "",
@@ -190,6 +195,7 @@ export function ProxyUsers() {
           username: createForm.username,
           password: createForm.password,
           vip_level: createForm.vip_level || "vip1",
+          bandwidth_limit_mbps: parseInt(createForm.bandwidth_limit_mbps) || 0,
           traffic_limit_gb: parseFloat(createForm.traffic_limit_gb) || 200,
           expires_days: parseInt(createForm.expires_days) || 0,
           device_limit: parseInt(createForm.device_limit) || 0,
@@ -200,7 +206,7 @@ export function ProxyUsers() {
       if (data.ok) {
         toast.success("用户创建成功！")
         setCreateOpen(false)
-        setCreateForm({ username: "", password: "", vip_level: "vip1", traffic_limit_gb: "200", expires_days: "30", device_limit: "0", balance: "0" })
+        setCreateForm({ username: "", password: "", vip_level: "vip1", bandwidth_limit_mbps: "0", traffic_limit_gb: "200", expires_days: "30", device_limit: "0", balance: "0" })
         loadUsers()
       } else {
         toast.error(data.message || "创建失败")
@@ -219,6 +225,7 @@ export function ProxyUsers() {
     const dateStr = user.expires_at > 0 ? new Date(user.expires_at * 1000).toISOString().split("T")[0] : ""
     setEditForm({
       vip_level: user.vip_level || "vip1",
+      bandwidth_limit_mbps: (user.bandwidth_limit_mbps ?? 0).toString(),
       traffic_limit_gb: limitGb,
       expires_date: dateStr,
       password: "",
@@ -286,6 +293,7 @@ export function ProxyUsers() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           vip_level: editForm.vip_level || "vip1",
+          bandwidth_limit_mbps: parseInt(editForm.bandwidth_limit_mbps) || 0,
           traffic_limit_gb: parseFloat(editForm.traffic_limit_gb) || 0,
           expires_at: expTs,
           password: editForm.password,
@@ -485,6 +493,20 @@ export function ProxyUsers() {
                         <Badge className="text-[10px] py-0 px-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 uppercase font-mono font-bold">
                           {u.vip_level || "vip1"}
                         </Badge>
+                        {/* 速率限制徽章 */}
+                        {Boolean(u.bandwidth_limit_mbps && u.bandwidth_limit_mbps > 0) ? (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400 font-mono font-medium" title="管理员专属限速 (覆盖套餐默认值)">
+                            ⚡ {u.bandwidth_limit_mbps}M (独享)
+                          </Badge>
+                        ) : Boolean(u.tier_speed_limit_mbps && u.tier_speed_limit_mbps > 0) ? (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono font-medium" title="继承自所属套餐限速">
+                            ⚡ {u.tier_speed_limit_mbps}M (套餐)
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-mono font-medium" title="高速无限制">
+                            ⚡ 极速不限
+                          </Badge>
+                        )}
                       </div>
                     </td>
 
@@ -696,14 +718,14 @@ export function ProxyUsers() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs">VIP 套餐等级</Label>
-                  <span className="text-[10px] text-muted-foreground font-mono">如: vip1, vip2</span>
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">VIP 套餐等级</Label>
+                  <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">如: vip1, vip2</span>
                 </div>
                 <Input
                   list="vip-tier-list"
                   className="text-xs h-9 font-mono"
-                  placeholder="默认 vip1 (用于匹配对应 VIP 节点)"
+                  placeholder="默认 vip1"
                   value={createForm.vip_level}
                   onChange={e => setCreateForm(prev => ({ ...prev, vip_level: e.target.value }))}
                   required
@@ -716,7 +738,9 @@ export function ProxyUsers() {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs">初始账户余额 (元)</Label>
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">初始余额 (元)</Label>
+                </div>
                 <Input
                   type="number"
                   step="0.01"
@@ -729,14 +753,16 @@ export function ProxyUsers() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">流量限额 (GB)</Label>
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">流量限额 (GB)</Label>
+                </div>
                 <Input
                   type="number"
                   min="0"
                   step="1"
-                  className="text-xs h-9"
+                  className="text-xs h-9 font-mono"
                   placeholder="默认 200 (0为不限)"
                   value={createForm.traffic_limit_gb}
                   onChange={e => setCreateForm(prev => ({ ...prev, traffic_limit_gb: e.target.value }))}
@@ -745,26 +771,48 @@ export function ProxyUsers() {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs">有效期限 (天)</Label>
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">有效期限 (天)</Label>
+                </div>
                 <Input
                   type="number"
                   min="0"
                   step="1"
-                  className="text-xs h-9"
+                  className="text-xs h-9 font-mono"
                   placeholder="默认 30 (0为永久)"
                   value={createForm.expires_days}
                   onChange={e => setCreateForm(prev => ({ ...prev, expires_days: e.target.value }))}
                   required
                 />
               </div>
+            </div>
 
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">设备限制 (台)</Label>
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">独立限速 (Mbps)</Label>
+                  <span className="text-[10px] text-muted-foreground hidden sm:inline">0为跟随套餐</span>
+                </div>
                 <Input
                   type="number"
                   min="0"
                   step="1"
-                  className="text-xs h-9"
+                  className="text-xs h-9 font-mono"
+                  placeholder="0 (继承套餐限速)"
+                  value={createForm.bandwidth_limit_mbps}
+                  onChange={e => setCreateForm(prev => ({ ...prev, bandwidth_limit_mbps: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">设备限制 (台)</Label>
+                </div>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="text-xs h-9 font-mono"
                   placeholder="0为不限"
                   value={createForm.device_limit}
                   onChange={e => setCreateForm(prev => ({ ...prev, device_limit: e.target.value }))}
@@ -774,7 +822,7 @@ export function ProxyUsers() {
 
             <div className="rounded-md bg-muted/50 p-2.5 text-[11px] text-muted-foreground flex items-center gap-2">
               <AlertCircle className="size-4 shrink-0 text-primary" />
-              <span>超过流量限额、到期或同时在线客户端超过限制后，系统将自动熔断切断连接。</span>
+              <span>限速填 0 则跟随套餐限速（如套餐A 100M、套餐B 300M），填具体数值则优先独享限速；流量超额或超设备数后系统自动熔断。</span>
             </div>
 
             <DialogFooter className="pt-2">
@@ -802,12 +850,14 @@ export function ProxyUsers() {
           <form onSubmit={handleSaveEdit} className="space-y-4 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">流量限额 (GB)</Label>
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">流量限额 (GB)</Label>
+                </div>
                 <Input
                   type="number"
                   min="0"
                   step="1"
-                  className="text-xs h-9"
+                  className="text-xs h-9 font-mono"
                   placeholder="0 为无限制"
                   value={editForm.traffic_limit_gb}
                   onChange={e => setEditForm(prev => ({ ...prev, traffic_limit_gb: e.target.value }))}
@@ -816,12 +866,14 @@ export function ProxyUsers() {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs">设备限制 (台)</Label>
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">设备限制 (台)</Label>
+                </div>
                 <Input
                   type="number"
                   min="0"
                   step="1"
-                  className="text-xs h-9"
+                  className="text-xs h-9 font-mono"
                   placeholder="0 为无限制"
                   value={editForm.device_limit}
                   onChange={e => setEditForm(prev => ({ ...prev, device_limit: e.target.value }))}
@@ -831,7 +883,9 @@ export function ProxyUsers() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">账户余额 (元)</Label>
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">账户余额 (元)</Label>
+                </div>
                 <Input
                   type="number"
                   step="0.01"
@@ -842,7 +896,10 @@ export function ProxyUsers() {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs">到期时间 (留空为永久有效)</Label>
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">到期时间</Label>
+                  <span className="text-[10px] text-muted-foreground hidden sm:inline">留空永久</span>
+                </div>
                 <Input
                   type="date"
                   className="text-xs h-9"
@@ -852,18 +909,41 @@ export function ProxyUsers() {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">VIP 套餐等级</Label>
-                <span className="text-[10px] text-muted-foreground font-mono">如: vip1, vip2</span>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">VIP 套餐等级</Label>
+                  <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">如: vip1, vip2</span>
+                </div>
+                <Input
+                  className="text-xs h-9 font-mono"
+                  placeholder="默认 vip1 (用于匹配对应 VIP 节点)"
+                  value={editForm.vip_level}
+                  onChange={e => setEditForm(prev => ({ ...prev, vip_level: e.target.value }))}
+                  required
+                />
               </div>
-              <Input
-                className="text-xs h-9 font-mono"
-                placeholder="默认 vip1 (用于匹配对应 VIP 节点)"
-                value={editForm.vip_level}
-                onChange={e => setEditForm(prev => ({ ...prev, vip_level: e.target.value }))}
-                required
-              />
+
+              <div className="space-y-1.5">
+                <div className="h-5 flex items-center justify-between">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">独立限速 (Mbps)</Label>
+                  <span className="text-[10px] text-muted-foreground hidden sm:inline">0为跟随套餐</span>
+                </div>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="text-xs h-9 font-mono"
+                  placeholder="0 (继承套餐限速)"
+                  value={editForm.bandwidth_limit_mbps}
+                  onChange={e => setEditForm(prev => ({ ...prev, bandwidth_limit_mbps: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-md bg-muted/40 p-2.5 text-[11px] text-muted-foreground flex items-center gap-2 border">
+              <AlertCircle className="size-4 shrink-0 text-primary" />
+              <span>限速设为 0 时自动继承对应 VIP 套餐默认限速；若设置具体数值（如 50），则覆盖套餐以该独立限速为准。</span>
             </div>
 
             <div className="space-y-1.5">

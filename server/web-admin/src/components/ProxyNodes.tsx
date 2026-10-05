@@ -2997,7 +2997,9 @@ function EditNodeDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">服务监听端口</Label>
+              <div className="h-5 flex items-center">
+                <Label className="text-xs font-medium shrink-0 whitespace-nowrap">服务监听端口</Label>
+              </div>
               <Input
                 type="number"
                 value={form.port}
@@ -3007,10 +3009,14 @@ function EditNodeDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">单节点限速 (Mbps, 0为不限)</Label>
+              <div className="h-5 flex items-center justify-between">
+                <Label className="text-xs font-medium shrink-0 whitespace-nowrap">单节点限速 (Mbps)</Label>
+                <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">0为不限</span>
+              </div>
               <Input
                 type="number"
                 min="0"
+                placeholder="0为不限"
                 value={form.bandwidth_limit_mbps}
                 onChange={e => setForm(prev => ({ ...prev, bandwidth_limit_mbps: e.target.value }))}
                 className="text-xs h-8 font-mono"

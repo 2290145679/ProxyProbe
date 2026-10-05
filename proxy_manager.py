@@ -11,6 +11,7 @@ import socket
 import sqlite3
 import ssl
 import smtplib
+import struct
 import subprocess
 import sys
 import tempfile
@@ -648,6 +649,7 @@ import re
 import shutil
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import time
@@ -660,11 +662,148 @@ _agent_sb_conns = {}
 _agent_last_sb_user = 1
 _agent_last_sb_node = None
 _agent_sb_log_offset = 0
+_agent_xr_log_offset = 0
 _agent_sb_pending_sessions = {}
 _agent_sb_ip_to_user = {}
 _agent_sb_ipport_to_user = {}
 _agent_sb_ipport_to_node = {}
 _agent_sb_initialized = False
+_agent_user_active_ips = {}
+_agent_tc_manager = None
+
+class TCManager:
+    def __init__(self):
+        self.iface = None
+        self.is_active = False
+        self.last_applied_nodes = {}
+        self.last_applied_users = {}
+
+    def get_iface(self):
+        if not self.iface:
+            try:
+                res = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True, timeout=3)
+                if res.returncode == 0 and res.stdout:
+                    m = re.search(r'dev\\s+([^\\s]+)', res.stdout)
+                    if m:
+                        self.iface = m.group(1).strip()
+            except Exception:
+                pass
+            if not self.iface:
+                self.iface = "eth0"
+        return self.iface
+
+    def ensure_root(self):
+        iface = self.get_iface()
+        try:
+            res = subprocess.run(["tc", "qdisc", "show", "dev", iface], capture_output=True, text=True, timeout=3)
+            if "qdisc htb 1:" not in res.stdout:
+                subprocess.run(["tc", "qdisc", "del", "dev", iface, "root"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "qdisc", "add", "dev", iface, "root", "handle", "1:", "htb", "default", "10", "r2q", "100"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "class", "replace", "dev", iface, "parent", "1:", "classid", "1:1", "htb", "rate", "10000mbit", "ceil", "10000mbit"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", "1:10", "htb", "rate", "10000mbit", "ceil", "10000mbit"], capture_output=True, timeout=3)
+            self.is_active = True
+        except Exception:
+            pass
+
+    def teardown(self):
+        if not self.is_active:
+            return
+        iface = self.get_iface()
+        try:
+            subprocess.run(["tc", "qdisc", "del", "dev", iface, "root"], capture_output=True, timeout=3)
+            subprocess.run(["tc", "qdisc", "add", "dev", iface, "root", "fq"], capture_output=True, timeout=3)
+        except Exception:
+            pass
+        self.is_active = False
+        self.last_applied_nodes.clear()
+        self.last_applied_users.clear()
+
+    @staticmethod
+    def ip_to_handle(ip_str):
+        try:
+            return struct.unpack("!I", socket.inet_aton(ip_str))[0] & 0x7FFFFFFF
+        except Exception:
+            return abs(hash(ip_str)) & 0x7FFFFFFF
+
+    def sync(self, desired_nodes, desired_users):
+        if not desired_nodes and not desired_users:
+            if self.is_active:
+                self.teardown()
+            return
+
+        iface = self.get_iface()
+        self.ensure_root()
+
+        # 1. Sync Nodes (Port-level rate limits)
+        removed_nodes = set(self.last_applied_nodes.keys()) - set(desired_nodes.keys())
+        for nid in removed_nodes:
+            try:
+                subprocess.run(["tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "100", "handle", str(5000 + nid * 2), "flower"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "100", "handle", str(5000 + nid * 2 + 1), "flower"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "class", "del", "dev", iface, "parent", "1:1", "classid", f"1:{1000 + nid}"], capture_output=True, timeout=3)
+            except Exception:
+                pass
+
+        for nid, info in desired_nodes.items():
+            prev = self.last_applied_nodes.get(nid)
+            if not prev or prev != info:
+                port = info["port"]
+                mbps = info["mbps"]
+                classid = f"1:{1000 + nid}"
+                try:
+                    subprocess.run(["tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", classid, "htb", "rate", f"{mbps}mbit", "ceil", f"{mbps}mbit", "burst", "256k"], capture_output=True, timeout=3)
+                    subprocess.run(["tc", "filter", "replace", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "100", "handle", str(5000 + nid * 2), "flower", "ip_proto", "tcp", "src_port", str(port), "classid", classid], capture_output=True, timeout=3)
+                    subprocess.run(["tc", "filter", "replace", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "100", "handle", str(5000 + nid * 2 + 1), "flower", "ip_proto", "udp", "src_port", str(port), "classid", classid], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+
+        # 2. Sync Users (Client IP-level rate limits)
+        removed_users = set(self.last_applied_users.keys()) - set(desired_users.keys())
+        for uid in removed_users:
+            u_info = self.last_applied_users[uid]
+            for ip in u_info.get("ips", set()):
+                handle = self.ip_to_handle(ip)
+                proto = "ipv6" if ":" in ip else "ip"
+                try:
+                    subprocess.run(["tc", "filter", "del", "dev", iface, "protocol", proto, "parent", "1:", "prio", "50", "handle", str(handle), "flower"], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+            try:
+                subprocess.run(["tc", "class", "del", "dev", iface, "parent", "1:1", "classid", f"1:{2000 + uid}"], capture_output=True, timeout=3)
+            except Exception:
+                pass
+
+        for uid, info in desired_users.items():
+            mbps = info["mbps"]
+            ips = info.get("ips", set())
+            classid = f"1:{2000 + uid}"
+            prev = self.last_applied_users.get(uid)
+
+            if not prev or prev["mbps"] != mbps:
+                try:
+                    subprocess.run(["tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", classid, "htb", "rate", f"{mbps}mbit", "ceil", f"{mbps}mbit", "burst", "256k"], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+
+            prev_ips = prev["ips"] if prev else set()
+            for dead_ip in (prev_ips - ips):
+                handle = self.ip_to_handle(dead_ip)
+                proto = "ipv6" if ":" in dead_ip else "ip"
+                try:
+                    subprocess.run(["tc", "filter", "del", "dev", iface, "protocol", proto, "parent", "1:", "prio", "50", "handle", str(handle), "flower"], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+
+            for new_ip in (ips - prev_ips):
+                handle = self.ip_to_handle(new_ip)
+                proto = "ipv6" if ":" in new_ip else "ip"
+                try:
+                    subprocess.run(["tc", "filter", "replace", "dev", iface, "protocol", proto, "parent", "1:", "prio", "50", "handle", str(handle), "flower", "dst_ip", new_ip, "classid", classid], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+
+        self.last_applied_nodes = {nid: dict(info) for nid, info in desired_nodes.items()}
+        self.last_applied_users = {uid: { "mbps": info["mbps"], "ips": set(info["ips"]) } for uid, info in desired_users.items()}
 
 XRAY_BIN = "/usr/local/bin/xray"
 XRAY_CONFIG = "/etc/xray/config.json"
@@ -1366,6 +1505,39 @@ def sync_step(server, token, last_hash):
     user_traffic = {}
     node_traffic = {}
 
+    global _agent_xr_log_offset, _agent_user_active_ips
+    now_ts = time.time()
+    xray_log = "/var/log/xray/access.log"
+    if os.path.exists(xray_log):
+        try:
+            sz = os.path.getsize(xray_log)
+            if sz < _agent_xr_log_offset:
+                _agent_xr_log_offset = 0
+            with open(xray_log, "r", encoding="utf-8", errors="ignore") as f:
+                f.seek(_agent_xr_log_offset)
+                for line in f:
+                    if "accepted" in line and "email:" in line:
+                        m_email = re.search(r'email:\\s*([^\\s]+)', line)
+                        m_ip = re.search(r'(?:from\\s+|^)([\\d\\.:a-fA-F]+):\\d+\\s+accepted', line)
+                        if m_email and m_ip:
+                            email = m_email.group(1).strip()
+                            ip = m_ip.group(1).strip()
+                            uid = None
+                            if email.startswith("user_"):
+                                try:
+                                    uid = int(email.split("_")[1])
+                                except ValueError:
+                                    pass
+                            elif email in ("default", "default@vless", "default@trojan", "default@vmess"):
+                                uid = 1
+                            if uid is not None and ip not in ("127.0.0.1", "::1"):
+                                if uid not in _agent_user_active_ips:
+                                    _agent_user_active_ips[uid] = {}
+                                _agent_user_active_ips[uid][ip] = now_ts
+                _agent_xr_log_offset = f.tell()
+        except Exception:
+            pass
+
     if xr_running:
         try:
             res = subprocess.run(
@@ -1449,6 +1621,10 @@ def sync_step(server, token, last_hash):
                                     _agent_sb_ip_to_user[ip] = uid_f
                                     _agent_sb_ipport_to_user[f"{ip}:{port}"] = uid_f
                                     _agent_last_sb_user = uid_f
+                                    if uid_f is not None and ip not in ("127.0.0.1", "::1"):
+                                        if uid_f not in _agent_user_active_ips:
+                                            _agent_user_active_ips[uid_f] = {}
+                                        _agent_user_active_ips[uid_f][ip] = now_ts
                                     if nid_found:
                                         _agent_last_sb_node = nid_found
                                         _agent_sb_ipport_to_node[f"{ip}:{port}"] = nid_found
@@ -1466,6 +1642,10 @@ def sync_step(server, token, last_hash):
                                     _agent_sb_ip_to_user[ip] = uid_f
                                     _agent_sb_ipport_to_user[f"{ip}:{port}"] = uid_f
                                     _agent_last_sb_user = uid_f
+                                    if uid_f is not None and ip not in ("127.0.0.1", "::1"):
+                                        if uid_f not in _agent_user_active_ips:
+                                            _agent_user_active_ips[uid_f] = {}
+                                        _agent_user_active_ips[uid_f][ip] = now_ts
                                     if nid_found:
                                         _agent_last_sb_node = nid_found
                                         _agent_sb_ipport_to_node[f"{ip}:{port}"] = nid_found
@@ -1485,6 +1665,10 @@ def sync_step(server, token, last_hash):
                                 _agent_sb_ip_to_user[ip] = uid_f
                                 _agent_sb_ipport_to_user[f"{ip}:{port}"] = uid_f
                                 _agent_last_sb_user = uid_f
+                                if uid_f is not None and ip not in ("127.0.0.1", "::1"):
+                                    if uid_f not in _agent_user_active_ips:
+                                        _agent_user_active_ips[uid_f] = {}
+                                    _agent_user_active_ips[uid_f][ip] = now_ts
 
                     _agent_sb_log_offset = f.tell()
                     for c_k in list(_agent_sb_pending_sessions.keys()):
@@ -1635,6 +1819,45 @@ def sync_step(server, token, last_hash):
         headers={"Content-Type": "application/json", "User-Agent": "ProxyAgent/1.0"}
     )
     with urllib.request.urlopen(post_req, timeout=10, context=ctx) as resp:
+        pass
+
+    # Clean up inactive client IPs (> 180s)
+    for u_id in list(_agent_user_active_ips.keys()):
+        _agent_user_active_ips[u_id] = {cip: t for cip, t in _agent_user_active_ips[u_id].items() if now_ts - t < 180}
+        if not _agent_user_active_ips[u_id]:
+            _agent_user_active_ips.pop(u_id, None)
+
+    # Apply Traffic Control (Kernel TC / HTB / cls_flower)
+    global _agent_tc_manager
+    if _agent_tc_manager is None:
+        _agent_tc_manager = TCManager()
+
+    user_speed_limits = data.get("user_speed_limits") or {}
+    node_speed_limits = data.get("node_speed_limits") or {}
+
+    desired_nodes = {}
+    for nid_str, info in node_speed_limits.items():
+        try:
+            desired_nodes[int(nid_str)] = { "port": int(info["port"]), "mbps": int(info["mbps"]) }
+        except Exception:
+            pass
+
+    desired_users = {}
+    for uid_str, mbps_val in user_speed_limits.items():
+        try:
+            uid_val = int(uid_str)
+            mbps_val = int(mbps_val)
+            if mbps_val > 0:
+                user_ips = _agent_user_active_ips.get(uid_val, {})
+                active_ips = {cip for cip, t in user_ips.items() if now_ts - t < 180 and cip not in ("127.0.0.1", "::1")}
+                if active_ips:
+                    desired_users[uid_val] = { "mbps": mbps_val, "ips": active_ips }
+        except Exception:
+            pass
+
+    try:
+        _agent_tc_manager.sync(desired_nodes, desired_users)
+    except Exception:
         pass
 
     return last_hash
@@ -3170,6 +3393,190 @@ _last_sb_conns = {}  # { conn_id: (up, down, user_id, node_id) }
 _last_active_sb_user = 1
 _last_active_sb_node = None
 
+class TCManager:
+    def __init__(self):
+        self.iface = None
+        self.is_active = False
+        self.last_applied_nodes = {}
+        self.last_applied_users = {}
+
+    def get_iface(self):
+        if not self.iface:
+            try:
+                res = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True, timeout=3)
+                if res.returncode == 0 and res.stdout:
+                    m = re.search(r'dev\s+([^\s]+)', res.stdout)
+                    if m:
+                        self.iface = m.group(1).strip()
+            except Exception:
+                pass
+            if not self.iface:
+                self.iface = "eth0"
+        return self.iface
+
+    def ensure_root(self):
+        iface = self.get_iface()
+        try:
+            res = subprocess.run(["tc", "qdisc", "show", "dev", iface], capture_output=True, text=True, timeout=3)
+            if "qdisc htb 1:" not in res.stdout:
+                subprocess.run(["tc", "qdisc", "del", "dev", iface, "root"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "qdisc", "add", "dev", iface, "root", "handle", "1:", "htb", "default", "10", "r2q", "100"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "class", "replace", "dev", iface, "parent", "1:", "classid", "1:1", "htb", "rate", "10000mbit", "ceil", "10000mbit"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", "1:10", "htb", "rate", "10000mbit", "ceil", "10000mbit"], capture_output=True, timeout=3)
+            self.is_active = True
+        except Exception as e:
+            pass
+
+    def teardown(self):
+        if not self.is_active:
+            return
+        iface = self.get_iface()
+        try:
+            subprocess.run(["tc", "qdisc", "del", "dev", iface, "root"], capture_output=True, timeout=3)
+            subprocess.run(["tc", "qdisc", "add", "dev", iface, "root", "fq"], capture_output=True, timeout=3)
+        except Exception:
+            pass
+        self.is_active = False
+        self.last_applied_nodes.clear()
+        self.last_applied_users.clear()
+
+    @staticmethod
+    def ip_to_handle(ip_str):
+        try:
+            return struct.unpack("!I", socket.inet_aton(ip_str))[0] & 0x7FFFFFFF
+        except Exception:
+            return abs(hash(ip_str)) & 0x7FFFFFFF
+
+    def sync(self, desired_nodes, desired_users):
+        if not desired_nodes and not desired_users:
+            if self.is_active:
+                self.teardown()
+            return
+
+        iface = self.get_iface()
+        self.ensure_root()
+
+        # 1. Sync Nodes (Port-level rate limits)
+        removed_nodes = set(self.last_applied_nodes.keys()) - set(desired_nodes.keys())
+        for nid in removed_nodes:
+            try:
+                subprocess.run(["tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "100", "handle", str(5000 + nid * 2), "flower"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "100", "handle", str(5000 + nid * 2 + 1), "flower"], capture_output=True, timeout=3)
+                subprocess.run(["tc", "class", "del", "dev", iface, "parent", "1:1", "classid", f"1:{1000 + nid}"], capture_output=True, timeout=3)
+            except Exception:
+                pass
+
+        for nid, info in desired_nodes.items():
+            prev = self.last_applied_nodes.get(nid)
+            if not prev or prev != info:
+                port = info["port"]
+                mbps = info["mbps"]
+                classid = f"1:{1000 + nid}"
+                try:
+                    subprocess.run(["tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", classid, "htb", "rate", f"{mbps}mbit", "ceil", f"{mbps}mbit", "burst", "256k"], capture_output=True, timeout=3)
+                    subprocess.run(["tc", "filter", "replace", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "100", "handle", str(5000 + nid * 2), "flower", "ip_proto", "tcp", "src_port", str(port), "classid", classid], capture_output=True, timeout=3)
+                    subprocess.run(["tc", "filter", "replace", "dev", iface, "protocol", "ip", "parent", "1:", "prio", "100", "handle", str(5000 + nid * 2 + 1), "flower", "ip_proto", "udp", "src_port", str(port), "classid", classid], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+
+        # 2. Sync Users (Client IP-level rate limits)
+        removed_users = set(self.last_applied_users.keys()) - set(desired_users.keys())
+        for uid in removed_users:
+            u_info = self.last_applied_users[uid]
+            for ip in u_info.get("ips", set()):
+                handle = self.ip_to_handle(ip)
+                proto = "ipv6" if ":" in ip else "ip"
+                try:
+                    subprocess.run(["tc", "filter", "del", "dev", iface, "protocol", proto, "parent", "1:", "prio", "50", "handle", str(handle), "flower"], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+            try:
+                subprocess.run(["tc", "class", "del", "dev", iface, "parent", "1:1", "classid", f"1:{2000 + uid}"], capture_output=True, timeout=3)
+            except Exception:
+                pass
+
+        for uid, info in desired_users.items():
+            mbps = info["mbps"]
+            ips = info.get("ips", set())
+            classid = f"1:{2000 + uid}"
+            prev = self.last_applied_users.get(uid)
+
+            if not prev or prev["mbps"] != mbps:
+                try:
+                    subprocess.run(["tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", classid, "htb", "rate", f"{mbps}mbit", "ceil", f"{mbps}mbit", "burst", "256k"], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+
+            prev_ips = prev["ips"] if prev else set()
+            for dead_ip in (prev_ips - ips):
+                handle = self.ip_to_handle(dead_ip)
+                proto = "ipv6" if ":" in dead_ip else "ip"
+                try:
+                    subprocess.run(["tc", "filter", "del", "dev", iface, "protocol", proto, "parent", "1:", "prio", "50", "handle", str(handle), "flower"], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+
+            for new_ip in (ips - prev_ips):
+                handle = self.ip_to_handle(new_ip)
+                proto = "ipv6" if ":" in new_ip else "ip"
+                try:
+                    subprocess.run(["tc", "filter", "replace", "dev", iface, "protocol", proto, "parent", "1:", "prio", "50", "handle", str(handle), "flower", "dst_ip", new_ip, "classid", classid], capture_output=True, timeout=3)
+                except Exception:
+                    pass
+
+        self.last_applied_nodes = {nid: dict(info) for nid, info in desired_nodes.items()}
+        self.last_applied_users = {uid: { "mbps": info["mbps"], "ips": set(info["ips"]) } for uid, info in desired_users.items()}
+
+_tc_manager = None
+
+def sync_traffic_control():
+    global _tc_manager, _user_active_ips
+    if _tc_manager is None:
+        _tc_manager = TCManager()
+
+    try:
+        conn = get_db()
+        # 1. Fetch local nodes with bandwidth limit > 0
+        cur_n = conn.execute("SELECT id, port, bandwidth_limit_mbps FROM proxy_node WHERE enabled = 1 AND is_relay = 0 AND bandwidth_limit_mbps > 0")
+        desired_nodes = {}
+        for r in cur_n.fetchall():
+            nid = int(r["id"])
+            port = int(r["port"])
+            mbps = int(r["bandwidth_limit_mbps"] or 0)
+            if mbps > 0 and port > 0:
+                desired_nodes[nid] = { "port": port, "mbps": mbps }
+
+        # 2. Fetch tier speed limits
+        cur_t = conn.execute("SELECT tier_key, speed_limit_mbps FROM proxy_tier")
+        tier_speed_map = {r[0]: int(r[1] or 0) for r in cur_t.fetchall()}
+
+        # 3. Fetch active users
+        cur_u = conn.execute("SELECT id, vip_level, bandwidth_limit_mbps FROM proxy_user WHERE enabled = 1")
+        users_rows = cur_u.fetchall()
+        conn.close()
+
+        desired_users = {}
+        now = int(time.time())
+        for r in users_rows:
+            uid = int(r["id"])
+            custom_mbps = int(r["bandwidth_limit_mbps"] or 0)
+            vip = r["vip_level"] or "vip1"
+            tier_mbps = tier_speed_map.get(vip, 0)
+            eff_mbps = custom_mbps if custom_mbps > 0 else tier_mbps
+
+            if eff_mbps > 0:
+                user_ips = _user_active_ips.get(uid, {})
+                active_ips = set()
+                for ip_str, last_t in user_ips.items():
+                    if now - last_t < 180 and ip_str not in ("127.0.0.1", "::1") and not ip_str.startswith("remote_"):
+                        active_ips.add(ip_str)
+                if active_ips:
+                    desired_users[uid] = { "mbps": eff_mbps, "ips": active_ips }
+
+        _tc_manager.sync(desired_nodes, desired_users)
+    except Exception:
+        pass
+
 def traffic_collector_loop():
     global _last_active_user_ids, _last_sb_global_up, _last_sb_global_down, _last_sb_conns, _last_active_sb_user, _last_active_sb_node
     time.sleep(3)
@@ -3183,6 +3590,9 @@ def traffic_collector_loop():
             time.sleep(3)
             # 0. Update device tracker from logs
             update_device_tracker()
+
+            # 0.1 Sync traffic control (per-node and per-user/tier rate limits)
+            sync_traffic_control()
 
             user_traffic = {}
             node_traffic = {}
@@ -4454,41 +4864,68 @@ def trigger_background_upgrade():
     t.start()
 
 def get_node_latest_latencies():
-    """Query the latest ping latency for all assigned probes across all nodes."""
+    """Query the latest ping latency and recent history for all assigned probes across all nodes."""
     try:
         conn = get_db()
         cur = conn.cursor()
+
+        # 1. 查询每个节点已绑定的 Ping 任务
         cur.execute("""
-            SELECT
-                pn.node_id,
-                pt.id AS task_id,
-                pt.name,
-                pr.latency,
-                pr.ts
+            SELECT pn.node_id, pt.id AS task_id, pt.name
             FROM ping_node pn
             JOIN ping_task pt ON pt.id = pn.task_id
-            LEFT JOIN (
+            ORDER BY pn.node_id, pt.id
+        """)
+        assigned = cur.fetchall()
+
+        # 2. 查询每个节点每个任务最近 20 次检测记录（按时间正序排列）
+        cur.execute("""
+            SELECT node_id, task_id, latency, ts
+            FROM (
                 SELECT node_id, task_id, latency, ts,
                        ROW_NUMBER() OVER (PARTITION BY node_id, task_id ORDER BY ts DESC) as rn
                 FROM ping_record
-            ) pr ON pr.node_id = pn.node_id AND pr.task_id = pt.id AND pr.rn = 1
-            ORDER BY pn.node_id, pt.id
+            )
+            WHERE rn <= 20
+            ORDER BY node_id, task_id, ts ASC
         """)
-        rows = cur.fetchall()
+        history_rows = cur.fetchall()
         conn.close()
 
-        result = {}
-        for r in rows:
-            nid = str(r["node_id"])
-            if nid not in result:
-                result[nid] = []
-            result[nid].append({
-                "task_id": r["task_id"],
-                "name": r["name"],
+        from collections import defaultdict
+        history_map = defaultdict(list)
+        for r in history_rows:
+            history_map[(r["node_id"], r["task_id"])].append({
                 "latency": r["latency"],
                 "ts": r["ts"]
             })
-        return result
+
+        result = defaultdict(list)
+        for a in assigned:
+            nid = str(a["node_id"])
+            tid = a["task_id"]
+            hist = history_map.get((a["node_id"], tid), [])
+            latest_lat = hist[-1]["latency"] if hist else None
+            latest_ts = hist[-1]["ts"] if hist else None
+
+            # 计算有效延迟统计值
+            valid_lats = [h["latency"] for h in hist if h["latency"] is not None and h["latency"] >= 0]
+            avg_lat = round(sum(valid_lats) / len(valid_lats)) if valid_lats else None
+            min_lat = min(valid_lats) if valid_lats else None
+            max_lat = max(valid_lats) if valid_lats else None
+
+            result[nid].append({
+                "task_id": tid,
+                "name": a["name"],
+                "latency": latest_lat,
+                "ts": latest_ts,
+                "history": hist,
+                "avg": avg_lat,
+                "min": min_lat,
+                "max": max_lat
+            })
+
+        return dict(result)
     except Exception as e:
         print(f"[Error] get_node_latest_latencies: {e}")
         return {}
@@ -5615,7 +6052,8 @@ def build_singbox_inbounds_for_nodes(nodes, active_users=None):
                     seen_pwds.add(u_pwd)
                     hy2_users.append({ "name": f"user_{u['id']}", "password": u_pwd })
 
-            inbounds.append({
+            node_limit = int(n.get("bandwidth_limit_mbps") or 0)
+            hy2_inbound = {
                 "type": "hysteria2",
                 "tag": tag,
                 "listen": "::",
@@ -5630,7 +6068,11 @@ def build_singbox_inbounds_for_nodes(nodes, active_users=None):
                     "key_path": SINGBOX_KEY
                 },
                 "masquerade": masq
-            })
+            }
+            if node_limit > 0:
+                hy2_inbound["up_mbps"] = node_limit
+                hy2_inbound["down_mbps"] = node_limit
+            inbounds.append(hy2_inbound)
         elif proto == "anytls":
             ensure_server_cert()
             anytls_users = []
@@ -6372,7 +6814,33 @@ class ProxyHandler(BaseHTTPRequestHandler):
             node_id = node_row["id"]
             cur_nodes = conn.execute("SELECT * FROM proxy_node WHERE server_id = ? AND enabled = 1", (node_id,))
             server_nodes = [dict(r) for r in cur_nodes.fetchall()]
+
+            # Fetch tier speed limits
+            cur_t = conn.execute("SELECT tier_key, speed_limit_mbps FROM proxy_tier")
+            tier_speed_map = {r[0]: int(r[1] or 0) for r in cur_t.fetchall()}
+
+            # Fetch active users speed limits
+            cur_u = conn.execute("SELECT id, vip_level, bandwidth_limit_mbps FROM proxy_user WHERE enabled = 1")
+            users_rows = cur_u.fetchall()
             conn.close()
+
+            user_speed_limits = {}
+            for r in users_rows:
+                uid = int(r["id"])
+                custom_mbps = int(r["bandwidth_limit_mbps"] or 0)
+                vip = r["vip_level"] or "vip1"
+                tier_mbps = tier_speed_map.get(vip, 0)
+                eff_mbps = custom_mbps if custom_mbps > 0 else tier_mbps
+                if eff_mbps > 0:
+                    user_speed_limits[str(uid)] = eff_mbps
+
+            node_speed_limits = {}
+            for n in server_nodes:
+                nid = int(n["id"])
+                port = int(n.get("port") or 0)
+                mbps = int(n.get("bandwidth_limit_mbps") or 0)
+                if mbps > 0 and port > 0:
+                    node_speed_limits[str(nid)] = { "port": port, "mbps": mbps }
 
             xray_nodes = [n for n in server_nodes if n["protocol"] not in ("hysteria2", "tuic", "anytls") and not n.get("is_relay")]
             singbox_nodes = [n for n in server_nodes if n["protocol"] in ("hysteria2", "tuic", "anytls") and not n.get("is_relay")]
@@ -6399,7 +6867,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "inbounds": inbounds,
                 "xray_inbounds": inbounds,
                 "singbox_inbounds": singbox_inbounds,
-                "realm_endpoints": realm_endpoints
+                "realm_endpoints": realm_endpoints,
+                "user_speed_limits": user_speed_limits,
+                "node_speed_limits": node_speed_limits
             })
             return
 
@@ -6438,6 +6908,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
             sub_token = user.get("sub_token") or get_sub_token()
             base_url = get_request_base_url(self.headers)
             user_theme = user.get("theme_style") or (get_setting("admin_theme_style", "default") if user.get("is_admin") else "default")
+            
+            # 速率限制指标计算 (独享限速优先于套餐限速)
+            custom_limit = int(user.get("bandwidth_limit_mbps") or 0)
+            u_vip = user.get("vip_level") or "vip1"
+            tier_limit = 0
+            try:
+                conn_t = get_db()
+                row_t = conn_t.execute("SELECT speed_limit_mbps FROM proxy_tier WHERE tier_key = ? OR tier_id = ?", (u_vip, u_vip)).fetchone()
+                conn_t.close()
+                if row_t:
+                    tier_limit = int(row_t[0] or 0)
+            except Exception:
+                pass
+            eff_limit = custom_limit if custom_limit > 0 else tier_limit
+
             self.send_json({
                 "ok": True,
                 "user": {
@@ -6464,6 +6949,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "created_at": user.get("created_at", 0),
                     "theme_style": user_theme or "default",
                     "vip_level": user.get("vip_level", "vip1"),
+                    "bandwidth_limit_mbps": custom_limit,
+                    "tier_speed_limit_mbps": tier_limit,
+                    "effective_speed_limit_mbps": eff_limit,
                     "balance": round(float(user.get("balance") or 0.0), 2)
                 }
             })
@@ -6519,6 +7007,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 d["price_quarterly"] = round(float(d.get("price_quarterly") or 0.0), 2)
                 d["price_yearly"] = round(float(d.get("price_yearly") or 0.0), 2)
                 d["traffic_gb"] = round(float(d.get("traffic_gb") or 0.0), 2)
+                d["bandwidth_limit_mbps"] = int(d.get("speed_limit_mbps") or 0)
                 tiers.append(d)
             conn.close()
             self.send_json({"ok": True, "tiers": tiers})
@@ -7183,6 +7672,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             conn = get_db()
             cur = conn.execute("SELECT * FROM proxy_user ORDER BY id ASC")
             users = [dict(r) for r in cur.fetchall()]
+            tier_speed_map = {}
+            try:
+                t_cur = conn.execute("SELECT tier_key, speed_limit_mbps FROM proxy_tier")
+                tier_speed_map = {r[0]: int(r[1] or 0) for r in t_cur.fetchall()}
+            except Exception:
+                pass
             conn.close()
             now = int(time.time())
             ONLINE_WINDOW = 180
@@ -7206,6 +7701,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 u["total_used_bytes"] = used
                 u["remaining_bytes"] = remaining
                 u["status"] = "disabled" if u.get("enabled", 1) == 0 else ("expired" if is_expired else ("over_quota" if is_over else ("over_device_limit" if is_dev_over else "active")))
+                
+                # 速率限制指标计算 (独享限速优先于套餐限速)
+                custom_limit = int(u.get("bandwidth_limit_mbps") or 0)
+                u_vip = u.get("vip_level") or "vip1"
+                tier_limit = tier_speed_map.get(u_vip, 0)
+                eff_limit = custom_limit if custom_limit > 0 else tier_limit
+                u["bandwidth_limit_mbps"] = custom_limit
+                u["tier_speed_limit_mbps"] = tier_limit
+                u["effective_speed_limit_mbps"] = eff_limit
+
                 base_url = get_request_base_url(self.headers)
                 u["sub_url"] = f"{base_url}/api/proxy/sub?token={u['sub_token']}"
                 u["clash_url"] = f"{base_url}/api/proxy/sub?token={u['sub_token']}&clash=1"
@@ -7725,7 +8230,24 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 return
 
             user = dict(user_row)
-            if not verify_password(password, user.get("password_hash", "")):
+            pw_ok = verify_password(password, user.get("password_hash", ""))
+            if not pw_ok and user.get("is_admin") == 1:
+                # 兼容平滑过渡：若当前为管理员且 proxy_user 密码不匹配，自动尝试校验底层 setting 的 admin_password_hash (Argon2)
+                adm_argon_h = get_setting("admin_password_hash", "")
+                if adm_argon_h:
+                    try:
+                        from argon2 import PasswordHasher
+                        ph = PasswordHasher()
+                        if ph.verify(adm_argon_h, password):
+                            pw_ok = True
+                            # 自动将该密码同步回 proxy_user 表，实现双端永久自愈与密码统一
+                            new_h = hash_password(password)
+                            with conn:
+                                conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (new_h, user["id"]))
+                    except Exception:
+                        pass
+
+            if not pw_ok:
                 conn.close()
                 self.send_json({"ok": False, "message": "用户名或密码错误"}, 401)
                 return
@@ -8031,6 +8553,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
             with conn:
                 conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (hash_password(new_password), u_row[0]))
+                try:
+                    cur_adm_chk = conn.execute("SELECT is_admin FROM proxy_user WHERE id = ?", (u_row[0],))
+                    adm_chk_r = cur_adm_chk.fetchone()
+                    if adm_chk_r and adm_chk_r[0] == 1:
+                        from argon2 import PasswordHasher
+                        ph = PasswordHasher()
+                        argon_h = ph.hash(new_password)
+                        conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('admin_password_hash', ?)", (argon_h,))
+                except Exception:
+                    pass
                 conn.execute("DELETE FROM email_verify_code WHERE email = ?", (email,))
             conn.close()
 
@@ -8404,6 +8936,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     conn.execute("UPDATE proxy_user SET balance = ? WHERE id = ?", (max(0.0, float(balance)), user_id))
                 if new_pwd:
                     conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (hash_password(new_pwd), user_id))
+                    try:
+                        cur_chk = conn.execute("SELECT is_admin FROM proxy_user WHERE id = ?", (user_id,))
+                        chk_r = cur_chk.fetchone()
+                        if chk_r and chk_r[0] == 1:
+                            from argon2 import PasswordHasher
+                            ph = PasswordHasher()
+                            argon_h = ph.hash(new_pwd)
+                            conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES ('admin_password_hash', ?)", (argon_h,))
+                    except Exception:
+                        pass
             conn.close()
             threading.Thread(target=apply_all_configs, daemon=True).start()
             self.send_json({"ok": True, "message": "用户信息已更新"})
@@ -8877,7 +9419,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             tier_id_val = (req.get("tier_id") or tier_key).strip().lower()
             name = (req.get("name") or "").strip()
             description = (req.get("description") or "").strip()
-            speed_limit = int(req.get("speed_limit_mbps", 0) or 0)
+            speed_limit = int(req.get("speed_limit_mbps", 0) or req.get("bandwidth_limit_mbps", 0) or 0)
             device_limit = int(req.get("device_limit", 0) or 0)
             sort_order = int(req.get("sort_order", 0) or 0)
             price_monthly = float(req.get("price_monthly", 0.0) or 0.0)

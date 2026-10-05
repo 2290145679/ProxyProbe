@@ -320,21 +320,21 @@ function InstallModeSelector({
 }) {
   return (
     <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold">安装模式</span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-semibold shrink-0 whitespace-nowrap">安装模式</span>
           {onlyProxy ? (
-            <Badge variant="secondary" className="text-[10px] px-1.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 font-medium">
-              纯代理模式 (免装探针)
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 font-medium shrink-0">
+              纯代理模式<span className="hidden sm:inline"> (免装探针)</span>
             </Badge>
           ) : (
-            <Badge variant="secondary" className="text-[10px] px-1.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 font-medium">
-              全功能模式 (探针监控 + 代理节点)
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 font-medium shrink-0">
+              全功能模式<span className="hidden sm:inline"> (探针监控 + 代理节点)</span>
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-muted-foreground font-medium">免装探针</span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[11px] text-muted-foreground font-medium shrink-0 whitespace-nowrap">免装探针</span>
           <Switch checked={onlyProxy} onCheckedChange={onChange} />
         </div>
       </div>
@@ -1927,6 +1927,7 @@ function VipTierSettingsCard() {
     price_yearly: "0",
     traffic_gb: "200",
     device_limit: "0",
+    speed_limit_mbps: "0",
     description: "",
   })
   const [saving, setSaving] = useState(false)
@@ -1943,7 +1944,7 @@ function VipTierSettingsCard() {
 
   const handleOpenCreate = () => {
     setEditingTier(null)
-    setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", description: "" })
+    setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", speed_limit_mbps: "0", description: "" })
     setCreateOpen(true)
   }
 
@@ -1957,6 +1958,7 @@ function VipTierSettingsCard() {
       price_yearly: String(t.price_yearly ?? (t.price_monthly ? Math.round(t.price_monthly * 12 * 0.8) : 0)),
       traffic_gb: String(t.traffic_gb ?? 200),
       device_limit: String(t.device_limit ?? 0),
+      speed_limit_mbps: String(t.speed_limit_mbps ?? t.bandwidth_limit_mbps ?? 0),
       description: t.description || "",
     })
     setCreateOpen(true)
@@ -1974,6 +1976,8 @@ function VipTierSettingsCard() {
         price_yearly: parseFloat(form.price_yearly) || 0,
         traffic_gb: parseFloat(form.traffic_gb) || 0,
         device_limit: parseInt(form.device_limit) || 0,
+        speed_limit_mbps: parseInt(form.speed_limit_mbps) || 0,
+        bandwidth_limit_mbps: parseInt(form.speed_limit_mbps) || 0,
         description: form.description.trim(),
       }
       if (editingTier) {
@@ -1989,7 +1993,7 @@ function VipTierSettingsCard() {
         toast.success(d.message || (editingTier ? "VIP 套餐修改成功！" : "VIP 套餐添加成功！"))
         setCreateOpen(false)
         setEditingTier(null)
-        setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", description: "" })
+        setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", speed_limit_mbps: "0", description: "" })
         loadTiers()
       } else {
         toast.error(d.message || "操作失败")
@@ -2040,7 +2044,9 @@ function VipTierSettingsCard() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {tiers.map((t) => (
+            {tiers.map((t) => {
+              const speedLimit = t.speed_limit_mbps ?? t.bandwidth_limit_mbps ?? 0
+              return (
               <div key={t.id} className="p-3.5 rounded-lg border bg-muted/20 space-y-2 flex flex-col justify-between">
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
@@ -2052,10 +2058,14 @@ function VipTierSettingsCard() {
                   {t.description && (
                     <p className="text-[11px] text-muted-foreground line-clamp-2">{t.description}</p>
                   )}
-                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono pt-1">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground font-mono pt-1">
                     <span>流量: {t.traffic_gb > 0 ? `${t.traffic_gb}GB` : "不限"}</span>
                     <span>·</span>
                     <span>设备: {t.device_limit > 0 ? `${t.device_limit}台` : "不限"}</span>
+                    <span>·</span>
+                    <span className={speedLimit > 0 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-emerald-600 dark:text-emerald-400"}>
+                      {speedLimit > 0 ? `限速: ${speedLimit}M` : "极速不限"}
+                    </span>
                   </div>
                   <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-mono font-semibold pt-1">
                     <span>月付: ￥{t.price_monthly ?? 0}</span>
@@ -2084,7 +2094,7 @@ function VipTierSettingsCard() {
                   </Button>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         )}
       </div>
@@ -2137,7 +2147,9 @@ function VipTierSettingsCard() {
 
             <div className="grid grid-cols-3 gap-2">
               <div className="space-y-1.5">
-                <Label className="text-xs">月付价格 (元)</Label>
+                <div className="h-5 flex items-center">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">月付 (元)</Label>
+                </div>
                 <Input
                   type="number"
                   min="0"
@@ -2149,7 +2161,9 @@ function VipTierSettingsCard() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">季付价格 (元)</Label>
+                <div className="h-5 flex items-center">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">季付 (元)</Label>
+                </div>
                 <Input
                   type="number"
                   min="0"
@@ -2161,7 +2175,9 @@ function VipTierSettingsCard() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">年付价格 (元)</Label>
+                <div className="h-5 flex items-center">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">年付 (元)</Label>
+                </div>
                 <Input
                   type="number"
                   min="0"
@@ -2174,9 +2190,11 @@ function VipTierSettingsCard() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               <div className="space-y-1.5">
-                <Label className="text-xs">默认流量配额 (GB)</Label>
+                <div className="h-5 flex items-center">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">流量配额 (GB)</Label>
+                </div>
                 <Input
                   type="number"
                   min="0"
@@ -2186,13 +2204,28 @@ function VipTierSettingsCard() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">允许同时在线设备 (台)</Label>
+                <div className="h-5 flex items-center">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">设备限制 (台)</Label>
+                </div>
                 <Input
                   type="number"
                   min="0"
                   className="text-xs h-9 font-mono"
                   value={form.device_limit}
                   onChange={e => setForm(prev => ({ ...prev, device_limit: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="h-5 flex items-center">
+                  <Label className="text-xs shrink-0 whitespace-nowrap">套餐限速 (M)</Label>
+                </div>
+                <Input
+                  type="number"
+                  min="0"
+                  placeholder="0为不限"
+                  className="text-xs h-9 font-mono"
+                  value={form.speed_limit_mbps}
+                  onChange={e => setForm(prev => ({ ...prev, speed_limit_mbps: e.target.value }))}
                 />
               </div>
             </div>

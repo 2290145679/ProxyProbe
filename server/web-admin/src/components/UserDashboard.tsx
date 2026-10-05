@@ -55,6 +55,9 @@ export type UserProfile = {
   username: string
   is_admin: boolean
   vip_level?: string
+  bandwidth_limit_mbps?: number
+  effective_speed_limit_mbps?: number
+  tier_speed_limit_mbps?: number
   balance?: number
   sub_token: string
   sub_url: string
@@ -518,7 +521,7 @@ export function UserDashboard({
           </div>
 
           {/* 详细指标网格 */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 pt-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-3 pt-2">
             <div className="rounded-lg bg-emerald-500/10 p-3 space-y-1 border border-emerald-500/20">
               <div className="flex items-center justify-between text-xs text-emerald-700 dark:text-emerald-400">
                 <span className="flex items-center gap-1.5"><Wallet className="size-3.5" /> 账户余额</span>
@@ -541,6 +544,15 @@ export function UserDashboard({
               </div>
               <p className="text-base font-semibold tracking-tight uppercase font-mono text-amber-600 dark:text-amber-400">
                 {user.vip_level || "VIP1"}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-muted/50 p-3 space-y-1 border border-border/50">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Zap className="size-3.5 text-amber-500" /> 速率上限
+              </div>
+              <p className="text-base font-semibold tracking-tight font-mono text-amber-600 dark:text-amber-400">
+                {user.effective_speed_limit_mbps && user.effective_speed_limit_mbps > 0 ? `${user.effective_speed_limit_mbps} Mbps` : "极速不限"}
               </p>
             </div>
 
@@ -1053,9 +1065,9 @@ export function UserDashboard({
                             <li className="flex items-center gap-2">
                               <Zap className="size-3.5 text-amber-500 shrink-0" />
                               <span>
-                                单节点限速:{" "}
+                                套餐速率上限:{" "}
                                 <strong className="text-foreground font-mono">
-                                  {t.bandwidth_limit_mbps && t.bandwidth_limit_mbps > 0 ? `${t.bandwidth_limit_mbps} Mbps` : "高速无限制"}
+                                  {((t.bandwidth_limit_mbps && t.bandwidth_limit_mbps > 0) || (t.speed_limit_mbps && t.speed_limit_mbps > 0)) ? `${t.bandwidth_limit_mbps || t.speed_limit_mbps} Mbps` : "高速无限制"}
                                 </strong>
                               </span>
                             </li>

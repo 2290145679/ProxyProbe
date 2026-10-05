@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Shield, User, Send, ArrowLeft } from "lucide-react"
+import { Send, ArrowLeft } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "sonner"
-import { api } from "@/lib/api"
 
 function GithubMark() {
   return (
@@ -24,7 +23,6 @@ function callbackError(): string {
 }
 
 export function Login({ github, onDone }: { github: boolean; onDone: () => void }) {
-  const [tab, setTab] = useState<"user" | "admin">("user")
   const [userMode, setUserMode] = useState<"login" | "register" | "reset">("login")
 
   // Form states
@@ -33,7 +31,6 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
   const [email, setEmail] = useState("")
   const [code, setCode] = useState("")
   const [newPassword, setNewPassword] = useState("")
-  const [adminPassword, setAdminPassword] = useState("")
 
   const [error, setError] = useState(callbackError)
   const [busy, setBusy] = useState(false)
@@ -197,20 +194,7 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
     }
   }
 
-  // 管理员应急登录
-  async function handleAdminSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setBusy(true)
-    setError("")
-    try {
-      await api("/auth/login", { method: "POST", body: JSON.stringify({ password: adminPassword }) })
-      onDone()
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
+
 
   return (
     <div className="grid min-h-svh place-items-center p-4 sm:p-6 overflow-x-hidden">
@@ -218,46 +202,12 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
         <div className="space-y-1.5 text-center">
           <h1 className="text-xl font-bold tracking-tight">{authConfig.site_name}</h1>
           <p className="text-xs text-muted-foreground">
-            {tab === "admin"
-              ? "管理员控制台安全入口"
-              : userMode === "register"
+            {userMode === "register"
               ? "新用户邮箱自主注册"
               : userMode === "reset"
               ? "通过邮箱验证码找回密码"
-              : "用户登录以获取订阅配置与流量中心"}
+              : "管理员与用户通行入口 · 请输入凭证登录"}
           </p>
-        </div>
-
-        {/* 角色切换选项卡 */}
-        <div className="grid grid-cols-2 rounded-lg bg-muted p-1 text-xs">
-          <button
-            type="button"
-            className={`flex items-center justify-center gap-1.5 py-1.5 rounded-md transition-all ${
-              tab === "user"
-                ? "bg-background text-foreground shadow-sm font-semibold"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => {
-              setTab("user")
-              setError("")
-            }}
-          >
-            <User className="size-3.5" /> 用户服务
-          </button>
-          <button
-            type="button"
-            className={`flex items-center justify-center gap-1.5 py-1.5 rounded-md transition-all ${
-              tab === "admin"
-                ? "bg-background text-foreground shadow-sm font-semibold"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => {
-              setTab("admin")
-              setError("")
-            }}
-          >
-            <Shield className="size-3.5" /> 管理员登录
-          </button>
         </div>
 
         {error && (
@@ -266,10 +216,24 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
           </p>
         )}
 
-        {tab === "user" ? (
-          <div>
+        <div>
             {userMode === "login" && (
               <form onSubmit={handleUserLogin} className="space-y-3 pt-1">
+                {github && (
+                  <div className="space-y-2 pb-1">
+                    <Button asChild variant="outline" className="w-full h-9 text-xs">
+                      <a href="/api/auth/github">
+                        <GithubMark /> 使用 GitHub 登录
+                      </a>
+                    </Button>
+                    <div className="relative my-2">
+                      <Separator />
+                      <span className="absolute inset-0 -top-2 mx-auto w-fit bg-card px-2 text-[10px] text-muted-foreground">
+                        或使用账号密码登录
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="username" className="text-xs">用户名 或 邮箱</Label>
                   <Input
@@ -316,7 +280,7 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
                   className="w-full h-9 text-xs font-medium"
                   disabled={busy || !username || !password}
                 >
-                  {busy ? "登录中…" : "登录用户中心"}
+                  {busy ? "登录中…" : "登录系统"}
                 </Button>
 
                 <div className="pt-2 text-center">
@@ -459,121 +423,84 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
                     )}
                   </div>
                 ) : (
-                  <form onSubmit={handleResetPassword} className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">注册邮箱</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          type="email"
-                          placeholder="请输入您的注册邮箱"
-                          className="h-9 text-xs flex-1"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          required
-                          autoFocus
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleSendCode("reset_password")}
-                          disabled={sendingCode || cooldown > 0 || !email}
-                          className="h-9 text-xs shrink-0 px-2.5"
-                        >
-                          {sendingCode ? "发送中..." : cooldown > 0 ? `${cooldown}s` : "获取验证码"}
-                        </Button>
+                  <>
+                    <form onSubmit={handleResetPassword} className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">注册邮箱</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            type="email"
+                            placeholder="请输入您的注册邮箱"
+                            className="h-9 text-xs flex-1"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            required
+                            autoFocus
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSendCode("reset_password")}
+                            disabled={sendingCode || cooldown > 0 || !email}
+                            className="h-9 text-xs shrink-0 px-2.5"
+                          >
+                            {sendingCode ? "发送中..." : cooldown > 0 ? `${cooldown}s` : "获取验证码"}
+                          </Button>
+                        </div>
                       </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">6 位数字验证码</Label>
+                        <Input
+                          type="text"
+                          maxLength={6}
+                          placeholder="请输入邮箱收到的 6 位验证码"
+                          className="h-9 text-xs font-mono tracking-widest text-center"
+                          value={code}
+                          onChange={(e) => setCode(e.target.value.trim())}
+                          required
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">设置新密码</Label>
+                        <Input
+                          type="password"
+                          placeholder="请输入重置后的新密码"
+                          className="h-9 text-xs"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          required
+                        />
+                      </div>
+
+                      <Button
+                        type="submit"
+                        className="w-full h-9 text-xs font-medium"
+                        disabled={busy || !email || !code || !newPassword}
+                      >
+                        {busy ? "重置中…" : "确认重置密码"}
+                      </Button>
+                    </form>
+
+                    <div className="pt-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserMode("login")
+                          setError("")
+                        }}
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        <ArrowLeft className="size-3" /> 返回登录
+                      </button>
                     </div>
-
-                <div className="space-y-1.5">
-                  <Label className="text-xs">6 位数字验证码</Label>
-                  <Input
-                    type="text"
-                    maxLength={6}
-                    placeholder="请输入邮箱收到的 6 位验证码"
-                    className="h-9 text-xs font-mono tracking-widest text-center"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value.trim())}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label className="text-xs">设置新密码</Label>
-                  <Input
-                    type="password"
-                    placeholder="请输入重置后的新密码"
-                    className="h-9 text-xs"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <Button
-                  type="submit"
-                  className="w-full h-9 text-xs font-medium"
-                  disabled={busy || !email || !code || !newPassword}
-                >
-                  {busy ? "重置中…" : "确认重置密码"}
-                </Button>
-              </form>
-            )}
-
-            <div className="pt-2 text-center">
-              <button
-                type="button"
-                onClick={() => {
-                  setUserMode("login")
-                  setError("")
-                }}
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="size-3" /> 返回登录
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    ) : (
-          <div className="space-y-3 pt-1">
-            {github && (
-              <>
-                <Button asChild variant="outline" className="w-full h-9 text-xs">
-                  <a href="/api/auth/github">
-                    <GithubMark /> 使用 GitHub 登录
-                  </a>
-                </Button>
-                <div className="relative">
-                  <Separator />
-                  <span className="absolute inset-0 -top-2 mx-auto w-fit bg-card px-2 text-[10px] text-muted-foreground">
-                    或使用应急管理密码
-                  </span>
-                </div>
-              </>
-            )}
-
-            <form onSubmit={handleAdminSubmit} className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="admin-password" className="text-xs">应急管理员密码</Label>
-                <Input
-                  id="admin-password"
-                  type="password"
-                  placeholder="请输入后台管理员密码"
-                  className="h-9 text-xs"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  autoComplete="current-password"
-                  autoFocus={!github}
-                  required
-                />
+                  </>
+                )}
               </div>
-              <Button type="submit" className="w-full h-9 text-xs font-medium" disabled={busy || !adminPassword}>
-                {busy ? "登录中…" : "进入管理后台"}
-              </Button>
-            </form>
-          </div>
-        )}
+            )}
+        </div>
 
         {/* Telegram 在线客服入口（管理员开启时展示，默认关闭时 100% 隐藏） */}
         {authConfig.support_tg_enabled && authConfig.support_tg_url && (

@@ -515,17 +515,12 @@ CADDY_EOF
 }
 
 
-# ---- 8. 重置/修改管理员密码 ----
+# ---- 8. 重置/修改管理员账号与密码 ----
 reset_admin_password() {
     echo ""
-    echo -e "${BOLD}─── 重置管理员登录密码 ───${N}"
-    echo -e "  ${D}💡 提示: 将同时更新「普通用户中心」与「主控管理后台」两个登录入口的密码。${N}"
+    echo -e "${BOLD}─── 重置/修改管理员账号与密码 ───${N}"
+    echo -e "  ${D}💡 提示: 统一更新系统唯一管理员凭据，同时同步 proxy_user 账户与底层安全哈希。${N}"
     echo ""
-    read -r -p "  请输入新的管理员密码 (留空则随机生成): " NEW_PASS
-    if [ -z "$NEW_PASS" ]; then
-        NEW_PASS=$(tr -dc 'A-Za-z0-9!@#%^&*' < /dev/urandom | head -c 16)
-        warn "已随机生成新密码: ${BOLD}${NEW_PASS}${N}  ← 请务必牢记！"
-    fi
 
     _DB="$DATA/proxyprobe.db"
     [ ! -f "$_DB" ] && [ -f "$DATA/monitor.db" ] && _DB="$DATA/monitor.db"
@@ -533,10 +528,25 @@ reset_admin_password() {
         err "数据库文件不存在: $_DB"; return
     fi
 
-    ADMIN_PASS="$NEW_PASS" DB_PATH="$_DB" python3 - << 'PYEOF'
+    # 查询当前管理员用户名
+    local cur_admin_user
+    cur_admin_user=$(python3 -c "import sqlite3; db=sqlite3.connect('$_DB'); r=db.execute(\"SELECT username FROM proxy_user WHERE is_admin=1 ORDER BY id ASC LIMIT 1\").fetchone(); print(r[0] if r else 'admin')" 2>/dev/null || echo "admin")
+    [ -z "$cur_admin_user" ] && cur_admin_user="admin"
+
+    read -r -p "  请输入管理员用户名 [当前: ${cur_admin_user}]: " NEW_USER
+    [ -z "$NEW_USER" ] && NEW_USER="$cur_admin_user"
+
+    read -r -p "  请输入新的管理员密码 (留空则随机生成): " NEW_PASS
+    if [ -z "$NEW_PASS" ]; then
+        NEW_PASS=$(tr -dc 'A-Za-z0-9!@#%^&*' < /dev/urandom | head -c 16)
+        warn "已随机生成新密码: ${BOLD}${NEW_PASS}${N}  ← 请务必牢记！"
+    fi
+
+    ADMIN_USER="$NEW_USER" ADMIN_PASS="$NEW_PASS" DB_PATH="$_DB" python3 - << 'PYEOF'
 import os, sqlite3, hashlib, secrets
 db_path = os.environ.get("DB_PATH", "")
-admin_pass = os.environ.get("ADMIN_PASS", "")
+admin_user = os.environ.get("ADMIN_USER", "admin").strip()
+admin_pass = os.environ.get("ADMIN_PASS", "").strip()
 if not admin_pass or not db_path:
     exit(1)
 
@@ -545,7 +555,20 @@ try:
     salt = secrets.token_hex(16)
     h = hashlib.sha256((salt + admin_pass).encode("utf-8")).hexdigest()
     pwd_hash = f"{salt}:{h}"
-    db.execute("UPDATE proxy_user SET password_hash=? WHERE username='admin'", (pwd_hash,))
+
+    # 优先查找 is_admin=1 的账号，否则查找 username='admin' 或当前指定账号
+    cur = db.execute("SELECT id, username FROM proxy_user WHERE is_admin=1 ORDER BY id ASC LIMIT 1")
+    row = cur.fetchone()
+    if row:
+        db.execute("UPDATE proxy_user SET username=?, password_hash=?, is_admin=1, enabled=1 WHERE id=?", (admin_user, pwd_hash, row[0]))
+    else:
+        cur2 = db.execute("SELECT id FROM proxy_user WHERE username=?", (admin_user,))
+        row2 = cur2.fetchone()
+        if row2:
+            db.execute("UPDATE proxy_user SET password_hash=?, is_admin=1, enabled=1 WHERE id=?", (pwd_hash, row2[0]))
+        else:
+            sub_tok = secrets.token_hex(16)
+            db.execute("INSERT INTO proxy_user (username, password_hash, sub_token, is_admin, enabled, bandwidth_limit_mbps) VALUES (?, ?, ?, 1, 1, 0)", (admin_user, pwd_hash, sub_tok))
 
     try:
         from argon2 import PasswordHasher
@@ -557,13 +580,15 @@ try:
         print(f"  [!] Argon2 哈希设置跳过: {err}")
 
     db.commit()
-    print("  [+] 管理员密码已成功重置！")
+    print("  [+] 管理员凭据已成功同步重置！")
 finally:
     db.close()
 PYEOF
 
     systemctl restart proxy-manager monitor-hub
-    info "密码修改成功！当前密码: ${BOLD}${NEW_PASS}${N}"
+    info "管理员凭据修改成功！"
+    echo -e "  管理员账号: ${BOLD}${NEW_USER}${N}"
+    echo -e "  管理员密码: ${BOLD}${NEW_PASS}${N}"
 }
 
 # ---- 9. 一键无损热升级系统 ----
@@ -1036,7 +1061,7 @@ main_menu() {
         echo -e "    ${C}[5]${N} 修改 Web 外部访问端口 (当前: ${BOLD}${CUR_WEB_PORT}${N})"
         echo -e "    ${C}[6]${N} 修改内部探针与代理端口 (当前: ${BOLD}${CUR_HUB_PORT} / ${CUR_PM_PORT}${N})"
         echo -e "    ${C}[7]${N} 修改绑定域名或公网 IP (当前: ${BOLD}${CUR_DOMAIN}${N})"
-        echo -e "    ${C}[8]${N} 重置/修改管理员密码"
+        echo -e "    ${C}[8]${N} 重置/修改管理员账号与密码"
         echo ""
         echo -e "  ${BOLD}【系统运维】${N}"
         if [ "$ROOT" = "/opt/monitor" ]; then

@@ -141,11 +141,119 @@ function trafficFoot(node: Node) {
     : `${bytes(monthUsage(node))} / ${FOREVER}`
 }
 
+export type LatencyHistoryPoint = {
+  latency: number | null
+  ts: number
+}
+
 export type LatencyProbe = {
   task_id: number
   name: string
   latency: number | null
   ts?: number
+  history?: LatencyHistoryPoint[]
+  avg?: number | null
+  min?: number | null
+  max?: number | null
+}
+
+export function getLatencyTier(latency: number | null | undefined): {
+  color: string
+  bgClass: string
+  borderClass: string
+  textClass: string
+  barClass: string
+  label: string
+} {
+  if (latency === null || latency === undefined || latency < 0) {
+    return {
+      color: "#f43f5e",
+      bgClass: "bg-rose-500/10 dark:bg-rose-500/20",
+      borderClass: "border-rose-500/30",
+      textClass: "text-rose-600 dark:text-rose-400 font-semibold",
+      barClass: "bg-rose-500 dark:bg-rose-600",
+      label: "超时/丢包",
+    }
+  }
+  if (latency < 60) {
+    return {
+      color: "#10b981",
+      bgClass: "bg-emerald-500/10 dark:bg-emerald-500/20",
+      borderClass: "border-emerald-500/30",
+      textClass: "text-emerald-600 dark:text-emerald-400 font-semibold",
+      barClass: "bg-emerald-500 hover:bg-emerald-400 dark:bg-emerald-500 dark:hover:bg-emerald-400",
+      label: "极佳 (<60ms)",
+    }
+  }
+  if (latency <= 100) {
+    return {
+      color: "#06b6d4",
+      bgClass: "bg-cyan-500/10 dark:bg-cyan-500/20",
+      borderClass: "border-cyan-500/30",
+      textClass: "text-cyan-600 dark:text-cyan-400 font-semibold",
+      barClass: "bg-cyan-500 hover:bg-cyan-400 dark:bg-cyan-500 dark:hover:bg-cyan-400",
+      label: "良好 (60-100ms)",
+    }
+  }
+  if (latency <= 180) {
+    return {
+      color: "#f59e0b",
+      bgClass: "bg-amber-500/10 dark:bg-amber-500/20",
+      borderClass: "border-amber-500/30",
+      textClass: "text-amber-600 dark:text-amber-400 font-semibold",
+      barClass: "bg-amber-500 hover:bg-amber-400 dark:bg-amber-500 dark:hover:bg-amber-400",
+      label: "一般 (100-180ms)",
+    }
+  }
+  if (latency <= 280) {
+    return {
+      color: "#f97316",
+      bgClass: "bg-orange-500/10 dark:bg-orange-500/20",
+      borderClass: "border-orange-500/30",
+      textClass: "text-orange-600 dark:text-orange-400 font-semibold",
+      barClass: "bg-orange-500 hover:bg-orange-400 dark:bg-orange-500 dark:hover:bg-orange-400",
+      label: "偏高 (180-280ms)",
+    }
+  }
+  return {
+    color: "#e11d48",
+    bgClass: "bg-rose-500/10 dark:bg-rose-500/20",
+    borderClass: "border-rose-500/30",
+    textClass: "text-rose-600 dark:text-rose-400 font-semibold",
+    barClass: "bg-rose-600 hover:bg-rose-500 dark:bg-rose-600 dark:hover:bg-rose-500",
+    label: "拥堵 (>280ms)",
+  }
+}
+
+function getIspTheme(name: string) {
+  if (name.includes("移动")) {
+    return {
+      badge: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25",
+      dot: "bg-blue-500",
+    }
+  }
+  if (name.includes("联通")) {
+    return {
+      badge: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/25",
+      dot: "bg-orange-500",
+    }
+  }
+  if (name.includes("电信")) {
+    return {
+      badge: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/25",
+      dot: "bg-sky-500",
+    }
+  }
+  return {
+    badge: "bg-muted text-muted-foreground border-border",
+    dot: "bg-muted-foreground",
+  }
+}
+
+function formatLatencyTime(ts?: number): string {
+  if (!ts) return "—"
+  const d = new Date(ts * 1000)
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 }
 
 export type VisibilitySettings = {
@@ -271,48 +379,138 @@ export function NodeCard({
             </span>
           </div>
 
-          {/* 探针卡片直观展示已配置的网络延迟 */}
+          {/* 探针卡片直观展示已配置的网络延迟与近期波动走势 */}
           {latencies && latencies.length > 0 && (
-            <div className="mt-3 border-t pt-2 text-xs">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] sm:text-[11px] font-medium text-muted-foreground inline-flex items-center gap-0.5 shrink-0">
-                  <svg className="size-3 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  延迟
-                </span>
+            <div className="mt-3.5 border-t pt-2.5 text-xs">
+              {/* 头部标题、实时采样说明与延迟颜色图例 */}
+              <div className="flex items-center justify-between gap-1 mb-2">
+                <div className="flex items-center gap-1.5 font-medium text-foreground/90">
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                  </span>
+                  <span className="text-[11px] sm:text-xs">网络延迟</span>
+                  <span className="text-[10px] text-muted-foreground font-normal">
+                    (60s采样)
+                  </span>
+                </div>
+                {/* 延迟颜色区间说明 */}
                 <div
-                  className={cn(
-                    "flex-1 min-w-0 gap-1",
-                    latencies.length <= 3
-                      ? "grid grid-flow-col auto-cols-fr"
-                      : "grid grid-cols-2 sm:grid-cols-4"
-                  )}
+                  className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono select-none"
+                  title="延迟区间评级：绿色<60ms极佳 | 青色60-100ms良好 | 黄色100-180ms一般 | 橙色180-280ms偏高 | 红色>280ms拥堵或超时"
                 >
-                  {latencies.map((p) => {
-                    const isTimeout = p.latency === null || p.latency === undefined || p.latency < 0
-                    const lat = p.latency ?? 0
-                    const tone = isTimeout
-                      ? "text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/30"
-                      : lat <= 80
-                        ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
-                        : lat <= 180
-                          ? "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30"
-                          : "text-orange-600 dark:text-orange-400 bg-orange-500/10 border-orange-500/30"
-                    return (
-                      <span
-                        key={p.task_id}
-                        className={cn(
-                          "inline-flex items-center justify-center gap-0.5 px-1 py-0.5 rounded border text-[10px] sm:text-[11px] font-mono leading-none min-w-0 overflow-hidden whitespace-nowrap",
-                          tone
-                        )}
-                        title={isTimeout ? `${p.name}: 超时` : `${p.name}: ${lat}ms`}
+                  <span className="flex items-center gap-0.5">
+                    <span className="size-1.5 rounded-full bg-emerald-500" />
+                    &lt;60
+                  </span>
+                  <span className="flex items-center gap-0.5">
+                    <span className="size-1.5 rounded-full bg-cyan-500" />
+                    100
+                  </span>
+                  <span className="flex items-center gap-0.5">
+                    <span className="size-1.5 rounded-full bg-amber-500" />
+                    180
+                  </span>
+                  <span className="flex items-center gap-0.5">
+                    <span className="size-1.5 rounded-full bg-rose-500" />
+                    &gt;180
+                  </span>
+                </div>
+              </div>
+
+              {/* 每个监控接口的实时延迟与历史波动条 */}
+              <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                {latencies.map((p) => {
+                  const isTimeout = p.latency === null || p.latency === undefined || p.latency < 0
+                  const lat = p.latency ?? 0
+                  const currentTier = getLatencyTier(p.latency)
+                  const isp = getIspTheme(p.name)
+                  const hist = p.history || []
+                  const totalSlots = 20
+                  const paddedHist: (LatencyHistoryPoint | null)[] = []
+                  if (hist.length < totalSlots) {
+                    for (let i = 0; i < totalSlots - hist.length; i++) {
+                      paddedHist.push(null)
+                    }
+                  }
+                  for (const pt of hist.slice(-totalSlots)) {
+                    paddedHist.push(pt)
+                  }
+
+                  return (
+                    <div
+                      key={p.task_id}
+                      className="rounded-md bg-muted/25 dark:bg-muted/15 border border-border/40 p-1.5 hover:bg-muted/40 transition-colors"
+                    >
+                      {/* 首行：接口名称 + 历史均值 + 实时延迟徽章 */}
+                      <div className="flex items-center justify-between gap-1 text-[11px] leading-tight mb-1">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 border", isp.badge)}>
+                            {p.name}
+                          </span>
+                          {p.avg !== undefined && p.avg !== null && (
+                            <span
+                              className="text-[10px] text-muted-foreground truncate"
+                              title={`波动范围: 最低 ${p.min ?? '-'}ms / 最高 ${p.max ?? '-'}ms / 平均 ${p.avg}ms`}
+                            >
+                              均值 {p.avg}ms
+                            </span>
+                          )}
+                        </div>
+
+                        {/* 实时延迟胶囊 */}
+                        <div
+                          className={cn(
+                            "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-mono border shrink-0 transition-colors shadow-2xs",
+                            currentTier.bgClass,
+                            currentTier.borderClass,
+                            currentTier.textClass
+                          )}
+                          title={isTimeout ? `${p.name}: 当前连接超时/丢包` : `${p.name}: 实时延迟 ${lat}ms (${currentTier.label})`}
+                        >
+                          <span className="size-1.5 rounded-full animate-pulse" style={{ backgroundColor: currentTier.color }} />
+                          <span>{isTimeout ? "超时" : `${lat} ms`}</span>
+                        </div>
+                      </div>
+
+                      {/* 次行：过去 20 分钟波动走势条 */}
+                      <div
+                        className="flex items-center gap-[2px] w-full h-3 pt-0.5"
+                        title="近20分钟延迟波动走势（每格60秒）"
                       >
-                        <span className="font-sans font-normal opacity-85 truncate">{p.name}</span>
-                        <span className="font-bold shrink-0">{isTimeout ? "超时" : `${lat}ms`}</span>
-                      </span>
-                    )
-                  })}
+                        {paddedHist.map((pt, idx) => {
+                          if (!pt) {
+                            return (
+                              <div
+                                key={idx}
+                                className="flex-1 h-full rounded-[1px] bg-muted/40"
+                                title="尚无检测采样"
+                              />
+                            )
+                          }
+                          const ptTier = getLatencyTier(pt.latency)
+                          const isLoss = pt.latency === null || pt.latency < 0
+                          return (
+                            <div
+                              key={idx}
+                              className={cn(
+                                "flex-1 h-full rounded-[1px] transition-all duration-150 hover:scale-y-125 hover:brightness-125 cursor-pointer",
+                                ptTier.barClass
+                              )}
+                              title={`时间: ${formatLatencyTime(pt.ts)} | 延迟: ${isLoss ? "超时/丢包" : `${pt.latency}ms`} (${ptTier.label})`}
+                            />
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* 走势条时间跨度提示 */}
+                <div className="flex items-center justify-between text-[9px] text-muted-foreground/60 px-0.5 font-mono select-none">
+                  <span>← 20分钟前</span>
+                  <span>近期波动走势</span>
+                  <span>刚刚 →</span>
                 </div>
               </div>
             </div>

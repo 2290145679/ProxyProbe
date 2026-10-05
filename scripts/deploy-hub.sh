@@ -97,12 +97,20 @@ if [[ "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$DOMAIN" =~ ^\[?[0
   IS_IP=1
 fi
 
+if [ -z "${ADMIN_USER:-}" ]; then
+  echo ""
+  echo -e "  ${BOLD}设置系统超级管理员账户${N}:"
+  read -r -p "  请输入管理员用户名 [回车默认 admin]: " INPUT_ADMIN_USER </dev/tty || true
+  ADMIN_USER="${INPUT_ADMIN_USER:-admin}"
+fi
+
 if [ -z "${ADMIN_PASS:-}" ]; then
-  read -r -p "  请输入管理员密码（留空则随机生成）: " ADMIN_PASS </dev/tty || true
+  read -r -p "  请输入管理员密码（留空则随机生成）: " INPUT_ADMIN_PASS </dev/tty || true
+  ADMIN_PASS="$INPUT_ADMIN_PASS"
 fi
 if [ -z "$ADMIN_PASS" ]; then
   ADMIN_PASS=$(tr -dc 'A-Za-z0-9!@#%^&*' < /dev/urandom | head -c 16)
-  warn "已随机生成密码: ${BOLD}${ADMIN_PASS}${N}  ← 请务必记录！"
+  warn "已随机生成管理员密码: ${BOLD}${ADMIN_PASS}${N}  ← 请务必记录！"
 fi
 
 # Web 外部访问端口
@@ -171,7 +179,8 @@ fi
 echo ""
 echo -e "  部署模式:           ${BOLD}${DEPLOY_MODE}${N}"
 echo -e "  访问地址:           ${BOLD}${SITE_URL}${N}"
-echo -e "  管理密码:           ${BOLD}${ADMIN_PASS}${N}"
+echo -e "  管理员用户名:       ${BOLD}${ADMIN_USER}${N}"
+echo -e "  管理员密码:         ${BOLD}${ADMIN_PASS}${N}"
 echo -e "  Web 外部访问端口:   ${BOLD}${WEB_PORT}${N}"
 echo -e "  探针主控内部端口:   ${BOLD}${HUB_PORT}${N} (127.0.0.1)"
 echo -e "  代理管理内部端口:   ${BOLD}${PM_PORT}${N} (127.0.0.1)"
@@ -585,9 +594,10 @@ for i in $(seq 1 30); do
 done
 
 if [ -f "$_DB" ]; then
-  ADMIN_PASS="$ADMIN_PASS" DB_PATH="$_DB" python3 - << 'PYEOF'
-import os, sqlite3, hashlib, secrets
+  ADMIN_USER="$ADMIN_USER" ADMIN_PASS="$ADMIN_PASS" DB_PATH="$_DB" python3 - << 'PYEOF'
+import os, sqlite3, hashlib, secrets, time
 db_path = os.environ.get("DB_PATH", "/opt/proxyprobe/data/monitor.db")
+admin_user = os.environ.get("ADMIN_USER", "admin")
 admin_pass = os.environ.get("ADMIN_PASS", "")
 if not admin_pass:
     exit(0)
@@ -597,9 +607,43 @@ try:
     salt = secrets.token_hex(16)
     h = hashlib.sha256((salt + admin_pass).encode("utf-8")).hexdigest()
     pwd_hash = f"{salt}:{h}"
-    db.execute("UPDATE proxy_user SET password_hash=? WHERE username='admin'", (pwd_hash,))
+    sub_tok = secrets.token_hex(16)
 
-    # 同步设置 monitor-hub 的管理员应急密码哈希 (Argon2)
+    # 确保 proxy_user 表存在并完成初始化
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS proxy_user (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        email TEXT DEFAULT '',
+        password_hash TEXT NOT NULL,
+        sub_token TEXT UNIQUE NOT NULL,
+        traffic_limit_bytes INTEGER DEFAULT 0,
+        upload_bytes INTEGER DEFAULT 0,
+        download_bytes INTEGER DEFAULT 0,
+        expires_at INTEGER DEFAULT 0,
+        enabled INTEGER DEFAULT 1,
+        is_admin INTEGER DEFAULT 0,
+        created_at INTEGER DEFAULT 0,
+        device_limit INTEGER DEFAULT 0,
+        bandwidth_limit_mbps INTEGER DEFAULT 0,
+        vip_level TEXT DEFAULT 'vip1',
+        balance REAL DEFAULT 0.0,
+        theme_style TEXT DEFAULT 'default',
+        last_active_at INTEGER DEFAULT 0
+    )
+    """)
+
+    cur = db.execute("SELECT id FROM proxy_user WHERE username = ? OR is_admin = 1 ORDER BY is_admin DESC LIMIT 1", (admin_user,))
+    row = cur.fetchone()
+    if row:
+        db.execute("UPDATE proxy_user SET username=?, password_hash=?, is_admin=1, enabled=1 WHERE id=?", (admin_user, pwd_hash, row[0]))
+    else:
+        db.execute("""
+            INSERT INTO proxy_user (username, password_hash, sub_token, traffic_limit_bytes, upload_bytes, download_bytes, expires_at, enabled, is_admin, created_at, device_limit, theme_style)
+            VALUES (?, ?, ?, 0, 0, 0, 0, 1, 1, ?, 0, 'default')
+        """, (admin_user, pwd_hash, sub_tok, int(time.time())))
+
+    # 同步设置 monitor-hub 的管理员应急哈希 (Argon2)
     try:
         from argon2 import PasswordHasher
         ph = PasswordHasher()
@@ -611,9 +655,9 @@ try:
         print(f"  [!] Argon2 哈希设置跳过: {err}")
 
     db.commit()
-    print("  [+] 管理员密码已设置成功（统一密码即刻生效）")
+    print("  [+] 管理员账户与密码已统一设置成功！")
 except Exception as e:
-    print(f"  [!] 管理员密码设置提示: {e}")
+    print(f"  [!] 管理员账户设置提示: {e}")
 finally:
     db.close()
 PYEOF
@@ -662,7 +706,7 @@ echo -e "  部署模式:           ${BOLD}${DEPLOY_MODE}${N}"
 echo -e "  探针公开大屏:       ${C}${DASH_URL}${N}"
 echo -e "  管理控制面板:       ${C}${ADMIN_URL}${N}"
 echo ""
-echo -e "  管理账号:           ${BOLD}admin${N}"
+echo -e "  管理账号:           ${BOLD}${ADMIN_USER}${N}"
 echo -e "  管理密码:           ${BOLD}${ADMIN_PASS}${N}"
 echo ""
 echo -e "  Web 外部访问端口:   ${BOLD}${WEB_PORT}${N}"
