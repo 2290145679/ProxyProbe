@@ -1066,6 +1066,7 @@ function ServerDisplaySettingsDialog({
     public_show_price: false,
     public_show_expiry: false,
     public_show_traffic_limit: false,
+    total_cost_currency: "CNY",
   })
 
   useEffect(() => {
@@ -1079,6 +1080,7 @@ function ServerDisplaySettingsDialog({
               public_show_price: !!data.public_show_price,
               public_show_expiry: !!data.public_show_expiry,
               public_show_traffic_limit: !!data.public_show_traffic_limit,
+              total_cost_currency: data.total_cost_currency || "CNY",
             })
           }
         })
@@ -1138,6 +1140,34 @@ function ServerDisplaySettingsDialog({
               disabled={loading || saving}
               className="shrink-0 mt-0.5"
             />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/20">
+            <div className="space-y-0.5 min-w-0 pr-2">
+              <span className="text-xs font-semibold flex items-center gap-1.5">
+                💱 总服务器费用统计货币
+              </span>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                探针首页顶部总费用统一折算展示的币种（单个服务器卡片仍保留原有设置的货币）。
+              </p>
+            </div>
+            <Select
+              value={settings.total_cost_currency || "CNY"}
+              onValueChange={(v) => setSettings((s) => ({ ...s, total_cost_currency: v }))}
+              disabled={loading || saving}
+            >
+              <SelectTrigger className="w-32 h-8 text-xs shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="CNY">¥ CNY (人民币)</SelectItem>
+                <SelectItem value="USD">$ USD (美元)</SelectItem>
+                <SelectItem value="EUR">€ EUR (欧元)</SelectItem>
+                <SelectItem value="HKD">HK$ HKD (港币)</SelectItem>
+                <SelectItem value="GBP">£ GBP (英镑)</SelectItem>
+                <SelectItem value="JPY">¥ JPY (日元)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex items-start justify-between gap-3 p-3 rounded-lg border bg-muted/20">

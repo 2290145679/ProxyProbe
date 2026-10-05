@@ -4878,7 +4878,7 @@ def get_node_latest_latencies():
         """)
         assigned = cur.fetchall()
 
-        # 2. 查询每个节点每个任务最近 20 次检测记录（按时间正序排列）
+        # 2. 查询每个节点每个任务最近 20 次检测记录（按时间正序排列，用于卡片 20 格走势条）
         cur.execute("""
             SELECT node_id, task_id, latency, ts
             FROM (
@@ -4890,9 +4890,89 @@ def get_node_latest_latencies():
             ORDER BY node_id, task_id, ts ASC
         """)
         history_rows = cur.fetchall()
-        conn.close()
+
+        # 3. 统计 1h / 6h / 24h 多时间窗口维度的采样总数、丢包数与均值延迟 (单次复合查询，极简探针原生标准)
+        now_ts = int(time.time())
+        t_1h = now_ts - 3600
+        t_6h = now_ts - 21600
+        t_24h = now_ts - 86400
+        cur.execute("""
+            SELECT node_id, task_id,
+                   -- 1 小时
+                   COUNT(CASE WHEN ts >= ? THEN 1 END) as total_1h,
+                   SUM(CASE WHEN ts >= ? AND (latency IS NULL OR latency < 0) THEN 1 ELSE 0 END) as lost_1h,
+                   AVG(CASE WHEN ts >= ? AND latency >= 0 THEN latency ELSE NULL END) as avg_1h,
+                   MIN(CASE WHEN ts >= ? AND latency >= 0 THEN latency ELSE NULL END) as min_1h,
+                   MAX(CASE WHEN ts >= ? AND latency >= 0 THEN latency ELSE NULL END) as max_1h,
+                   -- 6 小时
+                   COUNT(CASE WHEN ts >= ? THEN 1 END) as total_6h,
+                   SUM(CASE WHEN ts >= ? AND (latency IS NULL OR latency < 0) THEN 1 ELSE 0 END) as lost_6h,
+                   AVG(CASE WHEN ts >= ? AND latency >= 0 THEN latency ELSE NULL END) as avg_6h,
+                   MIN(CASE WHEN ts >= ? AND latency >= 0 THEN latency ELSE NULL END) as min_6h,
+                   MAX(CASE WHEN ts >= ? AND latency >= 0 THEN latency ELSE NULL END) as max_6h,
+                   -- 24 小时
+                   COUNT(*) as total_24h,
+                   SUM(CASE WHEN latency IS NULL OR latency < 0 THEN 1 ELSE 0 END) as lost_24h,
+                   AVG(CASE WHEN latency >= 0 THEN latency ELSE NULL END) as avg_24h,
+                   MIN(CASE WHEN latency >= 0 THEN latency ELSE NULL END) as min_24h,
+                   MAX(CASE WHEN latency >= 0 THEN latency ELSE NULL END) as max_24h
+            FROM ping_record
+            WHERE ts >= ?
+            GROUP BY node_id, task_id
+        """, (t_1h, t_1h, t_1h, t_1h, t_1h, t_6h, t_6h, t_6h, t_6h, t_6h, t_24h))
+        stats_rows = cur.fetchall()
+
+        WINDOW_CONFIGS = {
+            "1h": {"duration": 3600, "step": 120, "slots": 30},
+            "6h": {"duration": 21600, "step": 720, "slots": 30},
+            "24h": {"duration": 86400, "step": 3600, "slots": 24},
+        }
 
         from collections import defaultdict
+        bars_by_window = {}
+        for w_key, cfg in WINDOW_CONFIGS.items():
+            step = cfg["step"]
+            slots = cfg["slots"]
+            since = now_ts - cfg["duration"]
+            cur.execute("""
+                SELECT node_id, task_id, ts / ? as b,
+                       AVG(CASE WHEN latency >= 0 THEN latency END) as avg_lat,
+                       SUM(CASE WHEN latency < 0 OR latency IS NULL THEN 1 ELSE 0 END) as lost,
+                       COUNT(*) as tot
+                FROM ping_record
+                WHERE ts >= ?
+                GROUP BY node_id, task_id, b
+            """, (step, since))
+
+            b_dict = defaultdict(dict)
+            for r in cur.fetchall():
+                b_dict[(r["node_id"], r["task_id"])][r["b"]] = r
+
+            curr_b = now_ts // step
+            w_history_map = {}
+            for a in assigned:
+                key = (a["node_id"], a["task_id"])
+                node_b_map = b_dict.get(key, {})
+                h_list = []
+                for i in range(slots):
+                    b_idx = curr_b - (slots - 1 - i)
+                    slot_ts = b_idx * step
+                    r = node_b_map.get(b_idx)
+                    if r:
+                        lat = round(r["avg_lat"]) if r["avg_lat"] is not None else -1
+                        h_list.append({
+                            "ts": slot_ts,
+                            "latency": lat,
+                            "lost": r["lost"],
+                            "total": r["tot"]
+                        })
+                    else:
+                        h_list.append(None)
+                w_history_map[key] = h_list
+            bars_by_window[w_key] = w_history_map
+
+        conn.close()
+
         history_map = defaultdict(list)
         for r in history_rows:
             history_map[(r["node_id"], r["task_id"])].append({
@@ -4900,19 +4980,56 @@ def get_node_latest_latencies():
                 "ts": r["ts"]
             })
 
+        stats_map = {}
+        for r in stats_rows:
+            stats_map[(r["node_id"], r["task_id"])] = r
+
+        def _build_win(tot, lost, avg_val, min_val, max_val, bars_list):
+            tot = tot or 0
+            lost = lost or 0
+            return {
+                "total": tot,
+                "lost": lost,
+                "avg": round(avg_val) if avg_val is not None else None,
+                "min": round(min_val) if min_val is not None else None,
+                "max": round(max_val) if max_val is not None else None,
+                "loss_rate": round((lost / tot) * 100, 1) if tot > 0 else 0.0,
+                "bars": bars_list or []
+            }
+
         result = defaultdict(list)
         for a in assigned:
             nid = str(a["node_id"])
             tid = a["task_id"]
-            hist = history_map.get((a["node_id"], tid), [])
+            key = (a["node_id"], tid)
+            hist = history_map.get(key, [])
             latest_lat = hist[-1]["latency"] if hist else None
             latest_ts = hist[-1]["ts"] if hist else None
 
-            # 计算有效延迟统计值
-            valid_lats = [h["latency"] for h in hist if h["latency"] is not None and h["latency"] >= 0]
-            avg_lat = round(sum(valid_lats) / len(valid_lats)) if valid_lats else None
-            min_lat = min(valid_lats) if valid_lats else None
-            max_lat = max(valid_lats) if valid_lats else None
+            bars_1h = bars_by_window.get("1h", {}).get(key, [])
+            bars_6h = bars_by_window.get("6h", {}).get(key, [])
+            bars_24h = bars_by_window.get("24h", {}).get(key, [])
+
+            st = stats_map.get(key)
+            if st:
+                w1 = _build_win(st["total_1h"], st["lost_1h"], st["avg_1h"], st["min_1h"], st["max_1h"], bars_1h)
+                w6 = _build_win(st["total_6h"], st["lost_6h"], st["avg_6h"], st["min_6h"], st["max_6h"], bars_6h)
+                w24 = _build_win(st["total_24h"], st["lost_24h"], st["avg_24h"], st["min_24h"], st["max_24h"], bars_24h)
+            else:
+                valid_lats = [h["latency"] for h in hist if h["latency"] is not None and h["latency"] >= 0]
+                avg_lat = round(sum(valid_lats) / len(valid_lats)) if valid_lats else None
+                min_lat = min(valid_lats) if valid_lats else None
+                max_lat = max(valid_lats) if valid_lats else None
+                tot = len(hist)
+                lost = sum(1 for h in hist if h.get("latency") is None or h["latency"] < 0)
+                fallback_w = _build_win(tot, lost, avg_lat, min_lat, max_lat, hist)
+                w1, w6, w24 = fallback_w, fallback_w, fallback_w
+
+            windows = {
+                "1h": w1,
+                "6h": w6,
+                "24h": w24
+            }
 
             result[nid].append({
                 "task_id": tid,
@@ -4920,9 +5037,13 @@ def get_node_latest_latencies():
                 "latency": latest_lat,
                 "ts": latest_ts,
                 "history": hist,
-                "avg": avg_lat,
-                "min": min_lat,
-                "max": max_lat
+                "avg": w1["avg"],
+                "min": w1["min"],
+                "max": w1["max"],
+                "loss_rate": w1["loss_rate"],
+                "total_samples": w1["total"],
+                "lost_samples": w1["lost"],
+                "windows": windows
             })
 
         return dict(result)
@@ -7526,7 +7647,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "settings": {
                     "public_show_price": get_setting("public_show_price", "0") == "1",
                     "public_show_expiry": get_setting("public_show_expiry", "0") == "1",
-                    "public_show_traffic_limit": get_setting("public_show_traffic_limit", "0") == "1"
+                    "public_show_traffic_limit": get_setting("public_show_traffic_limit", "0") == "1",
+                    "total_cost_currency": get_setting("total_cost_currency", "CNY").strip().upper() or "CNY"
                 },
                 "latencies": latencies
             })
@@ -7540,7 +7662,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "public_show_price": get_setting("public_show_price", "0") == "1",
                 "public_show_expiry": get_setting("public_show_expiry", "0") == "1",
-                "public_show_traffic_limit": get_setting("public_show_traffic_limit", "0") == "1"
+                "public_show_traffic_limit": get_setting("public_show_traffic_limit", "0") == "1",
+                "total_cost_currency": get_setting("total_cost_currency", "CNY").strip().upper() or "CNY"
             })
             return
 
@@ -9285,9 +9408,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
             show_price = "1" if req.get("public_show_price") else "0"
             show_expiry = "1" if req.get("public_show_expiry") else "0"
             show_traffic = "1" if req.get("public_show_traffic_limit") else "0"
+            total_cur = (req.get("total_cost_currency") or "CNY").strip().upper()
             set_setting("public_show_price", show_price)
             set_setting("public_show_expiry", show_expiry)
             set_setting("public_show_traffic_limit", show_traffic)
+            set_setting("total_cost_currency", total_cur)
             self.send_json({"ok": True, "message": "服务器公开信息展示权限已更新"})
             return
 

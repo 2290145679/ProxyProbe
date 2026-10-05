@@ -78,10 +78,46 @@ export function daysUntil(date?: string | null): number | null {
  */
 export const FOREVER = "∞"
 
-const SYMBOLS: Record<string, string> = { USD: "$", CNY: "¥", EUR: "€", GBP: "£", JPY: "¥" }
+export const SYMBOLS: Record<string, string> = {
+  USD: "$",
+  CNY: "¥",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+  HKD: "HK$",
+  CAD: "C$",
+  AUD: "A$",
+  SGD: "S$",
+}
 
 export function money(amount: number, currency: string): string {
-  return `${SYMBOLS[currency] ?? ""}${amount.toFixed(2)}${SYMBOLS[currency] ? "" : ` ${currency}`}`
+  const sym = SYMBOLS[currency]
+  return sym ? `${sym}${amount.toFixed(2)}` : `${amount.toFixed(2)} ${currency}`
+}
+
+export const EXCHANGE_RATES: Record<string, number> = {
+  CNY: 1.0,
+  USD: 7.20,
+  EUR: 7.80,
+  HKD: 0.92,
+  GBP: 9.15,
+  JPY: 0.048,
+  CAD: 5.30,
+  AUD: 4.70,
+  SGD: 5.40,
+}
+
+export function convertCurrency(amount: number, fromCurrency: string, toCurrency: string): number {
+  if (!amount || amount <= 0) return 0
+  const from = fromCurrency ? fromCurrency.toUpperCase() : "CNY"
+  const to = toCurrency ? toCurrency.toUpperCase() : "CNY"
+  if (from === to) return amount
+
+  const fromRate = EXCHANGE_RATES[from] ?? 1.0
+  const toRate = EXCHANGE_RATES[to] ?? 1.0
+  // Convert to CNY base then to target currency
+  const inCNY = amount * fromRate
+  return inCNY / toRate
 }
 
 export const CYCLES: Record<string, string> = {
@@ -93,6 +129,30 @@ export const CYCLES: Record<string, string> = {
   triennial: "三年付",
   once: "一次性",
 }
+
+export function monthlyCost(price: number, cycle?: string): number {
+  if (!price || price <= 0) return 0
+  switch (cycle) {
+    case "monthly":
+      return price
+    case "quarterly":
+      return price / 3
+    case "semiannual":
+      return price / 6
+    case "yearly":
+    case "annually":
+      return price / 12
+    case "biennial":
+      return price / 24
+    case "triennial":
+      return price / 36
+    case "once":
+      return 0
+    default:
+      return price
+  }
+}
+
 
 // Hoisted out of `clock`: recharts calls a tickFormatter for every sample when
 // laying out an axis rather than once per tick drawn, and constructing an Intl

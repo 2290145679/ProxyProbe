@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import { Moon, Sun, Wrench } from "lucide-react"
 
-import { NodeCard, type LatencyProbe, type VisibilitySettings } from "@/components/NodeCard"
+import { NodeCard, type LatencyProbe, type LatencyWindow, type VisibilitySettings } from "@/components/NodeCard"
 import { Summary } from "@/components/Summary"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -120,9 +120,25 @@ export default function App() {
       public_show_price: boolean
       public_show_expiry: boolean
       public_show_traffic_limit: boolean
+      total_cost_currency?: string
     }
     latencies: Record<string, LatencyProbe[]>
   } | null>(null)
+
+  const [latencyWindow, setLatencyWindow] = useState<LatencyWindow>(() => {
+    try {
+      return (localStorage.getItem("probe_latency_window") as LatencyWindow) || "1h"
+    } catch {
+      return "1h"
+    }
+  })
+
+  const handleLatencyWindowChange = useCallback((w: LatencyWindow) => {
+    setLatencyWindow(w)
+    try {
+      localStorage.setItem("probe_latency_window", w)
+    } catch {}
+  }, [])
 
   const loadProbeStatus = useCallback(() => {
     fetch("/api/proxy/probe/public-status")
@@ -143,8 +159,8 @@ export default function App() {
 
   const isTrueAdmin = Boolean(probeStatus?.is_admin)
   const visibilitySettings: VisibilitySettings = {
-    // 续费价格严格仅超级管理员可见，未登录访客与已登录客户均不可见
-    show_price: Boolean(probeStatus?.settings?.public_show_price && isTrueAdmin),
+    // 续费价格：公开展示开关开启或超级管理员登录时展示
+    show_price: Boolean(probeStatus ? (probeStatus.settings?.public_show_price || isTrueAdmin) : true),
     show_expiry: Boolean(probeStatus?.settings?.public_show_expiry),
     show_traffic_limit: Boolean(probeStatus?.settings?.public_show_traffic_limit),
     is_admin: isTrueAdmin,
@@ -223,6 +239,9 @@ export default function App() {
             onOpen={go}
             latencies={probeStatus?.latencies}
             visibilitySettings={visibilitySettings}
+            latencyWindow={latencyWindow}
+            onLatencyWindowChange={handleLatencyWindowChange}
+            targetCurrency={probeStatus?.settings?.total_cost_currency || "CNY"}
           />
         )}
       </main>
@@ -239,6 +258,9 @@ function NodeList({
   onOpen,
   latencies,
   visibilitySettings,
+  latencyWindow,
+  onLatencyWindowChange,
+  targetCurrency,
 }: {
   nodes: Node[]
   /** null is every node, "" the ungrouped. */
@@ -247,6 +269,9 @@ function NodeList({
   onOpen: (id: number) => void
   latencies?: Record<string, LatencyProbe[]>
   visibilitySettings?: VisibilitySettings
+  latencyWindow?: LatencyWindow
+  onLatencyWindowChange?: (w: LatencyWindow) => void
+  targetCurrency?: string
 }) {
   const groups = groupsOf(nodes)
   const ungrouped = nodes.filter((n) => !n.group).length
@@ -284,7 +309,7 @@ function NodeList({
           ))}
         </div>
       )}
-      <Summary nodes={shown} group={current} />
+      <Summary nodes={shown} group={current} visibilitySettings={visibilitySettings} targetCurrency={targetCurrency} />
       {nodes.length === 0 ? (
         <p className="py-16 text-center text-sm text-muted-foreground">还没有节点</p>
       ) : (
@@ -296,6 +321,8 @@ function NodeList({
               onOpen={() => onOpen(n.id)}
               latencies={latencies?.[String(n.id)]}
               visibilitySettings={visibilitySettings}
+              latencyWindow={latencyWindow}
+              onLatencyWindowChange={onLatencyWindowChange}
             />
           ))}
         </div>
