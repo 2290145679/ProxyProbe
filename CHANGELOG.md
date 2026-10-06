@@ -2,7 +2,28 @@
 
 本文档记录 **ProxyProbe** 的所有主要版本演进、核心功能迭代与 Bug 修复历史。
 
+## 🌟 [v2.5.29] - 2026-10-06
+
+### 🧩 核心服务端架构解耦与模块化重构 (Core Architecture Decoupling & Modular Refactoring)
+- **单体大文件解耦降重**：将逾 10,700 行的 `proxy_manager.py` 拆解为高内聚的 6 大独立业务模块，主控入口精简至 5,060 行（降幅超 52%）：
+  - `modules/agent_templates.py`：探针被控端 Python 守护进程及 Shell 安装模板引擎；
+  - `modules/migration_engine.py`：换机迁移中心、全自动克隆脚本与跨机 P2P 数据同步；
+  - `modules/node_engine.py`：代理协议入站规则构建、Xray / Sing-box / Realm 核心重载与端到端沙盒连通性测试；
+  - `modules/subscription_engine.py`：Clash Meta / Verge、Sing-box、Base64 订阅生成与动态地区策略组分配；
+  - `modules/telegram_engine.py`：Telegram 双向交互指令机器人、全量数据库原子备份与服务器到期预警巡检；
+  - `modules/user_engine.py`：客户端用户管理、180 秒滑动窗口并发设备限额与 Linux HTB 流量控制限速。
+- **动态跨模块函数依赖透传**：通过主入口与模块间清晰的符号导出机制，消除循环导入隐患，保障全系统平滑无损运行。
+
+### 🛠️ 节点状态打卡自愈与零节点探针核心检测修复 (Node Status Heartbeat & Zero-Node Core Detection Fix)
+- **探针零节点核心检测修复**：彻底修复被控机尚未添加任何节点时，由于 `active_uids` 作用域引起的 `UnboundLocalError` 漏洞，确保探针无论节点配置如何，均能准确汇报 Xray/Sing-box/Realm 核心安装状态；
+- **协议列表获取异常自愈**：补齐缺少 `get_sub_token` 等跨模块函数引发的偶发 500 异常，确保节点及用户统计秒级极速拉取；
+- **状态打卡自愈**：解决探针节点离线与心跳上报不同步问题，提升整体管理可靠性。
+
+### 📦 快速发版流水线优化 (Fast Release Pipeline Optimization)
+- **子模块编译自动收集**：在 `scripts/fast_release.py` 的 PyInstaller 指令中添加 `--collect-submodules modules`，确保 Linux 远端编译产物完整内嵌解耦模块。
+
 ## 🌟 [v2.5.28] - 2026-10-05
+
 
 ### 🔑 统一登录入口与凭据双端自愈同步 (Unified Login Portal & Credential Synchronization)
 - **入口彻底整合精简**：移除冗余的独立“管理员登录”入口与 Tab 切换，全站采用现代单一凭据登录卡片（用户名/邮箱 + 密码）；

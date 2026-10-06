@@ -58,18 +58,28 @@ def compile_and_deploy_remote():
     stdin, stdout, stderr = ssh.exec_command("[ -d /opt/proxyprobe ] && echo '/opt/proxyprobe' || echo '/opt/monitor'")
     remote_root = stdout.read().decode('utf-8').strip() or "/opt/proxyprobe"
 
-    # 上传核心代码
+    # 上传核心代码与子模块
     sftp.put(os.path.join(WORKSPACE_DIR, "proxy_manager.py"), f"{remote_root}/proxy_manager.py")
     if os.path.exists(os.path.join(WORKSPACE_DIR, "license_guard.py")):
         sftp.put(os.path.join(WORKSPACE_DIR, "license_guard.py"), f"{remote_root}/license_guard.py")
     sftp.put(os.path.join(WORKSPACE_DIR, "VERSION"), f"{remote_root}/VERSION")
+
+    modules_local = os.path.join(WORKSPACE_DIR, "modules")
+    if os.path.exists(modules_local):
+        try:
+            sftp.mkdir(f"{remote_root}/modules")
+        except Exception:
+            pass
+        for m_file in os.listdir(modules_local):
+            if m_file.endswith(".py"):
+                sftp.put(os.path.join(modules_local, m_file), f"{remote_root}/modules/{m_file}")
     
     # 远程编译
     print("  正在 Linux 环境编译 proxy-manager-linux-amd64 二进制 (约 35~45 秒)...")
     build_cmd = f"""
     cd {remote_root}
     rm -rf /tmp/dist/proxy-manager-linux-amd64 /tmp/build
-    /opt/pybuild_venv/bin/pyinstaller --clean --onefile --workpath /tmp/build --distpath /tmp/dist --name proxy-manager-linux-amd64 --strip --hidden-import license_guard proxy_manager.py
+    /opt/pybuild_venv/bin/pyinstaller --clean --onefile --workpath /tmp/build --distpath /tmp/dist --name proxy-manager-linux-amd64 --strip --hidden-import license_guard --collect-submodules modules proxy_manager.py
     ls -lh /tmp/dist/proxy-manager-linux-amd64
     """
     stdin, stdout, stderr = ssh.exec_command(build_cmd)
