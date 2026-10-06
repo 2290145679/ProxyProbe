@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { AlertTriangle, BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, KeyRound, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Upload, Users, XCircle } from "lucide-react"
+import { AlertTriangle, BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, KeyRound, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Truck, Upload, Users, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
@@ -9,6 +9,7 @@ import { ProxyNodes } from "./ProxyNodes"
 import { ProxyUsers } from "./ProxyUsers"
 import { ProxyRules } from "./ProxyRules"
 import { LicenseManager } from "./LicenseManager"
+import { MigrationCenterDialog, MigrationCelebrationDialog, type MigrationStatus } from "./MigrationDialogs"
 import type { UpdateInfo } from "./UpdateDialog"
 
 import { Badge } from "@/components/ui/badge"
@@ -4451,6 +4452,7 @@ function Data({ go }: { go?: (to: string) => void }) {
   const [confirm, setConfirm] = useState<"vacuum" | null>(null)
   const [pending, setPending] = useState<File | null>(null)
   const [sent, setSent] = useState(0)
+  const [migrationOpen, setMigrationOpen] = useState(false)
   // Closing the dialog must stop the upload rather than merely hide it: restore
   // is the one irreversible action here, and it takes minutes on a large
   // backup.
@@ -4522,6 +4524,29 @@ function Data({ go }: { go?: (to: string) => void }) {
 
   return (
     <div className="space-y-4">
+      <Card className="gap-4 p-5 border-primary/20 bg-gradient-to-r from-card via-card to-primary/5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Truck className="size-4 text-primary" />
+              <h3 className="text-sm font-semibold">跨机平滑搬家与克隆中心</h3>
+              <Badge variant="outline" className="border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 text-[10px]">
+                全量平移 · 无感过渡
+              </Badge>
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              更换服务器专属通道！提供【全新机一键克隆安装指令】（新机无需装环境，一行命令全自动部署并拉取数据），以及【纯网页端 6 位连接码跨机直连搬家】。修改域名解析即刻恢复，无客户端感知中断。
+            </p>
+          </div>
+          <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium shrink-0 self-start sm:self-auto cursor-pointer" onClick={() => setMigrationOpen(true)}>
+            <Truck className="mr-1.5 size-3.5" />
+            打开搬家中心
+          </Button>
+        </div>
+      </Card>
+
+      <MigrationCenterDialog open={migrationOpen} onOpenChange={setMigrationOpen} />
+
       <Card className="gap-4 p-5">
         <h3 className="text-sm font-medium">数据库</h3>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -4655,6 +4680,19 @@ export function Admin({
   updateInfo?: UpdateInfo | null
   onOpenUpdateDialog?: () => void
 }) {
+  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null)
+
+  useEffect(() => {
+    fetch("/api/proxy/migration/status")
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.ok && res.just_completed) {
+          setMigrationStatus(res)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
   return (
     <div className="flex flex-col gap-6 md:flex-row">
       <nav className="flex gap-1 overflow-x-auto md:w-44 md:shrink-0 md:flex-col md:overflow-visible">
@@ -4742,6 +4780,13 @@ export function Admin({
           <Nodes nodes={nodes} refresh={refresh} site={site} refusal={refusal} />
         )}
       </div>
+
+      {migrationStatus && (
+        <MigrationCelebrationDialog
+          status={migrationStatus}
+          onDismiss={() => setMigrationStatus(null)}
+        />
+      )}
     </div>
   )
 }
