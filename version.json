@@ -1,12 +1,11 @@
 {
-  "version": "v2.5.29",
-  "title": "ProxyProbe v2.5.29 架构解耦重构、节点状态打卡自愈与探针零节点核心检测修复",
-  "release_date": "2026-10-06",
+  "version": "v2.5.30",
+  "title": "ProxyProbe v2.5.30 节点全环境极速自愈安装、Alpine底层依赖固化与Xray双栈出站优化",
+  "release_date": "2026-10-07",
   "changelog": [
-    "【架构解耦与模块化重构】彻底拆分万行单体 proxy_manager.py，解耦为 6 大专用核心模块（agent_templates、migration_engine、node_engine、subscription_engine、telegram_engine、user_engine），主控精简超过 52%，显著提升执行效率与维护性",
-    "【节点列表与数据流转自愈】补齐订阅令牌反解与跨模块依赖传递，彻底修复代理管理与协议管理列表偶发 500 异常，确保节点及用户统计秒级极速拉取",
-    "【探针零节点核心检测修复】修复 PROXY_AGENT_PY 在被控机未分配节点时由于 active_uids 作用域导致的 UnboundLocalError，确保所有探针不论是否建有节点均能精准上报 Xray/Sing-box/Realm 核心安装状态",
-    "【快速发版流水线优化】打包与编译管线全面适配 collect-submodules modules 动态依赖收集，确保二进制打包完整与双仓库原子同步"
+    "【全环境自愈安装指令】面板复制指令内建轻量环境自愈逻辑，支持 Alpine 最小镜像自动安装 curl，在纯 IPv6 / 共享 NAT 容器出站受限环境下自动探测并注入公共 DNS64 网关，并配置 /etc/udhcpc/udhcpc.conf 锁定 RESOLV_CONF=\"no\" 防止 DHCP 租约刷新冲掉配置",
+    "【探针与代理守护底层依赖自动补齐】主控 install.sh 与 PROXY_AGENT_SH 自动为 Alpine 系统补齐 bash、openssl、iproute2（提供 /sbin/ss）、gcompat（glibc 兼容层）与 ca-certificates，彻底解决 Sing-box 自签证书缺失及端口检测异常",
+    "【Xray 直连出站策略自适应升级】将 Xray freedom 直连出站 domainStrategy 由 UseIPv4 升级为 AsIs（系统级 Happy Eyeballs 双栈并发自适应），解决 NAT/纯 IPv6 节点因局部 IPv4 路由黑洞导致客户端连接后无法回访主控面板的顽疾"
   ],
   "release_url": "https://github.com/2290145679/ProxyProbe-Release"
 }

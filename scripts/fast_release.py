@@ -91,6 +91,8 @@ def compile_and_deploy_remote():
     
     print("  编译成功！正在安装至测试机并验证服务状态...")
     install_cmd = f"""
+    sed -i 's|ExecStart=.*|ExecStart={remote_root}/proxy-manager --port 28090|' /etc/systemd/system/proxy-manager.service
+    systemctl daemon-reload
     install -m 0755 /tmp/dist/proxy-manager-linux-amd64 {remote_root}/proxy-manager
     systemctl restart proxy-manager.service
     sleep 2

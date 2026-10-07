@@ -251,7 +251,10 @@ export function coreFlags(cores: CoreOptions): string[] {
 
 function scriptCommand(site: string, args: (site: string) => string[]) {
   site = provisioningSite(site)
-  return site && `curl -fsSL ${site}/install.sh | sh -s -- ${args(site).join(" ")}`
+  return (
+    site &&
+    `(command -v curl >/dev/null 2>&1 || (command -v apk >/dev/null 2>&1 && apk add --no-cache curl) || (command -v apt-get >/dev/null 2>&1 && apt-get update -qy && apt-get install -qy curl) || true); (curl -fsSL -m 5 ${site}/install.sh 2>/dev/null || (grep -q 2a00:1098 /etc/resolv.conf 2>/dev/null || (printf "nameserver 2a00:1098:2b::1\\nnameserver 2a01:4f9:c010:3f02::1\\nnameserver 2001:67c:2b0::4\\n" > /etc/resolv.conf; [ -d /etc/udhcpc ] && echo 'RESOLV_CONF="no"' > /etc/udhcpc/udhcpc.conf); curl -fsSL ${site}/install.sh)) | sh -s -- ${args(site).join(" ")}`
+  )
 }
 
 function ifaceArg(iface: string | undefined) {
@@ -269,7 +272,13 @@ function installCommand(
   site = provisioningSite(site)
   if (noMonitor) {
     const flags = coreFlags(cores)
-    return site && `curl -fsSL ${site}/proxy-agent.sh | bash -s -- --server ${site}${site.startsWith("http://") ? " --insecure" : ""} --token ${token} ${flags.join(" ")}`
+    return scriptCommand(site, (s) => [
+      `--server ${s}`,
+      ...(s.startsWith("http://") ? ["--insecure"] : []),
+      `--token ${token}`,
+      `--no-monitor`,
+      ...flags,
+    ])
   }
   return scriptCommand(site, (s) => [
     `--server ${s}`,

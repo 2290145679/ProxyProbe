@@ -1419,7 +1419,7 @@ def apply_xray_config():
         },
         "inbounds": [api_inbound] + inbounds,
         "outbounds": [
-            { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIPv4" } },
+            { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "AsIs" } },
             { "protocol": "blackhole", "tag": "block" },
             { "protocol": "freedom", "tag": "api" }
         ],

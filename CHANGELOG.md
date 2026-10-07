@@ -2,6 +2,16 @@
 
 本文档记录 **ProxyProbe** 的所有主要版本演进、核心功能迭代与 Bug 修复历史。
 
+## 🌟 [v2.5.30] - 2026-10-07
+
+### 🚀 节点全环境极速自愈安装与 Alpine 底层依赖固化 (Full-Environment Self-Healing Installation & Alpine Hardening)
+- **面板安装指令轻量自愈前缀**：面板生成的复制命令集成全自动环境自愈逻辑，支持 Alpine 最小镜像自动调用 `apk` 安装 `curl`；在纯 IPv6 / 共享 NAT 容器出站受限环境下自动探测并注入公共 DNS64 网关，并在 Alpine 上自动设置 `/etc/udhcpc/udhcpc.conf`（`RESOLV_CONF="no"`），彻底杜绝 DHCP 租约刷新后覆盖 DNS；
+- **探针与代理守护底层依赖自动补齐**：主控 `install.sh` 与 `PROXY_AGENT_SH` 自动为 Alpine 系统装齐 `bash`、`openssl`、`iproute2`（提供 `/sbin/ss`）、`gcompat`（glibc 兼容层）与 `ca-certificates`，彻底解决 Sing-box 因缺少 openssl 导致自签证书生成失败及端口探测异常。
+
+### 🌐 Xray 双栈自适应出站策略升级 (Xray Dual-Stack AsIs Outbound Strategy)
+- **由 `UseIPv4` 升级为 `AsIs`**：将主控及所有被控节点 Xray direct freedom 出站规则中的 `domainStrategy` 由强制锁死 IPv4 的 `UseIPv4` 全面优化为 `AsIs`（系统级 Happy Eyeballs 双栈并发自适应）；
+- **彻底根治 NAT 节点访问面板超时**：解决共享 NAT / 纯 IPv6 节点因局部公网 IPv4 路由黑洞导致客户端连接代理后无法回访主控面板域名的顽疾，同时完全保留普通节点原有的网络速度与分流体验。
+
 ## 🌟 [v2.5.29] - 2026-10-06
 
 ### 🧩 核心服务端架构解耦与模块化重构 (Core Architecture Decoupling & Modular Refactoring)

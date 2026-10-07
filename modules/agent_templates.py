@@ -108,16 +108,25 @@ elif command -v systemctl >/dev/null 2>&1; then
   INIT="systemd"
 fi
 
-# 1. 安装基础依赖 python3, curl, unzip, tar
-if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
-  echo "[+] 正在安装系统基础依赖 (python3, curl, unzip, tar)..."
+# 1. 安装基础依赖 python3, curl, unzip, tar, openssl, iproute2
+if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || (command -v apk >/dev/null 2>&1 && (! command -v openssl >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1)); then
+  echo "[+] 正在安装系统基础依赖 (python3, curl, unzip, tar, openssl, iproute2)..."
   if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y && apt-get install -y python3 curl unzip tar iptables || true
+    apt-get update -y && apt-get install -y python3 curl unzip tar iptables openssl iproute2 || true
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y python3 curl unzip tar iptables || true
+    yum install -y python3 curl unzip tar iptables openssl iproute || true
   elif command -v apk >/dev/null 2>&1; then
     apk update >/dev/null 2>&1 || true
-    apk add python3 curl unzip tar iptables gcompat || true
+    apk add python3 curl unzip tar iptables gcompat openssl iproute2 bash ca-certificates || true
+  fi
+fi
+
+# DNS64 / NAT64 自动容灾探测与 udhcpc 防冲掉保护
+if ! curl -fsSL -m 4 "$HUB_SERVER" >/dev/null 2>&1; then
+  if [ -f /etc/resolv.conf ] && ! grep -q "2a00:1098" /etc/resolv.conf; then
+    echo "[*] 检测到主控连接异常，正在自动配置 DNS64 加速/NAT64 兼容通道..."
+    printf "nameserver 2a00:1098:2b::1\nnameserver 2a01:4f9:c010:3f02::1\nnameserver 2001:67c:2b0::4\n" > /etc/resolv.conf
+    [ -d /etc/udhcpc ] && echo 'RESOLV_CONF="no"' > /etc/udhcpc/udhcpc.conf
   fi
 fi
 
@@ -206,7 +215,7 @@ EOF
     { "tag": "dummy", "listen": "127.0.0.1", "port": 39999, "protocol": "socks", "settings": { "auth": "noauth" } }
   ],
   "outbounds": [
-    { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIPv4" } },
+    { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "AsIs" } },
     { "protocol": "blackhole", "tag": "block" }
   ]
 }
@@ -1064,7 +1073,7 @@ def sync_step(server, token, last_hash):
                 "settings": {"address": "127.0.0.1"}
             }] + applied_inbounds,
             "outbounds": [
-                { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIPv4" } },
+                { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "AsIs" } },
                 { "protocol": "blackhole", "tag": "block" },
                 { "protocol": "freedom", "tag": "api" }
             ],

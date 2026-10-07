@@ -60,6 +60,39 @@ done
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 
+# ==============================================================================
+# 系统环境自愈与基础依赖增强 (兼容 Alpine / 纯 IPv6 / NAT 容器环境)
+# ==============================================================================
+# 1. 确保基础网络下载工具可用
+if ! command -v curl >/dev/null 2>&1; then
+	if command -v apk >/dev/null 2>&1; then
+		apk update >/dev/null 2>&1 || true
+		apk add --no-cache curl ca-certificates || true
+	elif command -v apt-get >/dev/null 2>&1; then
+		apt-get update -y >/dev/null 2>&1 || true
+		apt-get install -y curl ca-certificates || true
+	elif command -v yum >/dev/null 2>&1; then
+		yum install -y curl ca-certificates || true
+	fi
+fi
+
+# 2. 针对 Alpine Linux 自动安装运行代理及探针所需的底层依赖与兼容层 (bash, openssl, iproute2, gcompat)
+if command -v apk >/dev/null 2>&1; then
+	apk add --no-cache bash openssl iproute2 gcompat ca-certificates || true
+fi
+
+# 3. 纯 IPv6 / NAT 出站受限环境 DNS64 自动容灾检测与配置 (防 udhcpc 覆盖)
+if [ -n "${SERVER:-}" ]; then
+	CHECK_URL="${SERVER%/}"
+	if ! curl -fsSL ${INSECURE:+ -k} --max-time 4 "$CHECK_URL" >/dev/null 2>&1; then
+		if [ -f /etc/resolv.conf ] && ! grep -q "2a00:1098" /etc/resolv.conf; then
+			echo "[*] 检测到无法直接经 IPv4 连接主控端，正在自动注入公共 DNS64 (NAT64 兼容网关)..."
+			printf "nameserver 2a00:1098:2b::1\nnameserver 2a01:4f9:c010:3f02::1\nnameserver 2001:67c:2b0::4\n" > /etc/resolv.conf
+			[ -d /etc/udhcpc ] && echo 'RESOLV_CONF="no"' > /etc/udhcpc/udhcpc.conf
+		fi
+	fi
+fi
+
 # 【纯代理模式（免装探针）】仅部署代理核心与节点管理守护，跳过任何探针监控服务
 if [ "${NO_MONITOR:-}" = "1" ]; then
 	if [ -z "$TOKEN" ] && [ -n "$REGISTER" ]; then
