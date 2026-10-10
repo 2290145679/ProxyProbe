@@ -28,7 +28,10 @@ import uuid
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlparse
-import license_guard
+try:
+    import license_guard
+except ImportError:
+    license_guard = None
 
 # 修复 PyInstaller 环境变量污染子进程问题 (杜绝 LD_LIBRARY_PATH 干扰 systemctl / xray / sing-box)
 if getattr(sys, 'frozen', False):
@@ -658,14 +661,6 @@ def generate_verification_email_html(site_name, code, purpose_text):
 def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0, vip_levels=""):
     conn = get_db()
     try:
-        # 0. 商业许可证/套餐配额检查
-        lic_status = license_guard.get_current_license_status(conn)
-        curr_node_count = conn.execute("SELECT COUNT(*) FROM proxy_node").fetchone()[0]
-        max_nodes = lic_status.get("max_nodes", 1)
-        plan_name = lic_status.get("plan_name", "免费版")
-        if curr_node_count + len(protocols) > max_nodes:
-            raise ValueError(f"当前【{plan_name}】节点配额上限为 {max_nodes} 个（已建 {curr_node_count} 个），无法批量生成 {len(protocols)} 个节点，请先升级商业许可证套餐！")
-
         # 1. Get server info
         if server_id == 0:
             cur_first = conn.execute("SELECT id, name, ip, ipv4, country FROM node ORDER BY id ASC LIMIT 1")
@@ -1567,58 +1562,33 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_text(PROXY_AGENT_PY, 200, "text/x-python; charset=utf-8")
             return
 
-        # License status API (极速零阻塞本地读取，消除前端套餐加载延迟与误判)
+        # License status API (开源社区版全功能开放，消除任何商业限制)
         if path == "/api/proxy/license/status":
-            sync_param = qs.get("sync", ["0"])[0]
-            # 仅当显式传入 ?sync=1 时在后台异步线程中触发一次远程心跳打卡，绝不在主 HTTP 响应线程中同步阻塞网络
-            if sync_param == "1":
-                threading.Thread(target=license_guard.ping_auth_server, args=(DB_PATH,), daemon=True).start()
-
             conn = get_db()
-            lic_status = license_guard.get_current_license_status(conn)
-            
-            # 若当前处于未激活免费模式，在后台异步静默尝试根据机器码找回历史商业授权 (每 3 分钟最多尝试一次)
-            if lic_status.get("type") == "free":
-                now_ts = int(time.time())
-                global _LAST_AUTO_RECOVER_ATTEMPT_TS
-                if (now_ts - _LAST_AUTO_RECOVER_ATTEMPT_TS) > 180:
-                    _LAST_AUTO_RECOVER_ATTEMPT_TS = now_ts
-                    def _async_silent_recover():
-                        try:
-                            c = get_db()
-                            license_guard.auto_recover_license_from_auth(c)
-                            c.close()
-                        except Exception:
-                            pass
-                    threading.Thread(target=_async_silent_recover, daemon=True, name="license_silent_recover").start()
-
-            # 统计当前资源占用
             server_count = conn.execute("SELECT COUNT(*) FROM node").fetchone()[0]
             node_count = conn.execute("SELECT COUNT(*) FROM proxy_node").fetchone()[0]
             user_count = conn.execute("SELECT COUNT(*) FROM proxy_user WHERE is_admin = 0").fetchone()[0]
             conn.close()
-
-            max_servers = -1  # 基础探针全套餐无限制纳管
-            max_nodes = lic_status.get("max_nodes", 1)
-            max_users = lic_status.get("max_users", 1)
-
-            lic_status["limits"] = {
+            self.send_json({
+                "ok": True,
+                "active": True,
+                "type": "open_source",
+                "plan_name": "开源社区版",
+                "unlimited": True,
                 "max_servers": -1,
-                "max_nodes": max_nodes,
-                "max_users": max_users
-            }
-
-            lic_status["usage"] = {
-                "server_count": server_count,
-                "node_count": node_count,
-                "user_count": user_count,
-                "free_limits": {
+                "max_nodes": 999999,
+                "max_users": 999999,
+                "limits": {
                     "max_servers": -1,
-                    "max_nodes": 1,
-                    "max_users": 1
+                    "max_nodes": 999999,
+                    "max_users": 999999
+                },
+                "usage": {
+                    "server_count": server_count,
+                    "node_count": node_count,
+                    "user_count": user_count
                 }
-            }
-            self.send_json(lic_status)
+            })
             return
 
         # 1. Client subscription endpoint (Authenticated via token)
@@ -3419,33 +3389,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "theme_style": new_theme})
             return
 
-        # License activation API (允许已登录管理员，或本机 127.0.0.1 终端激活)
-        if path == "/api/proxy/license/activate":
-            if not check_auth(self.headers) and self.client_address[0] not in ("127.0.0.1", "::1"):
-                self.send_json({"error": "Unauthorized"}, 401)
-                return
-            lic_key = req.get("license_key", "").strip()
-            conn = get_db()
-            ok, msg, lic_status = license_guard.save_license_key(conn, lic_key)
-            conn.close()
-            if ok:
-                self.send_json({"ok": True, "message": msg, "status": lic_status})
-            else:
-                self.send_json({"ok": False, "message": msg}, 400)
-            return
-
-        # License auto-recover API (根据当前服务器硬件机器码向官方授权中心自动检索并找回商业授权)
-        if path == "/api/proxy/license/recover":
-            if not check_auth(self.headers) and self.client_address[0] not in ("127.0.0.1", "::1"):
-                self.send_json({"error": "Unauthorized"}, 401)
-                return
-            conn = get_db()
-            ok, msg, lic_status = license_guard.auto_recover_license_from_auth(conn)
-            conn.close()
-            if ok:
-                self.send_json({"ok": True, "message": msg, "status": lic_status})
-            else:
-                self.send_json({"ok": False, "message": msg}, 400)
+        # License activation / recover API (开源版直接返回成功)
+        if path in ("/api/proxy/license/activate", "/api/proxy/license/recover"):
+            self.send_json({
+                "ok": True,
+                "message": "系统已全面开源，所有功能不受限制",
+                "status": {
+                    "ok": True,
+                    "active": True,
+                    "type": "open_source",
+                    "plan_name": "开源社区版",
+                    "unlimited": True
+                }
+            })
             return
 
         if path == "/api/proxy/auth/send-code":
@@ -4050,34 +4006,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/proxy/users":
-            # 商业许可证/套餐配额检查
-            conn_chk = get_db()
-            lic_status = license_guard.get_current_license_status(conn_chk)
-            curr_user_count = conn_chk.execute("SELECT COUNT(*) FROM proxy_user WHERE is_admin = 0").fetchone()[0]
-            conn_chk.close()
-
-            if lic_status.get("type") == "revoked":
-                self.send_json({
-                    "ok": False,
-                    "error": "license_revoked",
-                    "message": "商业许可证已被授权中心吊销冻结，禁止创建或变更客户端用户！",
-                    "machine_id": lic_status.get("machine_id")
-                }, 403)
-                return
-
-            max_users = lic_status.get("max_users", 1)
-            plan_name = lic_status.get("plan_name", "免费版")
-
-            if curr_user_count >= max_users:
-                self.send_json({
-                    "ok": False,
-                    "error": "license_quota_exceeded",
-                    "message": f"当前【{plan_name}】配额已满（上限 {max_users} 个客户端用户，当前已建 {curr_user_count} 个），添加更多用户请升级商业许可证套餐！",
-                    "machine_id": lic_status.get("machine_id"),
-                    "current": curr_user_count,
-                    "max": max_users
-                }, 403)
-                return
 
             username = req.get("username", "").strip()
             email = req.get("email", "").strip() or (username if "@" in username else "")
@@ -4296,34 +4224,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/proxy/nodes":
-            # 商业许可证/套餐配额检查
-            conn_lic = get_db()
-            lic_status = license_guard.get_current_license_status(conn_lic)
-            curr_node_count = conn_lic.execute("SELECT COUNT(*) FROM proxy_node").fetchone()[0]
-            conn_lic.close()
-
-            if lic_status.get("type") == "revoked":
-                self.send_json({
-                    "ok": False,
-                    "error": "license_revoked",
-                    "message": "商业许可证已被授权中心吊销冻结，禁止创建或变更代理节点！",
-                    "machine_id": lic_status.get("machine_id")
-                }, 403)
-                return
-
-            max_nodes = lic_status.get("max_nodes", 1)
-            plan_name = lic_status.get("plan_name", "免费版")
-
-            if curr_node_count >= max_nodes:
-                self.send_json({
-                    "ok": False,
-                    "error": "license_quota_exceeded",
-                    "message": f"当前【{plan_name}】配额已满（上限 {max_nodes} 个代理节点，当前已建 {curr_node_count} 个），添加更多节点请升级商业许可证套餐！",
-                    "machine_id": lic_status.get("machine_id"),
-                    "current": curr_node_count,
-                    "max": max_nodes
-                }, 403)
-                return
 
             server_id = int(req.get("server_id", 0))
             if server_id == 0:
@@ -5006,19 +4906,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     init_db()
-    license_guard.start_heartbeat_thread(DB_PATH)
-    # 服务启动初始化：若当前处于未激活免费模式，在后台延时 2 秒尝试一次根据机器码自动找回商业授权
-    def _initial_license_recover():
-        time.sleep(2)
-        try:
-            c = sqlite3.connect(DB_PATH)
-            st = license_guard.get_current_license_status(c)
-            if not st.get("active"):
-                license_guard.auto_recover_license_from_auth(c)
-            c.close()
-        except Exception:
-            pass
-    threading.Thread(target=_initial_license_recover, daemon=True, name="init_license_recover").start()
 
     def _initial_ip_heal():
         time.sleep(1)

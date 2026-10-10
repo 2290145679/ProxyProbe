@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { AlertTriangle, BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, KeyRound, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Truck, Upload, Users, XCircle } from "lucide-react"
+import { AlertTriangle, BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Truck, Upload, Users, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
@@ -8,7 +8,6 @@ import { ProxyDashboard } from "./ProxyDashboard"
 import { ProxyNodes } from "./ProxyNodes"
 import { ProxyUsers } from "./ProxyUsers"
 import { ProxyRules } from "./ProxyRules"
-import { LicenseManager } from "./LicenseManager"
 import { MigrationCenterDialog, MigrationCelebrationDialog, type MigrationStatus } from "./MigrationDialogs"
 import type { UpdateInfo } from "./UpdateDialog"
 
@@ -251,10 +250,7 @@ export function coreFlags(cores: CoreOptions): string[] {
 
 function scriptCommand(site: string, args: (site: string) => string[]) {
   site = provisioningSite(site)
-  return (
-    site &&
-    `(command -v curl >/dev/null 2>&1 || (command -v apk >/dev/null 2>&1 && apk add --no-cache curl) || (command -v apt-get >/dev/null 2>&1 && apt-get update -qy && apt-get install -qy curl) || true); (curl -fsSL -m 5 ${site}/install.sh 2>/dev/null || (grep -q 2a00:1098 /etc/resolv.conf 2>/dev/null || (printf "nameserver 2a00:1098:2b::1\\nnameserver 2a01:4f9:c010:3f02::1\\nnameserver 2001:67c:2b0::4\\n" > /etc/resolv.conf; [ -d /etc/udhcpc ] && echo 'RESOLV_CONF="no"' > /etc/udhcpc/udhcpc.conf); curl -fsSL ${site}/install.sh)) | sh -s -- ${args(site).join(" ")}`
-  )
+  return site && `curl -fsSL ${site}/install.sh | sh -s -- ${args(site).join(" ")}`
 }
 
 function ifaceArg(iface: string | undefined) {
@@ -1230,13 +1226,6 @@ function ServerDisplaySettingsDialog({
 
 function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () => void; site: string; refusal: string }) {
   const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false)
-  const [licenseStatus, setLicenseStatus] = useState<any>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("proxyprobe_license_status") || "null")
-    } catch {
-      return null
-    }
-  })
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Node | null>(null)
   const [billing, setBilling] = useState<Node | null>(null)
@@ -1253,14 +1242,6 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
   const [proxyOnlineMap, setProxyOnlineMap] = useState<Record<number, boolean>>({})
 
   useEffect(() => {
-    fetch("/api/proxy/license/status")
-      .then(r => r.json())
-      .then(d => {
-        setLicenseStatus(d)
-        try { localStorage.setItem("proxyprobe_license_status", JSON.stringify(d)) } catch {}
-      })
-      .catch(() => {})
-
     fetch("/api/proxy/servers")
       .then(r => r.json())
       .then(d => {
@@ -1342,22 +1323,6 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
 
   return (
     <div className="space-y-4">
-      {licenseStatus && (
-        <div className="rounded-xl border border-muted bg-muted/30 p-3 text-xs text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-sm">
-          <div className="flex items-center gap-2">
-            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${licenseStatus.active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" : "bg-amber-500/10 text-amber-600 border border-amber-500/20"}`}>
-              {licenseStatus.plan_name || (licenseStatus.active ? "商业版" : "免费体验版")}
-            </span>
-            <span>
-              已纳管服务器：<strong>{nodes.length} 台</strong>
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium ml-1.5">(基础探针无限纳管)</span>
-            </span>
-          </div>
-          <span className="text-muted-foreground font-medium shrink-0">
-            探针基础功能终身免费；商业授权按代理节点与客户端用户配额授权
-          </span>
-        </div>
-      )}
       {refusal && <p className="text-sm text-muted-foreground">{refusal}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <NodeSearch className="mr-auto w-full sm:w-64" value={query} onChange={setQuery} />
@@ -1376,25 +1341,13 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
         <Button 
           variant="outline" 
           disabled={!!refusal} 
-          onClick={() => {
-            if (licenseStatus?.type === "revoked") {
-              toast.error("当前商业许可证已被授权中心吊销冻结，禁止添加服务器！")
-              return
-            }
-            setRegistering(true)
-          }}
+          onClick={() => setRegistering(true)}
         >
           <Server /> 批量添加{reg.left > 0 && ` · ${Math.ceil(reg.left / 60)} 分`}
         </Button>
         <Button 
           disabled={!!refusal} 
-          onClick={() => {
-            if (licenseStatus?.type === "revoked") {
-              toast.error("当前商业许可证已被授权中心吊销冻结，禁止添加服务器！")
-              return
-            }
-            setCreating(true)
-          }}
+          onClick={() => setCreating(true)}
         >
           <Plus /> 添加服务器
         </Button>
@@ -4662,7 +4615,6 @@ const ADMIN_SECTIONS = [
   { path: "/admin/tiers", label: "套餐管理", icon: PackageCheck },
   { path: "/admin/announcements", label: "公告通知", icon: Megaphone },
   { path: "/admin/rules", label: "规则配置", icon: SlidersHorizontal },
-  { path: "/admin/license", label: "商业授权", icon: KeyRound },
   { path: "/admin/ping", label: "延迟", icon: Radio },
   { path: "/admin/notify", label: "通知", icon: Bell },
   { path: "/admin/data", label: "数据", icon: Database },
@@ -4773,8 +4725,6 @@ export function Admin({
           <AnnouncementsTab />
         ) : path === "/admin/rules" ? (
           <ProxyRules />
-        ) : path === "/admin/license" ? (
-          <LicenseManager />
         ) : path === "/admin/ping" ? (
           <Ping nodes={nodes} />
         ) : path === "/admin/notify" ? (

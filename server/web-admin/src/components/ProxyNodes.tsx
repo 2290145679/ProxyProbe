@@ -292,13 +292,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [deleting, setDeleting] = useState(false)
 
   // Create Modal State
-  const [licenseStatus, setLicenseStatus] = useState<any>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("proxyprobe_license_status") || "null")
-    } catch {
-      return null
-    }
-  })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [batchDialogOpen, setBatchDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -559,15 +552,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         }
       }
 
-      // Fetch license status
-      try {
-        const licRes = await fetch("/api/proxy/license/status")
-        if (licRes.ok) {
-          const licData = await licRes.json()
-          setLicenseStatus(licData)
-          try { localStorage.setItem("proxyprobe_license_status", JSON.stringify(licData)) } catch {}
-        }
-      } catch {}
+
     } catch (e: any) {
       toast.error(e.message || "加载代理节点失败")
     } finally {
@@ -673,20 +658,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     : (isSingboxProto ? Boolean(currentSelectedServer?.singbox_installed) : Boolean(currentSelectedServer?.xray_installed))
 
   const openCreateDialog = () => {
-    if (licenseStatus?.type === "revoked") {
-      toast.error("当前商业许可证已被授权中心吊销冻结，禁止创建新节点！")
-      return
-    }
-
-    if (licenseStatus) {
-      const maxNodes = licenseStatus?.max_nodes || licenseStatus?.limits?.max_nodes || (licenseStatus?.active ? 12 : 1)
-      if (proxyNodes.length >= maxNodes) {
-        const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
-        toast.error(`当前【${planName}】配额已满（上限 ${maxNodes} 个节点，当前已建 ${proxyNodes.length} 个），添加更多节点请升级商业套餐！`)
-        return
-      }
-    }
-
     if (serverOptions.length === 0) {
       toast.error("暂无可用的服务器！请先在「节点」页面添加探针服务器并在其上安装代理探针。")
       return
@@ -1169,26 +1140,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
       {/* Bottom Card: 已配置的代理节点 */}
       <Card className="rounded-xl border bg-card shadow-sm overflow-hidden">
-        {licenseStatus && (
-          <div className="bg-muted/30 border-b px-5 py-2.5 text-xs text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${licenseStatus.active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" : "bg-amber-500/10 text-amber-600 border border-amber-500/20"}`}>
-                {licenseStatus.plan_name || (licenseStatus.active ? "商业版" : "免费体验版")}
-              </span>
-              <span>
-                代理节点配额：<strong>{proxyNodes.length} / {licenseStatus.max_nodes || licenseStatus.limits?.max_nodes || (licenseStatus.active ? 12 : 1)} 个</strong>
-                {proxyNodes.length >= (licenseStatus.max_nodes || licenseStatus.limits?.max_nodes || (licenseStatus.active ? 12 : 1)) && (
-                  <span className="text-amber-500 font-medium ml-1.5">(配额已满，升级套餐以添加更多)</span>
-                )}
-              </span>
-            </div>
-            {!licenseStatus.active && (
-              <span className="text-amber-600 dark:text-amber-400 font-medium shrink-0">
-                免费版限额 1 节点，激活商业版解锁更高配额
-              </span>
-            )}
-          </div>
-        )}
+
         <div className="p-4 sm:p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b bg-card">
           <div>
             <h3 className="font-semibold text-base">已配置的代理节点</h3>
@@ -1211,10 +1163,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               size="sm" 
               variant="outline"
               onClick={() => {
-                if (licenseStatus?.type === "revoked") {
-                  toast.error("当前商业许可证已被授权中心吊销冻结，禁止创建新节点！")
-                  return
-                }
                 if (serverOptions.length === 0) {
                   toast.error("暂无可用的服务器！请先添加探针服务器。")
                   return

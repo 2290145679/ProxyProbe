@@ -1,11 +1,11 @@
 {
-  "version": "v2.5.30",
-  "title": "ProxyProbe v2.5.30 节点全环境极速自愈安装、Alpine底层依赖固化与Xray双栈出站优化",
-  "release_date": "2026-10-07",
+  "version": "v2.5.31",
+  "title": "ProxyProbe v2.5.31 节点跨国路由探测自愈、极简对接命令还原与全面开源社区化",
+  "release_date": "2026-10-10",
   "changelog": [
-    "【全环境自愈安装指令】面板复制指令内建轻量环境自愈逻辑，支持 Alpine 最小镜像自动安装 curl，在纯 IPv6 / 共享 NAT 容器出站受限环境下自动探测并注入公共 DNS64 网关，并配置 /etc/udhcpc/udhcpc.conf 锁定 RESOLV_CONF=\"no\" 防止 DHCP 租约刷新冲掉配置",
-    "【探针与代理守护底层依赖自动补齐】主控 install.sh 与 PROXY_AGENT_SH 自动为 Alpine 系统补齐 bash、openssl、iproute2（提供 /sbin/ss）、gcompat（glibc 兼容层）与 ca-certificates，彻底解决 Sing-box 自签证书缺失及端口检测异常",
-    "【Xray 直连出站策略自适应升级】将 Xray freedom 直连出站 domainStrategy 由 UseIPv4 升级为 AsIs（系统级 Happy Eyeballs 双栈并发自适应），解决 NAT/纯 IPv6 节点因局部 IPv4 路由黑洞导致客户端连接后无法回访主控面板的顽疾"
+    "【全面开源社区化】彻底移除商业许可证限制与配额校验门禁，节点、用户、服务器配额全部放开为无上限，移除后台向外部授权中心心跳打卡机制，系统实现100%纯净独立离线运行",
+    "【节点跨国路由探测自愈】优化非本机远程节点的健康判定逻辑，当主控机房与节点间存在IPv4骨干网路由黑洞导致TCP直接探测超时时，自动回退到节点探针Agent真实监听与存活心跳做自愈校验，消除主控网络链路受限导致的节点误报标红",
+    "【节点对接指令极简还原】管理后台一键复制对接指令恢复为最纯净的标准格式（curl ... | sh -s -- ...），依赖补齐与环境适配由分发脚本全自动化处理，提升兼容性与整洁度"
   ],
   "release_url": "https://github.com/2290145679/ProxyProbe-Release"
 }

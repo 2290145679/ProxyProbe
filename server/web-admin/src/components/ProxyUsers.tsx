@@ -105,13 +105,6 @@ export function ProxyUsers() {
   const [savingBalance, setSavingBalance] = useState(false)
 
   // 新建用户弹窗状态
-  const [licenseStatus, setLicenseStatus] = useState<any>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("proxyprobe_license_status") || "null")
-    } catch {
-      return null
-    }
-  })
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState({
     username: "",
@@ -151,14 +144,7 @@ export function ProxyUsers() {
         .then(r => r.json())
         .then(d => { if (d.ok && Array.isArray(d.tiers)) setVipTiers(d.tiers) })
         .catch(() => {})
-      try {
-        const licRes = await fetch("/api/proxy/license/status")
-        if (licRes.ok) {
-          const licData = await licRes.json()
-          setLicenseStatus(licData)
-          try { localStorage.setItem("proxyprobe_license_status", JSON.stringify(licData)) } catch {}
-        }
-      } catch {}
+
     } catch {
       toast.error("加载用户列表失败")
     } finally {
@@ -402,22 +388,7 @@ export function ProxyUsers() {
           </Button>
           <Button 
             size="sm" 
-            onClick={() => {
-              if (licenseStatus?.type === "revoked") {
-                toast.error("当前商业许可证已被授权中心吊销冻结，禁止创建新用户！")
-                return
-              }
-              if (licenseStatus) {
-                const nonAdminCount = users.filter(u => !u.is_admin).length
-                const maxUsers = licenseStatus?.max_users || licenseStatus?.limits?.max_users || (licenseStatus?.active ? 12 : 1)
-                if (nonAdminCount >= maxUsers) {
-                  const planName = licenseStatus?.plan_name || (licenseStatus?.active ? "商业版" : "免费体验版")
-                  toast.error(`当前【${planName}】配额已满（上限 ${maxUsers} 个用户，当前已建 ${nonAdminCount} 个），添加更多用户请升级商业套餐！`)
-                  return
-                }
-              }
-              setCreateOpen(true)
-            }} 
+            onClick={() => setCreateOpen(true)} 
             className="gap-1.5 text-xs"
           >
             <Plus className="size-3.5" /> 新建用户
@@ -427,28 +398,6 @@ export function ProxyUsers() {
 
       {/* 用户列表 */}
       <Card className="overflow-hidden border shadow-sm">
-        {licenseStatus && (
-          <div className="bg-muted/30 border-b px-5 py-2.5 text-xs text-muted-foreground flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${licenseStatus.active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" : "bg-amber-500/10 text-amber-600 border border-amber-500/20"}`}>
-                {licenseStatus.plan_name || (licenseStatus.active ? "商业版" : "免费体验版")}
-              </span>
-              <span>
-                客户端用户配额：<strong>{users.filter(u => !u.is_admin).length} / {licenseStatus.max_users || licenseStatus.limits?.max_users || (licenseStatus.active ? 12 : 1)} 户</strong>
-                <span className="mx-2 text-muted-foreground/30">|</span>
-                实时在线：<strong className="text-emerald-600 dark:text-emerald-400">{users.filter(u => u.is_online).length}</strong> 户
-                {users.filter(u => !u.is_admin).length >= (licenseStatus.max_users || licenseStatus.limits?.max_users || (licenseStatus.active ? 12 : 1)) && (
-                  <span className="text-amber-500 font-medium ml-1.5">(配额已满，升级套餐以添加更多)</span>
-                )}
-              </span>
-            </div>
-            {!licenseStatus.active && (
-              <span className="text-amber-600 dark:text-amber-400 font-medium shrink-0">
-                免费版限额 1 用户，激活商业版解锁更高配额
-              </span>
-            )}
-          </div>
-        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-muted/50 border-b text-muted-foreground">

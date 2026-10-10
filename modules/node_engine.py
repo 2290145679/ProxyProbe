@@ -307,9 +307,9 @@ def check_node_via_agent_status(node):
                     port_found = True
                     
         if core_running and port_found:
-            return True, f"节点运行正常 ({core_name} 监听端口 {port}，主控机无 IPv6 外网路由由客户端直连)", 0
+            return True, f"节点运行正常 ({core_name} 监听端口 {port}，主控直连受限由客户端直连)", 0
         elif core_running:
-            return True, f"核心运行就绪 ({core_name} 运行中，主控机无 IPv6 外网路由由客户端直连)", 0
+            return True, f"核心运行就绪 ({core_name} 运行中，主控直连受限由客户端直连)", 0
         else:
             return False, f"被控端 {core_name} 核心未处于运行状态", 0
     except Exception as e:
@@ -353,7 +353,7 @@ def test_node_connectivity(node):
                 return True, f"UDP 端口连通正常 (延迟 ~{udp_ms}ms)", udp_ms
             except Exception as e:
                 err_str = str(e)
-                if is_ipv6 or "Cannot assign requested address" in err_str or "unreachable" in err_str.lower() or getattr(e, "errno", None) in (99, 101):
+                if not is_local_node(node):
                     agent_res = check_node_via_agent_status(node)
                     if agent_res:
                         return agent_res
@@ -369,14 +369,14 @@ def test_node_connectivity(node):
         tcp_ms = int((time.time() - t0) * 1000)
     except Exception as e:
         err_str = str(e)
-        if is_ipv6 or "Cannot assign requested address" in err_str or "unreachable" in err_str.lower() or getattr(e, "errno", None) in (99, 101):
+        if not is_local_node(node):
             agent_res = check_node_via_agent_status(node)
             if agent_res:
                 return agent_res
         return False, f"TCP 连接异常: {e}", 0
 
     if res != 0:
-        if res in (99, 101) or is_ipv6:
+        if not is_local_node(node):
             agent_res = check_node_via_agent_status(node)
             if agent_res:
                 return agent_res
@@ -397,8 +397,7 @@ def test_node_connectivity(node):
                     ms = max(1, int((time.time() - t0) * 1000))
                     return True, f"连通正常，AnyTLS 握手成功 [{tls_version}] (延迟 ~{ms}ms)", ms
         except Exception as e:
-            err_str = str(e)
-            if is_ipv6 or "Cannot assign requested address" in err_str:
+            if not is_local_node(node):
                 agent_res = check_node_via_agent_status(node)
                 if agent_res:
                     return agent_res
@@ -603,14 +602,14 @@ def test_node_connectivity(node):
             if "HTTP/" in curl_res.stdout:
                 return True, f"连通正常，{proto} 握手成功 (延迟 ~{ms}ms)", ms
             else:
-                if is_ipv6:
+                if not is_local_node(node):
                     agent_res = check_node_via_agent_status(node)
                     if agent_res:
                         return agent_res
                 err = curl_res.stderr.strip() or "代理握手超时"
                 return False, f"TCP 端口已通，但 {proto} 代理握手失败: {err}", tcp_ms
         except Exception as e:
-            if is_ipv6:
+            if not is_local_node(node):
                 agent_res = check_node_via_agent_status(node)
                 if agent_res:
                     return agent_res
