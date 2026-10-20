@@ -52,6 +52,16 @@ AGENTS.md
 HHUB-商业许可证发号中心/
 license-center/
 *发号*
+scripts/deploy-license-center.sh
+systemd/license-center.service
+server/web-admin/src/components/LicenseManager.tsx
+tests/
+
+# 宣发推广、知识库与内部运维打包资料（非纯开源代码资产）
+NodeSeek发布资料/
+*发布资料*
+wiki/
+scripts/fast_release.py
 
 # Temporary scratch files
 scratch/
