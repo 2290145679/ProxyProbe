@@ -343,7 +343,7 @@ header "步骤 4/8 · 下载 ProxyProbe 代理管理程序和前端"
 # 清理旧的历史编译二进制（全面切换为纯 Python3 明文开源模式）
 rm -f "$ROOT/proxy-manager" 2>/dev/null || true
 
-# 下载开源明文核心 proxy_manager.py
+# 下载开源明文核心 proxy_manager.py 及 modules 引擎库
 info "正在下载 proxy_manager.py (开源明文运行模式)..."
 if curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py" 2>/dev/null || \
    curl -fsSL "https://ghproxy.net/${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py" 2>/dev/null || \
@@ -353,6 +353,16 @@ if curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py" 2>/de
 else
   die "无法下载 proxy_manager.py！请确认网络或访问 https://github.com/${GITHUB_REPO}"
 fi
+
+# 下载 modules 核心组件库
+info "正在下载 modules 核心引擎库..."
+mkdir -p "$ROOT/modules"
+for _mod in __init__.py agent_templates.py migration_engine.py node_engine.py subscription_engine.py telegram_engine.py user_engine.py; do
+  curl -fsSL "${GITHUB_RAW}/modules/${_mod}" -o "$ROOT/modules/${_mod}" 2>/dev/null || \
+  curl -fsSL "https://ghproxy.net/${GITHUB_RAW}/modules/${_mod}" -o "$ROOT/modules/${_mod}" 2>/dev/null || \
+  wget -qO "$ROOT/modules/${_mod}" "${GITHUB_RAW}/modules/${_mod}" 2>/dev/null || true
+done
+info "modules 核心模块已就绪"
 
 # install.sh（子节点安装脚本，供 Caddy 对外分发）
 info "正在下载 install.sh..."
@@ -415,6 +425,7 @@ After=network.target monitor-hub.service
 [Service]
 Type=simple
 User=root
+WorkingDirectory=$ROOT
 ExecStart=$PM_CMD
 Restart=always
 RestartSec=3

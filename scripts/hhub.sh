@@ -631,6 +631,12 @@ upgrade_system() {
         info "proxy_manager.py 明文脚本已更新"
     } || warn "proxy_manager.py 更新跳过或已是最新"
 
+    mkdir -p "$ROOT/modules"
+    for _mod in __init__.py agent_templates.py migration_engine.py node_engine.py subscription_engine.py telegram_engine.py user_engine.py; do
+        curl -fsSL "${GITHUB_RAW}/modules/${_mod}" -o "$ROOT/modules/${_mod}" 2>/dev/null || \
+        curl -fsSL "https://ghproxy.net/${GITHUB_RAW}/modules/${_mod}" -o "$ROOT/modules/${_mod}" 2>/dev/null || true
+    done
+
     # 清理旧的历史编译二进制并确保 proxy-manager.service 执行的是 Python3 明文
     rm -f "$ROOT/proxy-manager" 2>/dev/null || true
     if [ -f /etc/systemd/system/proxy-manager.service ]; then
