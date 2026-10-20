@@ -622,21 +622,22 @@ upgrade_system() {
         *) ARCH_HUB="amd64" ;;
     esac
 
-    # 1. 升级 proxy-manager 二进制
-    info "正在更新 proxy-manager 二进制..."
-    (curl -fsSL "${RELEASE_BASE}/proxy-manager-linux-${ARCH_HUB}" -o "$ROOT/proxy-manager.new" 2>/dev/null || \
-     curl -fsSL "${FALLBACK_BASE}/proxy-manager-linux-${ARCH_HUB}" -o "$ROOT/proxy-manager.new" 2>/dev/null) && {
-        chmod +x "$ROOT/proxy-manager.new"
-        mv -f "$ROOT/proxy-manager.new" "$ROOT/proxy-manager"
-        info "proxy-manager 二进制已更新"
-    } || warn "proxy-manager 二进制下载跳过或已是最新"
+    # 1. 升级 proxy_manager.py (开源明文运行模式)
+    info "正在更新 proxy_manager.py (开源明文)..."
+    (curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py.new" 2>/dev/null || \
+     curl -fsSL "https://ghproxy.net/${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py.new" 2>/dev/null) && {
+        chmod 755 "$ROOT/proxy_manager.py.new"
+        mv -f "$ROOT/proxy_manager.py.new" "$ROOT/proxy_manager.py"
+        info "proxy_manager.py 明文脚本已更新"
+    } || warn "proxy_manager.py 更新跳过或已是最新"
 
-    # 确保 proxy-manager.service 执行的是最新的 ELF 二进制
-    if [ -f "$ROOT/proxy-manager" ] && [ -x "$ROOT/proxy-manager" ]; then
-        if grep -q "python3.*proxy_manager\.py" /etc/systemd/system/proxy-manager.service 2>/dev/null; then
-            sed -i "s|ExecStart=.*python3.*/proxy_manager\\.py.*|ExecStart=$ROOT/proxy-manager --port 28090|" /etc/systemd/system/proxy-manager.service
+    # 清理旧的历史编译二进制并确保 proxy-manager.service 执行的是 Python3 明文
+    rm -f "$ROOT/proxy-manager" 2>/dev/null || true
+    if [ -f /etc/systemd/system/proxy-manager.service ]; then
+        if ! grep -q "python3.*proxy_manager\.py" /etc/systemd/system/proxy-manager.service 2>/dev/null; then
+            sed -i "s|ExecStart=.*|ExecStart=/usr/bin/python3 $ROOT/proxy_manager.py --port ${CUR_PM_PORT:-28090}|" /etc/systemd/system/proxy-manager.service
             systemctl daemon-reload 2>/dev/null || true
-            info "已自动将 proxy-manager 服务切换为编译二进制执行"
+            info "已自动将 proxy-manager 服务切换为 Python3 明文执行"
         fi
     fi
 
@@ -972,7 +973,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/proxyprobe
-ExecStart=/opt/proxyprobe/proxy-manager --port 28090
+ExecStart=/usr/bin/python3 /opt/proxyprobe/proxy_manager.py --port 28090
 Restart=always
 RestartSec=3
 

@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python3 /opt/monitor/proxy_manager.py
+ExecStart=/usr/bin/python3 /opt/proxyprobe/proxy_manager.py
 Restart=always
 RestartSec=3
 

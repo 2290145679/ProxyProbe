@@ -9,6 +9,9 @@ on:
       - '.github/workflows/build-binary.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-linux-amd64:
     name: Build Linux AMD64 Binary

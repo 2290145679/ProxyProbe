@@ -338,27 +338,20 @@ sleep 2
 info "monitor-hub 已启动（端口 $HUB_PORT）"
 
 # ---- 步骤 4: 下载 ProxyProbe 代理管理程序和前端 ----
-# ---- 步骤 4: 下载 ProxyProbe 代理管理程序和前端 ----
 header "步骤 4/8 · 下载 ProxyProbe 代理管理程序和前端"
 
-# 从 GitHub Release 下载编译好的二进制 proxy-manager
-_PM_BIN_URL="${RELEASE_BASE}/proxy-manager-linux-${ARCH_HUB}"
-_TMP_BIN="/tmp/proxy-manager-$$"
-HAS_BINARY=0
-info "正在下载 proxy-manager-linux-${ARCH_HUB}..."
-if curl -fsSL "$_PM_BIN_URL" -o "$_TMP_BIN" 2>/dev/null || \
-   curl -fsSL "${FALLBACK_BASE}/proxy-manager-linux-${ARCH_HUB}" -o "$_TMP_BIN" 2>/dev/null || \
-   wget -qO "$_TMP_BIN" "$_PM_BIN_URL" 2>/dev/null; then
-  chmod +x "$_TMP_BIN"
-  mv -f "$_TMP_BIN" "$ROOT/proxy-manager"
-  HAS_BINARY=1
-  info "已下载编译好的二进制管理程序 proxy-manager"
-else
-  rm -f "$_TMP_BIN"
-fi
+# 清理旧的历史编译二进制（全面切换为纯 Python3 明文开源模式）
+rm -f "$ROOT/proxy-manager" 2>/dev/null || true
 
-if [ "$HAS_BINARY" = "0" ]; then
-  die "无法下载 proxy-manager 二进制！请访问 https://github.com/${GITHUB_REPO} 确认文件存在"
+# 下载开源明文核心 proxy_manager.py
+info "正在下载 proxy_manager.py (开源明文运行模式)..."
+if curl -fsSL "${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py" 2>/dev/null || \
+   curl -fsSL "https://ghproxy.net/${GITHUB_RAW}/proxy_manager.py" -o "$ROOT/proxy_manager.py" 2>/dev/null || \
+   wget -qO "$ROOT/proxy_manager.py" "${GITHUB_RAW}/proxy_manager.py" 2>/dev/null; then
+  chmod 755 "$ROOT/proxy_manager.py"
+  info "proxy_manager.py 明文脚本已就绪"
+else
+  die "无法下载 proxy_manager.py！请确认网络或访问 https://github.com/${GITHUB_REPO}"
 fi
 
 # install.sh（子节点安装脚本，供 Caddy 对外分发）
@@ -411,13 +404,8 @@ systemctl disable proxy-manager.service 2>/dev/null || true
 rm -f /etc/systemd/system/multi-user.target.wants/proxy-manager.service
 rm -f /etc/systemd/system/proxy-manager.service
 
-if [ -f "$ROOT/proxy-manager" ] && [ -x "$ROOT/proxy-manager" ]; then
-  PM_CMD="$ROOT/proxy-manager --port $PM_PORT"
-  info "使用编译好的二进制程序运行 proxy-manager"
-else
-  PM_CMD="/usr/bin/python3 $ROOT/proxy_manager.py --port $PM_PORT"
-  info "使用 Python 脚本运行 proxy-manager"
-fi
+PM_CMD="/usr/bin/python3 $ROOT/proxy_manager.py --port $PM_PORT"
+info "使用 Python3 明文脚本运行 proxy-manager"
 
 cat > /etc/systemd/system/proxy-manager.service << PM_EOF
 [Unit]
