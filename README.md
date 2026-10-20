@@ -4,6 +4,7 @@
   <a href="https://github.com/2290145679/ProxyProbe/releases"><img src="https://img.shields.io/badge/Release-v2.5.31-blue.svg?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/Status-100%25_Open_Source-success.svg?style=flat-square" alt="Open Source">
+  <a href="https://t.me/+e6WnZExf5KE4NDE9"><img src="https://img.shields.io/badge/Telegram-Group-blue.svg?style=flat-square&logo=telegram" alt="Telegram Group"></a>
   <img src="https://img.shields.io/badge/Dual_Core-Xray_%2B_Sing--box_%2B_Realm-brightgreen.svg?style=flat-square" alt="Cores">
   <img src="https://img.shields.io/badge/Routing-Smart_Rules_Center-teal.svg?style=flat-square" alt="Smart Routing Rules">
   <img src="https://img.shields.io/badge/Subscription-Adaptive_UA-orange.svg?style=flat-square" alt="Adaptive Subscription">
@@ -138,6 +139,12 @@ hhub
 ### Q4: 节点出现偶尔显示“无法联通”但实际正常？
 - 跨国机房之间局部 IPv4 骨干网络可能存在偶发抖动或丢包；
 - ProxyProbe 内置两级自愈感知巡检机制，当主控向远程节点直接探测超时，会自动回退拉取探针 Agent 真实存活状态进行二次校验，避免面板误报假死。
+
+## 💬 官方交流群组
+
+欢迎加入官方 Telegram 交流群，一起交流 VPS 玩鸡心得、节点搭建、客户端分流规则与 Bug 反馈：
+
+👉 **[点击加入 Telegram 交流群 (https://t.me/+e6WnZExf5KE4NDE9)](https://t.me/+e6WnZExf5KE4NDE9)**
 
 ---
 

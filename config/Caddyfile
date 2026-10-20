@@ -1,4 +1,4 @@
-tz.yohoo.xyz {
+:80 {
     # 代理协议与订阅 API
     handle /api/proxy/* {
         reverse_proxy 127.0.0.1:28090
@@ -11,29 +11,30 @@ tz.yohoo.xyz {
 
     # 增强探针安装脚本与 Xray 离线分发
     handle /install.sh {
-        root * /opt/monitor/scripts
+        root * /opt/proxyprobe/scripts
         try_files /install.sh
         file_server
     }
 
     handle /Xray-linux-*.zip {
-        root * /opt/monitor/scripts
+        root * /opt/proxyprobe/scripts
         file_server
     }
 
     handle /sing-box-linux-*.tar.gz {
-        root * /opt/monitor/scripts
+        root * /opt/proxyprobe/scripts
         file_server
     }
 
     handle /realm-*.tar.gz {
-        root * /opt/monitor/scripts
+        root * /opt/proxyprobe/scripts
         file_server
     }
 
     # 后台静态资源
+    redir /admin /admin/
     handle_path /admin* {
-        root * /opt/monitor/web-admin/dist
+        root * /opt/proxyprobe/web-admin/dist
         try_files {path} /index.html
         file_server
     }

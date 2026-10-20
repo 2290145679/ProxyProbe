@@ -300,7 +300,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [form, setForm] = useState({
     server_id: "0",
     server_name: "本机",
-    server_host: "189.24.108.25",
+    server_host: "",
     name: "",
     protocol: "vless_reality",
     port: "20443",
@@ -1999,7 +1999,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                       <Label className="text-xs">落地服务器 IP / 域名</Label>
                       <Input
                         className="text-xs h-8 font-mono w-full"
-                        placeholder="如 156.226.173.102"
+                        placeholder="如 1.2.3.4 或 node.example.com"
                         value={form.remote_host}
                         onChange={e => setForm(prev => ({ ...prev, remote_host: e.target.value }))}
                         required

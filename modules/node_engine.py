@@ -34,7 +34,7 @@ SINGBOX_CERT = "/etc/sing-box/cert.pem"
 SINGBOX_KEY = "/etc/sing-box/key.pem"
 REALM_BIN = "/usr/local/bin/realm"
 REALM_CONFIG = "/etc/realm/config.toml"
-LOCAL_HOSTS = {"189.24.108.25", "127.0.0.1", "localhost", "::1", "test.yohoo.xyz", "tz.yohoo.xyz", ""}
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", ""}
 
 def ensure_server_cert():
     if not os.path.exists(SINGBOX_CERT) or not os.path.exists(SINGBOX_KEY):

@@ -78,7 +78,7 @@ def format_node_link(node, user=None, server_country_map=None):
             if proto != "ss2022":
                 pwd_str = u_pwd
 
-        host = node.get("server_host") or "189.24.108.25"
+        host = node.get("server_host") or "127.0.0.1"
         uri_host = format_host_for_uri(host)
         port = node.get("port") or 20443
         name_raw = format_node_display_name(node, server_country_map)
@@ -576,7 +576,7 @@ rules:
     names = []
     for n in nodes:
         proto = n.get("protocol")
-        host = n.get("server_host") or "189.24.108.25"
+        host = n.get("server_host") or "127.0.0.1"
         port = int(n.get("port") or 20443)
         uuid_str = n.get("uuid") or ""
         pwd_str = n.get("password") or uuid_str
@@ -915,7 +915,7 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
 
     for n in nodes:
         proto = n.get("protocol")
-        host = n.get("server_host") or "189.24.108.25"
+        host = n.get("server_host") or "127.0.0.1"
         port = int(n.get("port") or 20443)
         uuid_str = n.get("uuid") or ""
         pwd_str = n.get("password") or uuid_str

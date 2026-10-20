@@ -74,7 +74,7 @@ for _i, _arg in enumerate(sys.argv):
             PORT = int(sys.argv[_i + 1])
         except ValueError:
             pass
-LOCAL_HOSTS = {"189.24.108.25", "127.0.0.1", "localhost", "::1", "test.yohoo.xyz", "tz.yohoo.xyz", ""}
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", ""}
 
 def get_local_ip(family=socket.AF_INET):
     try:
@@ -168,7 +168,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             server_id INTEGER DEFAULT 0,
             server_name TEXT DEFAULT '本机',
-            server_host TEXT DEFAULT '189.24.108.25',
+            server_host TEXT DEFAULT '',
             name TEXT NOT NULL,
             protocol TEXT NOT NULL,
             port INTEGER NOT NULL,
@@ -672,7 +672,7 @@ def batch_create_nodes_for_server(server_id, protocols, bandwidth_limit_mbps=0, 
                 s_host = resolve_server_host(s_dict)
             else:
                 s_name = "本机"
-                s_host = get_setting("server_host", "189.24.108.25")
+                s_host = get_setting("server_host", "") or get_server_public_ip() or get_local_ip() or "127.0.0.1"
         else:
             cur = conn.execute("SELECT id, name, ip, ipv4, country FROM node WHERE id = ?", (server_id,))
             s_row = cur.fetchone()

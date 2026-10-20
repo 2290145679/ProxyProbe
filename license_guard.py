@@ -21,14 +21,11 @@ import urllib.error
 MASTER_PUBLIC_KEY_HEX = "6637fdfd836e83fd31aa7c02698ab615d882bdb7533aaf2f83359480a1a5a4c3"
 
 # 官方预留固定授权中心域名与多重容灾候选列表 (在线优先，域名解析与备用 IP 双轨保障)
-DEFAULT_AUTH_DOMAIN = "auth.yohoo.xyz"
+DEFAULT_AUTH_DOMAIN = "auth.example.com"
 DEFAULT_AUTH_SERVER = os.environ.get("PROXYPROBE_AUTH_SERVER", f"https://{DEFAULT_AUTH_DOMAIN}")
 AUTH_SERVER_CANDIDATES = [
     f"https://{DEFAULT_AUTH_DOMAIN}",
     f"http://{DEFAULT_AUTH_DOMAIN}:18888",
-    f"http://{DEFAULT_AUTH_DOMAIN}",
-    "http://189.24.108.25:18888",
-    "http://156.226.173.102:18888",
     "http://127.0.0.1:18888"
 ]
 
@@ -573,7 +570,7 @@ def save_license_key(db_conn, license_key: str, auth_url: str = DEFAULT_AUTH_SER
         # 1.1 先对短码进行 80-bit 紧凑防伪解密预校验
         decoded, dec_err = decode_short_code(license_key, curr_mid)
 
-        # 1.2 在线优先激活：依次遍历授权中心候选列表 (优先域名 auth.yohoo.xyz，备用 IP)
+        # 1.2 在线优先激活：依次遍历授权中心候选列表 (优先域名 auth.example.com，备用 IP)
         candidate_urls = [auth_url] + [c for c in AUTH_SERVER_CANDIDATES if c != auth_url]
         online_success = False
         online_reject_msg = None

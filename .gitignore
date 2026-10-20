@@ -19,7 +19,8 @@ database/*.sqlite
 database/*.sqlite3
 # Keep SQL schema definitions
 !database/schema.sql
-!database/dump.sql
+database/*.sql
+!database/schema.sql
 
 # Rust build output
 target/

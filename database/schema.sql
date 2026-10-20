@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS proxy_node (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   server_id INTEGER DEFAULT 0,             -- 所属探针服务器 ID (0 为本机)
   server_name TEXT DEFAULT '本机',          -- 服务器显示名称
-  server_host TEXT DEFAULT '189.24.108.25', -- 服务器连接公网 IP / 域名
+  server_host TEXT DEFAULT '',              -- 服务器连接公网 IP / 域名
   name TEXT NOT NULL,                      -- 节点名称（如：新加坡-VLESS-01）
   protocol TEXT NOT NULL,                  -- 协议类型 (vless_reality / vless_ws / trojan)
   port INTEGER NOT NULL,                   -- 节点监听端口

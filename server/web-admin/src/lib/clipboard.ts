@@ -1,6 +1,6 @@
 /**
  * 跨浏览器与跨协议 (HTTP / HTTPS) 通用剪贴板复制工具
- * 完美解决非安全上下文 (如纯 IP 访问 http://156.226.173.102:80) 下
+ * 完美解决非安全上下文 (如纯 IP 访问 http://1.2.3.4:80) 下
  * 现代浏览器禁用 navigator.clipboard 导致 writeText 报 undefined 错误的问题。
  */
 export async function copyToClipboard(text: string): Promise<boolean> {
