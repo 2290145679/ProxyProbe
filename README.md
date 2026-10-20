@@ -79,7 +79,7 @@
 > 推荐操作系统：**Ubuntu 22.04+ / Debian 11+**。支持纯 IP 安装或预先解析域名。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/deploy-hub.sh | bash
+curl -fsSL https://raw.githubusercontent.com/2290145679/ProxyProbe/main/deploy-hub.sh | bash
 ```
 
 脚本会交互式引导完成配置：

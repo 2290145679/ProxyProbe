@@ -35,9 +35,9 @@ esac
 # ---- 项目配置 ----
 GITHUB_REPO="2290145679/ProxyProbe"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-# 公开发布仓库（源码仓库私有，所有分发文件在此公开仓库）
-RELEASE_REPO="2290145679/ProxyProbe-Release"
-RELEASE_BASE="https://raw.githubusercontent.com/${RELEASE_REPO}/main"
+GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
+RELEASE_BASE="https://github.com/${GITHUB_REPO}/releases/latest/download"
+FALLBACK_BASE="https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main"
 
 ROOT="/opt/proxyprobe"
 DATA="$ROOT/data"
@@ -279,6 +279,7 @@ _TMP_HUB="/tmp/monitor-hub-$$"
 rm -f "$_TMP_HUB"
 _DOWNLOAD_URL="${RELEASE_BASE}/monitor-hub-linux-${ARCH_HUB}"
 if curl -fsSL "$_DOWNLOAD_URL" -o "$_TMP_HUB" 2>/dev/null || \
+   curl -fsSL "${FALLBACK_BASE}/monitor-hub-linux-${ARCH_HUB}" -o "$_TMP_HUB" 2>/dev/null || \
    wget -qO "$_TMP_HUB" "$_DOWNLOAD_URL" 2>/dev/null || \
    python3 -c "import urllib.request; urllib.request.urlretrieve('$_DOWNLOAD_URL', '$_TMP_HUB')" 2>/dev/null; then
   chmod +x "$_TMP_HUB"
@@ -286,7 +287,7 @@ if curl -fsSL "$_DOWNLOAD_URL" -o "$_TMP_HUB" 2>/dev/null || \
   info "monitor-hub 已就绪"
 else
   rm -f "$_TMP_HUB"
-  die "下载失败！请检查网络，或访问 https://github.com/${RELEASE_REPO} 确认文件存在"
+  die "下载失败！请检查网络，或访问 https://github.com/${GITHUB_REPO}/releases 确认文件存在"
 fi
 
 # 创建系统用户
@@ -340,12 +341,14 @@ info "monitor-hub 已启动（端口 $HUB_PORT）"
 # ---- 步骤 4: 下载 ProxyProbe 代理管理程序和前端 ----
 header "步骤 4/8 · 下载 ProxyProbe 代理管理程序和前端"
 
-# 从公开发布仓库下载编译好的二进制 proxy-manager
+# 从 GitHub Release 下载编译好的二进制 proxy-manager
 _PM_BIN_URL="${RELEASE_BASE}/proxy-manager-linux-${ARCH_HUB}"
 _TMP_BIN="/tmp/proxy-manager-$$"
 HAS_BINARY=0
 info "正在下载 proxy-manager-linux-${ARCH_HUB}..."
-if curl -fsSL "$_PM_BIN_URL" -o "$_TMP_BIN" 2>/dev/null || wget -qO "$_TMP_BIN" "$_PM_BIN_URL" 2>/dev/null; then
+if curl -fsSL "$_PM_BIN_URL" -o "$_TMP_BIN" 2>/dev/null || \
+   curl -fsSL "${FALLBACK_BASE}/proxy-manager-linux-${ARCH_HUB}" -o "$_TMP_BIN" 2>/dev/null || \
+   wget -qO "$_TMP_BIN" "$_PM_BIN_URL" 2>/dev/null; then
   chmod +x "$_TMP_BIN"
   mv -f "$_TMP_BIN" "$ROOT/proxy-manager"
   HAS_BINARY=1
@@ -355,32 +358,36 @@ else
 fi
 
 if [ "$HAS_BINARY" = "0" ]; then
-  die "无法下载 proxy-manager 二进制！请访问 https://github.com/${RELEASE_REPO} 确认文件存在"
+  die "无法下载 proxy-manager 二进制！请访问 https://github.com/${GITHUB_REPO} 确认文件存在"
 fi
 
-# install.sh（子节点安装脚本，供 Caddy 对外分发）—— 从公开发行库下载
+# install.sh（子节点安装脚本，供 Caddy 对外分发）
 info "正在下载 install.sh..."
-curl -fsSL "${RELEASE_BASE}/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || \
-  wget -qO "$SCRIPTS_DIR/install.sh" "${RELEASE_BASE}/install.sh" 2>/dev/null || true
+curl -fsSL "${GITHUB_RAW}/scripts/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || \
+  curl -fsSL "${RELEASE_BASE}/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || \
+  curl -fsSL "${FALLBACK_BASE}/install.sh" -o "$SCRIPTS_DIR/install.sh" 2>/dev/null || true
 chmod +x "$SCRIPTS_DIR/install.sh" 2>/dev/null || true
 
-# hhub（运维控制台 CLI 工具）—— 从公开发行库下载
+# hhub（运维控制台 CLI 工具）
 info "正在安装 hhub 终端控制台工具..."
-curl -fsSL "${RELEASE_BASE}/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || \
-  wget -qO "/usr/local/bin/hhub" "${RELEASE_BASE}/hhub.sh" 2>/dev/null || true
+curl -fsSL "${GITHUB_RAW}/scripts/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || \
+  curl -fsSL "${RELEASE_BASE}/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || \
+  curl -fsSL "${FALLBACK_BASE}/hhub.sh" -o "/usr/local/bin/hhub" 2>/dev/null || true
 chmod +x "/usr/local/bin/hhub" 2>/dev/null || true
 
-# VERSION（系统版本标识）—— 从公开发行库下载并持久化写入，防更新误报
+# VERSION（系统版本标识）
 info "正在写入系统版本标识..."
-curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
-  wget -qO "$ROOT/VERSION" "${RELEASE_BASE}/VERSION" 2>/dev/null || true
-[ -s "$ROOT/VERSION" ] || echo "v2.5.27" > "$ROOT/VERSION"
+curl -fsSL "${GITHUB_RAW}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
+  curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
+  curl -fsSL "${FALLBACK_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || true
+[ -s "$ROOT/VERSION" ] || echo "v2.5.31" > "$ROOT/VERSION"
 
-# 前端 dist —— 从公开发行库下载 web-admin-dist.tar.gz
+# 前端 dist
 info "正在下载前端资源..."
 mkdir -p "$WEB_DIST"
 _TMP_DIST="/tmp/web-admin-dist-$$.tar.gz"
 if curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
+   curl -fsSL "${FALLBACK_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
    wget -qO "$_TMP_DIST" "${RELEASE_BASE}/web-admin-dist.tar.gz" 2>/dev/null; then
   tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null
   # 兼容展平：若历史压缩包包含 dist/ 子层级，自动移动至根目录
@@ -392,7 +399,7 @@ if curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/nul
   rm -f "$_TMP_DIST"
 else
   rm -f "$_TMP_DIST"
-  warn "前端资源下载失败，请检查 https://github.com/${RELEASE_REPO} 中是否有 web-admin-dist.tar.gz"
+  warn "前端资源下载失败，请检查 https://github.com/${GITHUB_REPO} 中是否有 web-admin-dist.tar.gz"
 fi
 
 [ -f "/usr/local/bin/hhub" ] && cp "/usr/local/bin/hhub" "$SCRIPTS_DIR/hhub.sh" 2>/dev/null || true

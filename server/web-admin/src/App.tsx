@@ -156,7 +156,7 @@ export default function App() {
         })
         .catch(() => {
           // 后端未提供接口时，降级尝试直连 GitHub Release 获取最新版本
-          fetch("https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/version.json")
+          fetch("https://raw.githubusercontent.com/2290145679/ProxyProbe/main/version.json")
             .then((r) => r.json())
             .then((vData) => {
               if (vData?.version) {

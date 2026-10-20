@@ -1245,7 +1245,7 @@ def check_system_update(force=False):
     release_date = ""
     title = ""
 
-    v_json_url = "https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/version.json"
+    v_json_url = "https://raw.githubusercontent.com/2290145679/ProxyProbe/main/version.json"
     req = urllib.request.Request(v_json_url, headers={"User-Agent": f"ProxyProbe/{cur_ver}"})
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -1256,7 +1256,7 @@ def check_system_update(force=False):
             title = v_data.get("title") or ""
     except Exception:
         try:
-            v_raw_url = "https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/VERSION"
+            v_raw_url = "https://raw.githubusercontent.com/2290145679/ProxyProbe/main/VERSION"
             req2 = urllib.request.Request(v_raw_url, headers={"User-Agent": f"ProxyProbe/{cur_ver}"})
             with urllib.request.urlopen(req2, timeout=5) as resp2:
                 latest_ver = resp2.read().decode("utf-8").strip() or cur_ver
@@ -1282,7 +1282,7 @@ def check_system_update(force=False):
         "title": title or f"ProxyProbe {latest_ver} 最新版本",
         "changelog": changelog,
         "release_date": release_date,
-        "release_url": "https://github.com/2290145679/ProxyProbe-Release"
+        "release_url": "https://github.com/2290145679/ProxyProbe"
     }
 
     _update_cache["checked_at"] = now

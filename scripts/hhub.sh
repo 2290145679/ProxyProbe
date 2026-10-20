@@ -28,9 +28,8 @@ WEB_DIST="$ROOT/web-admin/dist"
 GITHUB_REPO="2290145679/ProxyProbe"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-# 公开发布仓库（分发资源）
-RELEASE_REPO="2290145679/ProxyProbe-Release"
-RELEASE_BASE="https://raw.githubusercontent.com/${RELEASE_REPO}/main"
+RELEASE_BASE="https://github.com/${GITHUB_REPO}/releases/latest/download"
+FALLBACK_BASE="https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main"
 
 _ensure_caddy_runtime_dir() {
     mkdir -p /var/lib/caddy
@@ -625,8 +624,8 @@ upgrade_system() {
 
     # 1. 升级 proxy-manager 二进制
     info "正在更新 proxy-manager 二进制..."
-    curl -fsSL "${RELEASE_BASE}/proxy-manager-linux-${ARCH_HUB}" \
-        -o "$ROOT/proxy-manager.new" 2>/dev/null && {
+    (curl -fsSL "${RELEASE_BASE}/proxy-manager-linux-${ARCH_HUB}" -o "$ROOT/proxy-manager.new" 2>/dev/null || \
+     curl -fsSL "${FALLBACK_BASE}/proxy-manager-linux-${ARCH_HUB}" -o "$ROOT/proxy-manager.new" 2>/dev/null) && {
         chmod +x "$ROOT/proxy-manager.new"
         mv -f "$ROOT/proxy-manager.new" "$ROOT/proxy-manager"
         info "proxy-manager 二进制已更新"
@@ -641,19 +640,24 @@ upgrade_system() {
         fi
     fi
 
-    # 2. 更新 install.sh（从 Release 库）
-    curl -fsSL "${RELEASE_BASE}/install.sh" -o "$SCRIPTS_DIR/install.sh.new" 2>/dev/null && \
+    # 2. 更新 install.sh
+    (curl -fsSL "${GITHUB_RAW}/scripts/install.sh" -o "$SCRIPTS_DIR/install.sh.new" 2>/dev/null || \
+     curl -fsSL "${RELEASE_BASE}/install.sh" -o "$SCRIPTS_DIR/install.sh.new" 2>/dev/null || \
+     curl -fsSL "${FALLBACK_BASE}/install.sh" -o "$SCRIPTS_DIR/install.sh.new" 2>/dev/null) && \
         mv -f "$SCRIPTS_DIR/install.sh.new" "$SCRIPTS_DIR/install.sh" && \
         chmod +x "$SCRIPTS_DIR/install.sh" && info "install.sh 已更新" || true
 
-    # 3. 更新 hhub 控制台脚本本身（从 Release 库）
-    curl -fsSL "${RELEASE_BASE}/hhub.sh" -o "/usr/local/bin/hhub.new" 2>/dev/null && \
+    # 3. 更新 hhub 控制台脚本本身
+    (curl -fsSL "${GITHUB_RAW}/scripts/hhub.sh" -o "/usr/local/bin/hhub.new" 2>/dev/null || \
+     curl -fsSL "${RELEASE_BASE}/hhub.sh" -o "/usr/local/bin/hhub.new" 2>/dev/null || \
+     curl -fsSL "${FALLBACK_BASE}/hhub.sh" -o "/usr/local/bin/hhub.new" 2>/dev/null) && \
         mv -f "/usr/local/bin/hhub.new" "/usr/local/bin/hhub" && \
         chmod +x "/usr/local/bin/hhub" && info "hhub 控制台已更新" || true
 
-    # 4. 更新前端 dist（从 Release 库下载 tar.gz）
+    # 4. 更新前端 dist
     _TMP_DIST="/tmp/web-admin-dist-upgrade-$$.tar.gz"
-    if curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null; then
+    if curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
+       curl -fsSL "${FALLBACK_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null; then
         tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null
         # 兼容展平：若历史压缩包包含 dist/ 子层级，自动移动至根目录
         if [ -d "$WEB_DIST/dist" ] && [ -f "$WEB_DIST/dist/index.html" ]; then
@@ -667,10 +671,11 @@ upgrade_system() {
         warn "前端资源下载跳过"
     fi
 
-    # 4.1 更新探针前台主题 web-theme dist（从 Release 库下载 tar.gz）
+    # 4.1 更新探针前台主题 web-theme dist
     _THEME_DIST="$DATA/themes/default/dist"
     _TMP_THEME="/tmp/web-theme-dist-upgrade-$$.tar.gz"
-    if curl -fsSL "${RELEASE_BASE}/web-theme-dist.tar.gz" -o "$_TMP_THEME" 2>/dev/null; then
+    if curl -fsSL "${RELEASE_BASE}/web-theme-dist.tar.gz" -o "$_TMP_THEME" 2>/dev/null || \
+       curl -fsSL "${FALLBACK_BASE}/web-theme-dist.tar.gz" -o "$_TMP_THEME" 2>/dev/null; then
         mkdir -p "$_THEME_DIST"
         tar -xzf "$_TMP_THEME" -C "$_THEME_DIST" 2>/dev/null
         if [ -d "$_THEME_DIST/dist" ] && [ -f "$_THEME_DIST/dist/index.html" ]; then
@@ -685,16 +690,18 @@ upgrade_system() {
 
     # 5. 更新 monitor-hub 核心二进制
     info "正在更新 monitor-hub 探针核心二进制..."
-    curl -fsSL "${RELEASE_BASE}/monitor-hub-linux-${ARCH_HUB}" \
-        -o "$ROOT/monitor-hub.new" 2>/dev/null && {
+    (curl -fsSL "${RELEASE_BASE}/monitor-hub-linux-${ARCH_HUB}" -o "$ROOT/monitor-hub.new" 2>/dev/null || \
+     curl -fsSL "${FALLBACK_BASE}/monitor-hub-linux-${ARCH_HUB}" -o "$ROOT/monitor-hub.new" 2>/dev/null) && {
         chmod +x "$ROOT/monitor-hub.new"
         mv -f "$ROOT/monitor-hub.new" "$ROOT/monitor-hub"
         info "monitor-hub 核心已更新"
     } || warn "monitor-hub 下载跳过或已是最新"
 
     # 6. 更新版本标识文件
-    curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || true
-    [ -s "$ROOT/VERSION" ] || echo "v2.5.27" > "$ROOT/VERSION"
+    curl -fsSL "${GITHUB_RAW}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
+    curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
+    curl -fsSL "${FALLBACK_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || true
+    [ -s "$ROOT/VERSION" ] || echo "v2.5.31" > "$ROOT/VERSION"
 
     # 确保 Caddyfile 路由配置正确
     if [ -f /etc/caddy/Caddyfile ]; then

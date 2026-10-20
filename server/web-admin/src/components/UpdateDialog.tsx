@@ -87,7 +87,7 @@ export function UpdateDialog({
       // 如果后端接口未能成功返回（例如旧版实例未包含该接口），尝试前端直连 GitHub Release version.json
       if (!fetchedData) {
         try {
-          const ghRes = await fetch("https://raw.githubusercontent.com/2290145679/ProxyProbe-Release/main/version.json")
+          const ghRes = await fetch("https://raw.githubusercontent.com/2290145679/ProxyProbe/main/version.json")
           if (ghRes.ok) {
             const vData = await ghRes.json()
             const cur = info?.current_version || "v2.5.0"

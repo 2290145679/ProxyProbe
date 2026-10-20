@@ -87,26 +87,11 @@ jobs:
           name: proxy-manager-linux-arm64
           path: dist-release
 
-      - name: Push binaries to ProxyProbe-Release
+      - name: Upload to GitHub Release
         env:
-          RELEASE_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$RELEASE_TOKEN" ]; then
-            echo "RELEASE_PAT is not set, skipping automatic release push."
-            exit 0
-          fi
-          git config --global user.name "ProxyProbe Release Bot"
-          git config --global user.email "release-bot@proxyprobe.internal"
-          git clone "https://${RELEASE_TOKEN}@github.com/2290145679/ProxyProbe-Release.git" release-repo
-          cp -f dist-release/proxy-manager-linux-amd64 release-repo/
-          cp -f dist-release/proxy-manager-linux-arm64 release-repo/
-          chmod +x release-repo/proxy-manager-linux-*
-          cd release-repo
-          git add proxy-manager-linux-amd64 proxy-manager-linux-arm64
-          if git diff --staged --quiet; then
-            echo "No changes in binaries."
-          else
-            git commit -m "release: 自动化构建并发布 proxy-manager 双架构二进制 (amd64 / arm64)"
-            git push origin main
-            echo "Successfully updated ProxyProbe-Release!"
-          fi
+          LATEST_TAG=$(gh release view --json tagName -q .tagName 2>/dev/null || echo "v2.5.31")
+          echo "Uploading binaries to release $LATEST_TAG..."
+          gh release upload "$LATEST_TAG" dist-release/proxy-manager-linux-amd64 dist-release/proxy-manager-linux-arm64 --clobber
+          echo "Successfully updated ProxyProbe release assets!"
