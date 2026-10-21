@@ -663,7 +663,9 @@ upgrade_system() {
 
     # 4. 更新前端 dist
     _TMP_DIST="/tmp/web-admin-dist-upgrade-$$.tar.gz"
-    if curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
+    if curl -fsSL "${GITHUB_RAW}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
+       curl -fsSL "https://ghproxy.net/${GITHUB_RAW}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
+       curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
        curl -fsSL "${FALLBACK_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null; then
         tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null
         # 兼容展平：若历史压缩包包含 dist/ 子层级，自动移动至根目录
@@ -708,7 +710,7 @@ upgrade_system() {
     curl -fsSL "${GITHUB_RAW}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
     curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
     curl -fsSL "${FALLBACK_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || true
-    [ -s "$ROOT/VERSION" ] || echo "v2.5.31" > "$ROOT/VERSION"
+    [ -s "$ROOT/VERSION" ] || echo "v2.5.32" > "$ROOT/VERSION"
 
     # 确保 Caddyfile 路由配置正确
     if [ -f /etc/caddy/Caddyfile ]; then

@@ -41,6 +41,7 @@ Thumbs.db
 # Large pre-downloaded archive files
 *.zip
 *.tar.gz
+!web-admin-dist.tar.gz
 
 # Local Handover & Internal Notes (Do not push to GitHub)
 HANDOVER.md

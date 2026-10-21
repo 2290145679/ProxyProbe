@@ -383,13 +383,15 @@ info "正在写入系统版本标识..."
 curl -fsSL "${GITHUB_RAW}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
   curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
   curl -fsSL "${FALLBACK_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || true
-[ -s "$ROOT/VERSION" ] || echo "v2.5.31" > "$ROOT/VERSION"
+[ -s "$ROOT/VERSION" ] || echo "v2.5.32" > "$ROOT/VERSION"
 
 # 前端 dist
 info "正在下载前端资源..."
 mkdir -p "$WEB_DIST"
 _TMP_DIST="/tmp/web-admin-dist-$$.tar.gz"
-if curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
+if curl -fsSL "${GITHUB_RAW}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
+   curl -fsSL "https://ghproxy.net/${GITHUB_RAW}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
+   curl -fsSL "${RELEASE_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
    curl -fsSL "${FALLBACK_BASE}/web-admin-dist.tar.gz" -o "$_TMP_DIST" 2>/dev/null || \
    wget -qO "$_TMP_DIST" "${RELEASE_BASE}/web-admin-dist.tar.gz" 2>/dev/null; then
   tar -xzf "$_TMP_DIST" -C "$WEB_DIST" 2>/dev/null

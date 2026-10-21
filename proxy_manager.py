@@ -409,26 +409,7 @@ def init_db():
                 conn.execute(f"ALTER TABLE node_proxy_status ADD COLUMN {col_name} {col_type}")
             except Exception:
                 pass
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS node_unlock_status (
-            node_id INTEGER PRIMARY KEY,
-            netflix_ok INTEGER DEFAULT 0,
-            netflix_msg TEXT DEFAULT '',
-            chatgpt_ok INTEGER DEFAULT 0,
-            chatgpt_msg TEXT DEFAULT '',
-            youtube_ok INTEGER DEFAULT 0,
-            youtube_msg TEXT DEFAULT '',
-            disney_ok INTEGER DEFAULT 0,
-            disney_msg TEXT DEFAULT '',
-            region TEXT DEFAULT '',
-            data_json TEXT DEFAULT '',
-            updated_at INTEGER DEFAULT 0
-        )
-        """)
-        try:
-            conn.execute("ALTER TABLE node_unlock_status ADD COLUMN data_json TEXT DEFAULT ''")
-        except Exception:
-            pass
+
         conn.execute("""
         CREATE TABLE IF NOT EXISTS setting (
             key TEXT PRIMARY KEY,
@@ -803,227 +784,7 @@ def verify_password(password, stored_hash):
     expected = sha256((salt + password).encode("utf-8")).hexdigest()
     return secrets.compare_digest(h, expected)
 
-# =============================================================================
-# 流媒体与 AI 解锁检测（支持 Gemini、ChatGPT、Claude、Netflix 等预设与自定义扩展）
-# =============================================================================
 
-DEFAULT_UNLOCK_PRESETS = [
-    {"id": "gemini", "name": "Gemini", "shortName": "Gemini", "category": "ai", "color": "blue", "desc": "Google Gemini AI 大模型"},
-    {"id": "chatgpt", "name": "ChatGPT", "shortName": "GPT", "category": "ai", "color": "emerald", "desc": "OpenAI ChatGPT Web & App"},
-    {"id": "claude", "name": "Claude", "shortName": "Claude", "category": "ai", "color": "amber", "desc": "Anthropic Claude AI"},
-    {"id": "netflix", "name": "Netflix", "shortName": "Netflix", "category": "media", "color": "rose", "desc": "Netflix 原生/自制全解锁"},
-    {"id": "youtube", "name": "YouTube", "shortName": "YouTube", "category": "media", "color": "red", "desc": "YouTube Premium 会员服务"},
-    {"id": "disney", "name": "Disney+", "shortName": "Disney+", "category": "media", "color": "sky", "desc": "Disney+ 区域流媒体服务"},
-    {"id": "tiktok", "name": "TikTok", "shortName": "TikTok", "category": "media", "color": "purple", "desc": "TikTok 国际版视频"},
-    {"id": "spotify", "name": "Spotify", "shortName": "Spotify", "category": "media", "color": "green", "desc": "Spotify 音乐服务"}
-]
-
-def get_unlock_config():
-    """获取当前生效的检测配置与启用列表"""
-    try:
-        raw_enabled = get_setting("unlock_enabled_items", "")
-        if raw_enabled:
-            enabled = json.loads(raw_enabled)
-        else:
-            enabled = ["gemini", "chatgpt", "netflix", "youtube"]
-    except Exception:
-        enabled = ["gemini", "chatgpt", "netflix", "youtube"]
-
-    try:
-        raw_custom = get_setting("unlock_custom_items", "")
-        custom = json.loads(raw_custom) if raw_custom else []
-    except Exception:
-        custom = []
-
-    return enabled, custom
-
-def check_single_unlock_item(item_id: str, custom_info=None):
-    """检测单一预设项或自定义 URL 项"""
-    import ssl
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    headers = {"User-Agent": ua}
-
-    if item_id == "gemini":
-        try:
-            req = urllib.request.Request("https://gemini.google.com/", headers=headers)
-            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
-                url = resp.geturl()
-                if "error" in url or "unsupported" in url:
-                    return {"ok": False, "msg": "地区受限", "region": ""}
-                return {"ok": True, "msg": "完整可用", "region": ""}
-        except Exception:
-            return {"ok": False, "msg": "连接超时", "region": ""}
-
-    elif item_id == "chatgpt":
-        try:
-            req = urllib.request.Request("https://chatgpt.com/cdn-cgi/trace", headers=headers)
-            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
-                text = resp.read().decode("utf-8", errors="ignore")
-                loc = ""
-                for line in text.splitlines():
-                    if line.startswith("loc="):
-                        loc = line.split("=")[1].strip()
-                if loc:
-                    return {"ok": True, "msg": f"支持 ({loc})", "region": loc}
-                return {"ok": True, "msg": "支持", "region": ""}
-        except Exception:
-            try:
-                req2 = urllib.request.Request("https://ios.chat.openai.com/", headers=headers)
-                with urllib.request.urlopen(req2, timeout=3.5, context=ctx) as resp2:
-                    return {"ok": True, "msg": "支持", "region": ""}
-            except Exception:
-                return {"ok": False, "msg": "IP 受阻", "region": ""}
-
-    elif item_id == "claude":
-        try:
-            req = urllib.request.Request("https://claude.ai/", headers=headers)
-            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
-                url = resp.geturl()
-                if "unavailable" in url:
-                    return {"ok": False, "msg": "地区受限", "region": ""}
-                return {"ok": True, "msg": "可用", "region": ""}
-        except urllib.error.HTTPError as e:
-            if e.code in (403, 451):
-                return {"ok": False, "msg": "地区封锁", "region": ""}
-            return {"ok": False, "msg": f"HTTP {e.code}", "region": ""}
-        except Exception:
-            return {"ok": False, "msg": "连接超时", "region": ""}
-
-    elif item_id == "netflix":
-        try:
-            req = urllib.request.Request("https://www.netflix.com/title/80018499", headers=headers)
-            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
-                if resp.getcode() == 200:
-                    return {"ok": True, "msg": "原生全解锁", "region": ""}
-                return {"ok": False, "msg": f"HTTP {resp.getcode()}", "region": ""}
-        except urllib.error.HTTPError as e:
-            if e.code in (403, 404):
-                return {"ok": False, "msg": "未解锁", "region": ""}
-            return {"ok": False, "msg": f"HTTP {e.code}", "region": ""}
-        except Exception:
-            return {"ok": False, "msg": "连接超时", "region": ""}
-
-    elif item_id == "youtube":
-        try:
-            req = urllib.request.Request("https://www.youtube.com/premium", headers=headers)
-            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
-                content = resp.read().decode("utf-8", errors="ignore")
-                if "Premium is not available" in content:
-                    return {"ok": False, "msg": "不支持", "region": ""}
-                return {"ok": True, "msg": "支持 Premium", "region": ""}
-        except Exception:
-            return {"ok": False, "msg": "连接超时", "region": ""}
-
-    elif item_id == "disney":
-        try:
-            req = urllib.request.Request("https://www.disneyplus.com/", headers=headers)
-            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
-                url = resp.geturl()
-                if "unavailable" in url:
-                    return {"ok": False, "msg": "地区不支持", "region": ""}
-                return {"ok": True, "msg": "支持 Disney+", "region": ""}
-        except urllib.error.HTTPError as e:
-            if e.code in (403, 451):
-                return {"ok": False, "msg": "地区封锁", "region": ""}
-            return {"ok": False, "msg": f"HTTP {e.code}", "region": ""}
-        except Exception:
-            return {"ok": False, "msg": "连接超时", "region": ""}
-
-    elif item_id == "tiktok":
-        try:
-            req = urllib.request.Request("https://www.tiktok.com/about?lang=en", headers=headers)
-            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
-                if resp.getcode() == 200:
-                    return {"ok": True, "msg": "可用", "region": ""}
-                return {"ok": False, "msg": f"HTTP {resp.getcode()}", "region": ""}
-        except Exception:
-            return {"ok": False, "msg": "连接超时", "region": ""}
-
-    elif item_id == "spotify":
-        try:
-            req = urllib.request.Request("https://open.spotify.com/", headers=headers)
-            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
-                if resp.getcode() == 200:
-                    return {"ok": True, "msg": "可用", "region": ""}
-                return {"ok": False, "msg": f"HTTP {resp.getcode()}", "region": ""}
-        except Exception:
-            return {"ok": False, "msg": "连接超时", "region": ""}
-
-    elif custom_info and custom_info.get("url"):
-        try:
-            target_url = custom_info["url"]
-            req = urllib.request.Request(target_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
-                if resp.getcode() in (200, 204, 301, 302):
-                    return {"ok": True, "msg": f"正常响应 ({resp.getcode()})", "region": ""}
-                return {"ok": False, "msg": f"HTTP {resp.getcode()}", "region": ""}
-        except Exception as e:
-            return {"ok": False, "msg": "无法访问", "region": ""}
-
-    return {"ok": False, "msg": "未检测", "region": ""}
-
-def check_node_streaming_unlock(node_or_server, target_items=None):
-    """
-    根据用户配置动态并发检测流媒体与 AI 项
-    """
-    from concurrent.futures import ThreadPoolExecutor
-
-    enabled, custom = get_unlock_config()
-    items_to_check = target_items or enabled
-
-    results = {
-        "updated_at": int(time.time()),
-        "region": ""
-    }
-
-    # 预设任务映射
-    def run_check(key):
-        if key.startswith("custom_"):
-            # 自定义项
-            cust_obj = next((c for c in custom if c.get("id") == key), None)
-            return key, check_single_unlock_item(key, cust_obj)
-        else:
-            return key, check_single_unlock_item(key)
-
-    with ThreadPoolExecutor(max_workers=min(len(items_to_check) + 1, 8)) as executor:
-        futures = [executor.submit(run_check, k) for k in items_to_check]
-        for f in futures:
-            k, r = f.result()
-            results[k] = r
-            if r.get("region") and not results.get("region"):
-                results["region"] = r["region"]
-
-    return results
-
-def save_node_unlock_status(node_id: int, res: dict):
-    try:
-        conn = get_db()
-        data_json = json.dumps(res, ensure_ascii=False)
-        nf = res.get("netflix", {})
-        gpt = res.get("chatgpt", {})
-        yt = res.get("youtube", {})
-        dis = res.get("disney", {})
-        conn.execute("""
-            INSERT OR REPLACE INTO node_unlock_status
-            (node_id, netflix_ok, netflix_msg, chatgpt_ok, chatgpt_msg, youtube_ok, youtube_msg, disney_ok, disney_msg, region, updated_at, data_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            node_id,
-            1 if nf.get("ok") else 0, nf.get("msg", ""),
-            1 if gpt.get("ok") else 0, gpt.get("msg", ""),
-            1 if yt.get("ok") else 0, yt.get("msg", ""),
-            1 if dis.get("ok") else 0, dis.get("msg", ""),
-            res.get("region", ""),
-            res.get("updated_at", int(time.time())),
-            data_json
-        ))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"[save_node_unlock_status error] {e}")
 
 def get_current_user(headers):
     try:
@@ -1177,7 +938,7 @@ from modules.subscription_engine import (
 init_subscription_context(get_db_fn=get_db, get_setting_fn=get_setting)
 
 
-CURRENT_VERSION = "v2.5.29"
+CURRENT_VERSION = "v2.5.32"
 
 def is_legacy_migration_needed() -> bool:
     """
@@ -2434,77 +2195,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             })
             return
 
-        if path == "/api/proxy/unlock/config":
-            enabled, custom = get_unlock_config()
-            show_badges = get_setting("unlock_show_badges", "0") == "1"
-            self.send_json({
-                "ok": True,
-                "enabled": enabled,
-                "show_badges": show_badges,
-                "presets": DEFAULT_UNLOCK_PRESETS,
-                "custom": custom
-            })
-            return
 
-        if path == "/api/proxy/unlock-status":
-            conn = get_db()
-            conn.row_factory = sqlite3.Row
-            cur = conn.execute("SELECT * FROM node_unlock_status")
-            status_map = {}
-            for r in cur.fetchall():
-                row = dict(r)
-                nid = str(row.get("node_id"))
-                raw_json = row.get("data_json")
-                parsed = None
-                if raw_json:
-                    try:
-                        parsed = json.loads(raw_json)
-                    except Exception:
-                        pass
-                if parsed and isinstance(parsed, dict):
-                    status_map[nid] = parsed
-                else:
-                    status_map[nid] = {
-                        "netflix": {"ok": bool(row.get("netflix_ok")), "msg": row.get("netflix_msg", "")},
-                        "chatgpt": {"ok": bool(row.get("chatgpt_ok")), "msg": row.get("chatgpt_msg", "")},
-                        "youtube": {"ok": bool(row.get("youtube_ok")), "msg": row.get("youtube_msg", "")},
-                        "disney":  {"ok": bool(row.get("disney_ok")), "msg": row.get("disney_msg", "")},
-                        "region":  row.get("region", ""),
-                        "updated_at": row.get("updated_at", 0)
-                    }
-            conn.close()
-            enabled, custom = get_unlock_config()
-            show_badges = get_setting("unlock_show_badges", "1") == "1"
-            self.send_json({
-                "ok": True,
-                "status": status_map,
-                "enabled": enabled,
-                "show_badges": show_badges,
-                "presets": DEFAULT_UNLOCK_PRESETS,
-                "custom": custom
-            })
-            return
-
-        if path.startswith("/api/proxy/nodes/") and path.endswith("/unlock-test"):
-            try:
-                node_id = int(path.split("/")[-2])
-            except ValueError:
-                self.send_json({"ok": False, "message": "无效的节点ID"}, 400)
-                return
-            conn = get_db()
-            cur = conn.execute("SELECT * FROM proxy_node WHERE id = ?", (node_id,))
-            row = cur.fetchone()
-            if not row:
-                conn.close()
-                self.send_json({"ok": False, "message": "节点不存在"}, 404)
-                return
-            node = dict(row)
-            conn.close()
-
-            unlock_res = check_node_streaming_unlock(node)
-            save_node_unlock_status(node_id, unlock_res)
-            self.send_json({"ok": True, "result": unlock_res})
-            return
 
         if path == "/api/proxy/notify/telegram/settings":
             token = get_setting("notify_telegram_token", "").strip()
@@ -3786,39 +3477,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "message": "定时备份配置已保存"})
             return
 
-        if path == "/api/proxy/unlock/config":
-            enabled = req.get("enabled")
-            custom = req.get("custom")
-            show_badges = req.get("show_badges")
-            if enabled is not None:
-                set_setting("unlock_enabled_items", json.dumps(enabled))
-            if custom is not None:
-                set_setting("unlock_custom_items", json.dumps(custom))
-            if show_badges is not None:
-                set_setting("unlock_show_badges", "1" if show_badges else "0")
-            self.send_json({"ok": True, "message": "流媒体与 AI 检测配置已更新"})
-            return
 
-        if path.startswith("/api/proxy/nodes/") and path.endswith("/unlock-test"):
-            try:
-                node_id = int(path.split("/")[-2])
-            except ValueError:
-                self.send_json({"ok": False, "message": "无效的节点ID"}, 400)
-                return
-            conn = get_db()
-            cur = conn.execute("SELECT * FROM proxy_node WHERE id = ?", (node_id,))
-            row = cur.fetchone()
-            if not row:
-                conn.close()
-                self.send_json({"ok": False, "message": "节点不存在"}, 404)
-                return
-            node = dict(row)
-            conn.close()
-
-            unlock_res = check_node_streaming_unlock(node)
-            save_node_unlock_status(node_id, unlock_res)
-            self.send_json({"ok": True, "result": unlock_res})
-            return
 
         if path == "/api/proxy/notify/telegram/test":
             token = (req.get("token") or get_setting("notify_telegram_token", "")).strip()
