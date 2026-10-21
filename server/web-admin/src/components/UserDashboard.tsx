@@ -22,7 +22,6 @@ import {
   Laptop,
   LogOut,
   Moon,
-  Palette,
   QrCode,
   RefreshCw,
   Send,
@@ -48,7 +47,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { ThemeSettingsDialog } from "@/components/ThemeSettingsDialog"
 
 export type UserProfile = {
   id: number
@@ -74,7 +72,6 @@ export type UserProfile = {
   enabled: number
   status: "active" | "over_quota" | "expired" | "disabled" | "over_device_limit"
   created_at: number
-  theme_style?: "default" | "sakura"
 }
 
 type NodeItem = {
@@ -122,8 +119,6 @@ export function UserDashboard({
   onSignOut,
   toggleTheme,
   dark,
-  themeStyle = "default",
-  onThemeStyleChange,
 }: {
   user: UserProfile
   siteName: string
@@ -131,10 +126,7 @@ export function UserDashboard({
   onSignOut: () => void
   toggleTheme: () => void
   dark: boolean
-  themeStyle?: "default" | "sakura"
-  onThemeStyleChange?: (style: "default" | "sakura") => void
 }) {
-  const [themeDialogOpen, setThemeDialogOpen] = useState(false)
   const [nodes, setNodes] = useState<NodeItem[]>([])
   const [showIps, setShowIps] = useState<Record<number, boolean>>({})
   const [qrOpen, setQrOpen] = useState(false)
@@ -363,7 +355,6 @@ export function UserDashboard({
       <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur w-full">
         <div className="mx-auto flex max-w-6xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {themeStyle === "sakura" && <span className="text-base select-none">🌸</span>}
             <span className="font-bold text-sm sm:text-base tracking-tight truncate max-w-[120px] sm:max-w-none">
               {siteName || "HHUB"}
             </span>
@@ -402,19 +393,6 @@ export function UserDashboard({
               <strong className="text-foreground">{user.username}</strong>
             </span>
 
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setThemeDialogOpen(true)}
-              className="size-8 shrink-0"
-              title="主题外观设置"
-            >
-              {themeStyle === "sakura" ? (
-                <span className="text-sm select-none">🌸</span>
-              ) : (
-                <Palette className="size-4 text-muted-foreground" />
-              )}
-            </Button>
 
             <Button
               variant="ghost"
@@ -440,17 +418,6 @@ export function UserDashboard({
         </div>
       </header>
 
-      {/* 主题外观切换弹窗 */}
-      {onThemeStyleChange && (
-        <ThemeSettingsDialog
-          open={themeDialogOpen}
-          onOpenChange={setThemeDialogOpen}
-          themeStyle={themeStyle}
-          onThemeStyleChange={onThemeStyleChange}
-          dark={dark}
-          onToggleDark={toggleTheme}
-        />
-      )}
 
       {/* 主面板内容 */}
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">

@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from "react"
-import { AlertTriangle, ExternalLink, LogOut, Moon, Palette, Sun } from "lucide-react"
+import { AlertTriangle, ExternalLink, LogOut, Moon, Sun } from "lucide-react"
 import { Toaster } from "sonner"
 
 import { Admin } from "@/components/Admin"
 import { Login } from "@/components/Login"
-import { ThemeSettingsDialog } from "@/components/ThemeSettingsDialog"
 import { UpdateDialog, type UpdateInfo } from "@/components/UpdateDialog"
 import { UserDashboard, type UserProfile } from "@/components/UserDashboard"
 import { Button } from "@/components/ui/button"
@@ -45,43 +44,23 @@ function useTheme() {
     const saved = localStorage.getItem("theme")
     return saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches
   })
-  const [themeStyle, setThemeStyleState] = useState<"default" | "sakura">(() => {
-    return (localStorage.getItem("theme_style") as "default" | "sakura") || "default"
-  })
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark)
     localStorage.setItem("theme", dark ? "dark" : "light")
+    document.documentElement.classList.remove("theme-sakura")
+    localStorage.removeItem("theme_style")
   }, [dark])
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("theme-sakura", themeStyle === "sakura")
-    localStorage.setItem("theme_style", themeStyle)
-  }, [themeStyle])
-
-  const setThemeStyle = useCallback((style: "default" | "sakura", syncRemote = true) => {
-    setThemeStyleState(style)
-    if (syncRemote) {
-      fetch("/api/proxy/theme", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ theme_style: style }),
-      }).catch(() => {})
-    }
-  }, [])
 
   return {
     dark,
     toggleTheme: () => setDark((d) => !d),
-    themeStyle,
-    setThemeStyle,
   }
 }
 
 export default function App() {
   const [path, go] = usePath()
-  const { dark, toggleTheme, themeStyle, setThemeStyle } = useTheme()
-  const [themeDialogOpen, setThemeDialogOpen] = useState(false)
+  const { dark, toggleTheme } = useTheme()
   const [me, setMe] = useState<Me | null>(null)
   const [meError, setMeError] = useState("")
   const { nodes, admin, error, refresh } = useNodes()
@@ -118,25 +97,6 @@ export default function App() {
     }
   }, [me?.authed, loadUserProfile])
 
-  // 同步用户或管理员的主题设置 (跟随账号走)
-  useEffect(() => {
-    if (userProfile?.theme_style) {
-      setThemeStyle(userProfile.theme_style, false)
-    }
-  }, [userProfile?.theme_style, setThemeStyle])
-
-  useEffect(() => {
-    if (me?.authed && (!userProfile || userProfile.is_admin)) {
-      fetch("/api/proxy/theme")
-        .then((r) => r.json())
-        .then((data) => {
-          if (data?.ok && data.theme_style) {
-            setThemeStyle(data.theme_style, false)
-          }
-        })
-        .catch(() => {})
-    }
-  }, [me?.authed, userProfile, setThemeStyle])
 
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
@@ -223,8 +183,6 @@ export default function App() {
           onSignOut={signOut}
           toggleTheme={toggleTheme}
           dark={dark}
-          themeStyle={themeStyle}
-          onThemeStyleChange={setThemeStyle}
         />
         <Toaster position="top-center" theme={dark ? "dark" : "light"} />
       </>
@@ -239,7 +197,6 @@ export default function App() {
         <div className="mx-auto flex max-w-7xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
           {/* Logo / Site name */}
           <a href="/" className="font-semibold transition-opacity hover:opacity-70 flex items-center gap-1.5 shrink-0 text-sm sm:text-base">
-            {themeStyle === "sakura" && <span className="text-base select-none">🌸</span>}
             <span className="truncate max-w-[120px] sm:max-w-none">{me.site_name || "HHUB"}</span>
           </a>
           <span className="hidden sm:inline-flex text-[11px] px-2 py-0.5 rounded-full border border-primary/20 bg-primary/10 text-primary font-medium whitespace-nowrap shrink-0">
@@ -297,19 +254,6 @@ export default function App() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setThemeDialogOpen(true)}
-            className="shrink-0 size-8"
-            title="主题风格设置"
-          >
-            {themeStyle === "sakura" ? (
-              <span className="text-sm select-none">🌸</span>
-            ) : (
-              <Palette className="size-4 text-muted-foreground" />
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
             onClick={toggleTheme}
             className="shrink-0 size-8"
             title={dark ? "切换为浅色" : "切换为深色"}
@@ -327,15 +271,6 @@ export default function App() {
           </Button>
         </div>
       </header>
-
-      <ThemeSettingsDialog
-        open={themeDialogOpen}
-        onOpenChange={setThemeDialogOpen}
-        themeStyle={themeStyle}
-        onThemeStyleChange={setThemeStyle}
-        dark={dark}
-        onToggleDark={toggleTheme}
-      />
 
       <UpdateDialog
         open={updateDialogOpen}

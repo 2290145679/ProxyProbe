@@ -42,6 +42,7 @@ Thumbs.db
 *.zip
 *.tar.gz
 !web-admin-dist.tar.gz
+tmp_assets/
 
 # Local Handover & Internal Notes (Do not push to GitHub)
 HANDOVER.md
