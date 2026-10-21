@@ -710,7 +710,7 @@ upgrade_system() {
     curl -fsSL "${GITHUB_RAW}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
     curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
     curl -fsSL "${FALLBACK_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || true
-    [ -s "$ROOT/VERSION" ] || echo "v2.5.33" > "$ROOT/VERSION"
+    [ -s "$ROOT/VERSION" ] || echo "v2.5.34" > "$ROOT/VERSION"
 
     # 确保 Caddyfile 路由配置正确
     if [ -f /etc/caddy/Caddyfile ]; then

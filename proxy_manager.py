@@ -938,7 +938,7 @@ from modules.subscription_engine import (
 init_subscription_context(get_db_fn=get_db, get_setting_fn=get_setting)
 
 
-CURRENT_VERSION = "v2.5.33"
+CURRENT_VERSION = "v2.5.34"
 
 def is_legacy_migration_needed() -> bool:
     """
@@ -2092,6 +2092,76 @@ class ProxyHandler(BaseHTTPRequestHandler):
             for nr in node_ranking:
                 nr["percentage"] = round((nr["total_bytes"] / total_node_traffic * 100), 1) if total_node_traffic > 0 else 0.0
 
+            # Calculate server ranking (服务器消耗排行)
+            server_map = {}
+            for s in servers:
+                sid = s["id"]
+                sname = s.get("name") or f"服务器-{sid}"
+                sip = s.get("ip") or s.get("ipv4") or ""
+                server_map[sid] = {
+                    "id": sid,
+                    "name": sname,
+                    "ip": sip,
+                    "upload_bytes": 0,
+                    "download_bytes": 0,
+                    "total_bytes": 0,
+                    "node_count": 0,
+                    "is_online": (s.get("last_seen", 0) > (now - 75))
+                }
+
+            has_local_nodes = any((n.get("server_id") or 0) == 0 for n in active_nodes)
+            if has_local_nodes or (0 not in server_map and not servers):
+                server_map[0] = {
+                    "id": 0,
+                    "name": "本机",
+                    "ip": get_server_public_ip() or "127.0.0.1",
+                    "upload_bytes": 0,
+                    "download_bytes": 0,
+                    "total_bytes": 0,
+                    "node_count": 0,
+                    "is_online": True
+                }
+
+            for n in active_nodes:
+                sid = n.get("server_id") or 0
+                if sid not in server_map:
+                    server_map[sid] = {
+                        "id": sid,
+                        "name": n.get("server_name") or f"服务器-{sid}",
+                        "ip": n.get("server_host") or "",
+                        "upload_bytes": 0,
+                        "download_bytes": 0,
+                        "total_bytes": 0,
+                        "node_count": 0,
+                        "is_online": True
+                    }
+                up = n.get("upload_bytes") or 0
+                down = n.get("download_bytes") or 0
+                server_map[sid]["upload_bytes"] += up
+                server_map[sid]["download_bytes"] += down
+                server_map[sid]["total_bytes"] += (up + down)
+                server_map[sid]["node_count"] += 1
+
+            try:
+                cur_tr = conn.execute("SELECT node_id, total_rx, total_tx FROM traffic")
+                for tr in cur_tr.fetchall():
+                    nid = tr["node_id"]
+                    if nid in server_map and server_map[nid]["total_bytes"] == 0:
+                        rx = tr["total_rx"] or 0
+                        tx = tr["total_tx"] or 0
+                        if (rx + tx) > 0:
+                            server_map[nid]["download_bytes"] = rx
+                            server_map[nid]["upload_bytes"] = tx
+                            server_map[nid]["total_bytes"] = rx + tx
+            except Exception:
+                pass
+
+            total_srv_traffic = sum(s["total_bytes"] for s in server_map.values())
+            server_ranking = list(server_map.values())
+            server_ranking.sort(key=lambda x: x["total_bytes"], reverse=True)
+            for sr in server_ranking:
+                sr["percentage"] = round((sr["total_bytes"] / total_srv_traffic * 100), 1) if total_srv_traffic > 0 else 0.0
+
             # 3. Protocol distribution
             proto_map = {}
             for n in active_nodes:
@@ -2188,6 +2258,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "tg_bot_active": tg_ready,
                     "inspection_interval_minutes": int(get_setting("node_check_interval_minutes", "10") or 10)
                 },
+                "server_ranking": server_ranking,
                 "node_ranking": node_ranking,
                 "user_ranking": user_ranking[:8],
                 "protocol_distribution": proto_dist,

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { 
   GitFork, Layers, Plus, RefreshCw, Copy, Check, Trash2, 
-  QrCode, Box, Activity, Download, AlertCircle, ArrowRightLeft,
+  QrCode, Box, Download, AlertCircle, ArrowRightLeft,
   SlidersHorizontal, Sparkles, Pencil, ChevronDown, ChevronUp
 } from "lucide-react"
 import { toast } from "sonner"
@@ -115,8 +115,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [nodeMode, setNodeMode] = useState<"direct" | "relay">("direct")
   const [relayTargetMode, setRelayTargetMode] = useState<"link_existing" | "custom">("link_existing")
   const [selectedTargetNodeId, setSelectedTargetNodeId] = useState<string>("")
-  const [testingId, setTestingId] = useState<number | null>(null)
-  const [testResult, setTestResult] = useState<Record<number, { ok: boolean; msg: string; ms: number }>>({})
 
 
   const [copiedId, setCopiedId] = useState<number | null>(null)
@@ -249,23 +247,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
 
 
-  const handleTestNode = async (id: number) => {
-    setTestingId(id)
-    try {
-      const res = await fetch(`/api/proxy/nodes/${id}/test`)
-      const data = await res.json()
-      setTestResult(prev => ({ ...prev, [id]: { ok: data.ok, msg: data.message, ms: data.latency_ms } }))
-      if (data.ok) {
-        toast.success(data.message || `测试通过 (延迟 ~${data.latency_ms}ms)`)
-      } else {
-        toast.error(data.message || "连通性测试未通过")
-      }
-    } catch {
-      toast.error("网络请求测试失败")
-    } finally {
-      setTestingId(null)
-    }
-  }
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -1057,23 +1038,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
                                 <TableCell className="text-right">
                                   <div className="flex items-center justify-end gap-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className={`h-7 text-xs gap-1 px-2 ${
-                                        testResult[n.id]?.ok === true
-                                          ? "text-emerald-600 hover:text-emerald-700 font-medium"
-                                          : testResult[n.id]?.ok === false
-                                          ? "text-red-500 hover:text-red-600 font-medium"
-                                          : "text-muted-foreground hover:text-foreground"
-                                      }`}
-                                      onClick={() => handleTestNode(n.id)}
-                                      disabled={testingId === n.id}
-                                      title={testResult[n.id]?.msg || "测试节点连通性"}
-                                    >
-                                      <Activity className={`size-3.5 ${testingId === n.id ? "animate-spin text-primary" : ""}`} />
-                                      {testingId === n.id ? "测试中" : testResult[n.id] ? `${testResult[n.id].ms}ms` : "测试"}
-                                    </Button>
                                     {n.link && (
                                       <Button
                                         variant="ghost"
@@ -1247,23 +1211,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className={`h-7 text-xs gap-1 px-2 ${
-                            testResult[n.id]?.ok === true
-                              ? "text-emerald-600 hover:text-emerald-700 font-medium"
-                              : testResult[n.id]?.ok === false
-                              ? "text-red-500 hover:text-red-600 font-medium"
-                              : "text-muted-foreground hover:text-foreground"
-                          }`}
-                          onClick={() => handleTestNode(n.id)}
-                          disabled={testingId === n.id}
-                          title={testResult[n.id]?.msg || "测试节点连通性"}
-                        >
-                          <Activity className={`size-3.5 ${testingId === n.id ? "animate-spin text-primary" : ""}`} />
-                          {testingId === n.id ? "测试中" : testResult[n.id] ? `${testResult[n.id].ms}ms` : "测试"}
-                        </Button>
                         {n.link && (
                           <Button
                             variant="ghost"
