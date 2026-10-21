@@ -383,7 +383,7 @@ info "正在写入系统版本标识..."
 curl -fsSL "${GITHUB_RAW}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
   curl -fsSL "${RELEASE_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || \
   curl -fsSL "${FALLBACK_BASE}/VERSION" -o "$ROOT/VERSION" 2>/dev/null || true
-[ -s "$ROOT/VERSION" ] || echo "v2.5.32" > "$ROOT/VERSION"
+[ -s "$ROOT/VERSION" ] || echo "v2.5.33" > "$ROOT/VERSION"
 
 # 前端 dist
 info "正在下载前端资源..."

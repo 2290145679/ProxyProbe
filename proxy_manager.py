@@ -938,7 +938,7 @@ from modules.subscription_engine import (
 init_subscription_context(get_db_fn=get_db, get_setting_fn=get_setting)
 
 
-CURRENT_VERSION = "v2.5.32"
+CURRENT_VERSION = "v2.5.33"
 
 def is_legacy_migration_needed() -> bool:
     """
