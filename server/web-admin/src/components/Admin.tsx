@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { AlertTriangle, BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, Globe, GripVertical, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Truck, Upload, Users, XCircle } from "lucide-react"
+import { Activity, AlertTriangle, BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, ExternalLink, Globe, GripVertical, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Truck, Upload, Users, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
@@ -20,7 +20,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { addresses, api, badIfaceName, changes, currentIface, GIB, ifaceChoice, ifaceSpec, provisioningSite, trafficCorrection, upload, type IfaceChoice, type Node, type PingTask, type Source } from "@/lib/api"
+import { addresses, api, changes, GIB, provisioningSite, trafficCorrection, upload, type Node, type PingTask, type Source } from "@/lib/api"
 import { bytes, CYCLES, FOREVER, money, uptime } from "@/lib/format"
 
 // Counters the panel can correct after migration or an accounting error.
@@ -253,63 +253,35 @@ function scriptCommand(site: string, args: (site: string) => string[]) {
   return site && `curl -fsSL ${site}/install.sh | sh -s -- ${args(site).join(" ")}`
 }
 
-function ifaceArg(iface: string | undefined) {
-  return iface === undefined ? [] : [`--iface ${iface || "''"}`]
-}
-
 function installCommand(
   site: string,
   token: string,
-  seconds: number,
-  iface: string | undefined,
   cores: CoreOptions = DEFAULT_CORE_OPTIONS,
-  noMonitor: boolean = false,
 ) {
   site = provisioningSite(site)
-  if (noMonitor) {
-    const flags = coreFlags(cores)
-    return scriptCommand(site, (s) => [
-      `--server ${s}`,
-      ...(s.startsWith("http://") ? ["--insecure"] : []),
-      `--token ${token}`,
-      `--no-monitor`,
-      ...flags,
-    ])
-  }
+  const flags = coreFlags(cores)
   return scriptCommand(site, (s) => [
     `--server ${s}`,
     ...(s.startsWith("http://") ? ["--insecure"] : []),
     `--token ${token}`,
-    `--interval ${seconds}`,
-    ...ifaceArg(iface),
-    ...coreFlags(cores),
+    `--no-monitor`,
+    ...flags,
   ])
 }
 
 function registerCommand(
   site: string,
   key: string,
-  iface: string | undefined,
   cores: CoreOptions = DEFAULT_CORE_OPTIONS,
-  noMonitor: boolean = false,
 ) {
   site = provisioningSite(site)
-  if (noMonitor) {
-    const flags = coreFlags(cores)
-    return scriptCommand(site, (s) => [
-      `--server ${s}`,
-      ...(s.startsWith("http://") ? ["--insecure"] : []),
-      `--register ${key}`,
-      `--no-monitor`,
-      ...flags,
-    ])
-  }
+  const flags = coreFlags(cores)
   return scriptCommand(site, (s) => [
     `--server ${s}`,
     ...(s.startsWith("http://") ? ["--insecure"] : []),
     `--register ${key}`,
-    ...ifaceArg(iface),
-    ...coreFlags(cores),
+    `--no-monitor`,
+    ...flags,
   ])
 }
 
@@ -317,50 +289,12 @@ function uninstallCommand(site: string) {
   return scriptCommand(site, () => ["--uninstall"])
 }
 
-function InstallModeSelector({
-  onlyProxy,
-  onChange,
-}: {
-  onlyProxy: boolean
-  onChange: (onlyProxy: boolean) => void
-}) {
-  return (
-    <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-semibold shrink-0 whitespace-nowrap">安装模式</span>
-          {onlyProxy ? (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 font-medium shrink-0">
-              纯代理模式<span className="hidden sm:inline"> (免装探针)</span>
-            </Badge>
-          ) : (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 font-medium shrink-0">
-              全功能模式<span className="hidden sm:inline"> (探针监控 + 代理节点)</span>
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[11px] text-muted-foreground font-medium shrink-0 whitespace-nowrap">免装探针</span>
-          <Switch checked={onlyProxy} onCheckedChange={onChange} />
-        </div>
-      </div>
-      <p className="text-[11px] text-muted-foreground leading-relaxed">
-        {onlyProxy
-          ? "仅部署代理核心与节点管理守护，零系统监控，不采集 CPU/内存/进程，适合低配玩具机或注重隐私者。"
-          : "同时部署探针监控与代理核心，提供实时 CPU/内存/网络/磁盘硬件性能监控与多协议节点纳管。"}
-      </p>
-    </div>
-  )
-}
-
 function CoreOptionsSelector({
   cores,
   onChange,
-  onlyProxy = false,
 }: {
   cores: CoreOptions
   onChange: (cores: CoreOptions) => void
-  onlyProxy?: boolean
 }) {
   const isNone = !cores.xray && !cores.singbox && !cores.realm
 
@@ -372,7 +306,7 @@ function CoreOptionsSelector({
         </h4>
         {isNone && (
           <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10">
-            {onlyProxy ? "警告：纯代理模式请至少勾选一种代理核心" : "仅探针监控（不安装任何代理核心）"}
+            请至少勾选一种代理核心
           </Badge>
         )}
       </div>
@@ -430,7 +364,6 @@ function CreateNode({
 }) {
   const [name, setName] = useState("")
   const [cores, setCores] = useState<CoreOptions>(DEFAULT_CORE_OPTIONS)
-  const [onlyProxy, setOnlyProxy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [createdInfo, setCreatedInfo] = useState<{ id: number; token: string; name: string } | null>(null)
 
@@ -468,7 +401,7 @@ function CreateNode({
   }
 
   const command = createdInfo
-    ? installCommand(site, createdInfo.token, 1, undefined, cores, onlyProxy)
+    ? installCommand(site, createdInfo.token, cores)
     : ""
 
   return (
@@ -479,7 +412,7 @@ function CreateNode({
           <DialogDescription>
             {createdInfo
               ? "服务器已成功添加。请在目标服务器终端复制并执行以下命令完成部署："
-              : "配置服务器名称与安装模式，按需选择代理核心："}
+              : "配置服务器名称，并按需勾选要安装的代理协议核心组件："}
           </DialogDescription>
         </DialogHeader>
 
@@ -494,8 +427,7 @@ function CreateNode({
               />
             </Field>
 
-            <InstallModeSelector onlyProxy={onlyProxy} onChange={setOnlyProxy} />
-            <CoreOptionsSelector cores={cores} onChange={setCores} onlyProxy={onlyProxy} />
+            <CoreOptionsSelector cores={cores} onChange={setCores} />
 
             <DialogFooter className="border-t pt-4">
               <Button type="button" variant="ghost" onClick={onClose}>取消</Button>
@@ -506,8 +438,7 @@ function CreateNode({
           </form>
         ) : (
           <div className="space-y-4">
-            <InstallModeSelector onlyProxy={onlyProxy} onChange={setOnlyProxy} />
-            <CoreOptionsSelector cores={cores} onChange={setCores} onlyProxy={onlyProxy} />
+            <CoreOptionsSelector cores={cores} onChange={setCores} />
 
             <div className="space-y-2 border-t pt-3">
               <div className="flex items-center justify-between">
@@ -842,9 +773,7 @@ function RegisterDialog({ site, reg, onClose }: {
   onClose: () => void
 }) {
   const [cores, setCores] = useState<CoreOptions>(DEFAULT_CORE_OPTIONS)
-  const [onlyProxy, setOnlyProxy] = useState(false)
-  const iface = useIfaceOption(undefined)
-  const command = reg.left > 0 && iface.valid ? registerCommand(site, reg.key, iface.flag, cores, onlyProxy) : ""
+  const command = reg.left > 0 ? registerCommand(site, reg.key, cores) : ""
   const clock = `${Math.floor(reg.left / 60)}:${String(reg.left % 60).padStart(2, "0")}`
 
   return (
@@ -854,29 +783,15 @@ function RegisterDialog({ site, reg, onClose }: {
           <DialogTitle>批量添加服务器</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          {/* One string: JSX turns a line break inside CJK text into a visible space. */}
           <p className="text-sm text-muted-foreground">
-            {"开一个一小时的注册窗口。期间这条命令在任意机器上跑一次，那台机器就会自己出现在列表里，" +
-              "名字取自它的 hostname。命令里没有任何一台机器的凭证，可以直接进循环。"}
+            {"开启一小时注册窗口。期间在任意服务器运行此命令，将自动安装节点代理守护进程与所选核心，并自动纳管上线。"}
           </p>
-          <InstallModeSelector onlyProxy={onlyProxy} onChange={setOnlyProxy} />
-          <CoreOptionsSelector cores={cores} onChange={setCores} onlyProxy={onlyProxy} />
-          {!onlyProxy ? (
-            <section className="space-y-3">
-              <h3 className="text-sm font-medium">网络选项</h3>
-              <IfaceOption option={iface} batch />
-            </section>
-          ) : (
-            <div className="rounded-md border border-dashed p-2.5 text-xs text-muted-foreground bg-muted/10 flex items-center justify-between">
-              <span>已启用纯代理模式</span>
-              <Badge variant="outline" className="text-[10px] text-indigo-500 border-indigo-500/30">自动跳过探针服务安装</Badge>
-            </div>
-          )}
+          <CoreOptionsSelector cores={cores} onChange={setCores} />
           {reg.left > 0 ? (
-            <section className="space-y-2 border-t pt-5">
+            <section className="space-y-2 border-t pt-4">
               <h3 className="text-sm font-medium">安装命令</h3>
               <Command className={`max-h-40 min-h-24 ${command ? "" : "text-muted-foreground"}`}>
-                {command || "网卡名有误，改正后显示命令"}
+                {command}
               </Command>
               <OptionRow title={`窗口 ${clock} 后自动关闭`} hint="到点自动失效，装完了也可以现在就关">
                 <Button variant="outline" size="sm" onClick={reg.close}>立即关闭</Button>
@@ -897,66 +812,6 @@ function RegisterDialog({ site, reg, onClose }: {
   )
 }
 
-// The `--iface` part of an install command. Off leaves the flag out, and
-// install.sh then keeps whatever the machine already has; on with both lists
-// empty passes '' and restores the default rules. It opens on for a node whose
-// agent reports a list, so reinstalling from here repeats that list rather than
-// relying on the machine to remember it.
-function useIfaceOption(current: string | undefined) {
-  const [on, setOn] = useState(!!current)
-  const [choice, setChoice] = useState<IfaceChoice>(() => ifaceChoice(current ?? ""))
-  const bad = on ? badIfaceName(choice) : undefined
-  const spec = ifaceSpec(choice)
-  return { on, setOn, choice, setChoice, current, bad, valid: !bad, flag: on && spec !== null ? spec : undefined }
-}
-
-function describeIface(spec: string) {
-  const { only, skip } = ifaceChoice(spec)
-  const parts = [only && `只统计 ${only.replaceAll(",", "、")}`, skip && `不统计 ${skip.replaceAll(",", "、")}`]
-  return parts.filter(Boolean).join("；") || "默认规则"
-}
-
-function IfaceOption({ option, batch = false }: { option: ReturnType<typeof useIfaceOption>; batch?: boolean }) {
-  const { on, setOn, choice, setChoice, current, bad } = option
-  const field = (list: keyof IfaceChoice, label: string, placeholder: string) => (
-    <Field label={label}>
-      <Input
-        value={choice[list]}
-        onChange={(e) => setChoice({ ...choice, [list]: e.target.value })}
-        placeholder={placeholder}
-        spellCheck={false}
-        aria-invalid={bad?.list === list}
-        className="bg-background font-mono text-xs"
-      />
-    </Field>
-  )
-  const hint = on
-    ? batch ? "每台机器都按这里的设置统计" : "覆盖这台机器原有的设置"
-    : batch ? "关闭时各台机器沿用原有设置，新机器按默认规则" : "关闭时沿用机器上原有的设置，转发流量的机器才需要指定"
-  return (
-    <OptionRow
-      title="指定统计的网卡"
-      hint={<>{hint}{current !== undefined && <span className="mt-0.5 block">当前：{describeIface(current)}</span>}</>}
-      toggle
-      below={on && (
-        <div className="space-y-2.5">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {field("only", "只统计", "如 WAN 口 eth1 或 pppoe-wan")}
-            {field("skip", "不统计", "如 LAN 口 eth0")}
-          </div>
-          <p className={`text-xs leading-relaxed ${bad ? "text-destructive" : "text-muted-foreground"}`}>
-            {bad
-              ? `「${bad.name}」不是有效的网卡名：写完整的名字，多个用逗号分隔`
-              : "写完整的网卡名，多个用逗号分隔。两项都留空即恢复默认规则。"}
-          </p>
-        </div>
-      )}
-    >
-      <Switch checked={on} onCheckedChange={setOn} />
-    </OptionRow>
-  )
-}
-
 function InstallDialog({ node, site, onClose, onRotated }: {
   node: Node
   site: string
@@ -964,15 +819,11 @@ function InstallDialog({ node, site, onClose, onRotated }: {
   onRotated: () => void
 }) {
   const [token, setToken] = useState(node.token ?? "")
-  const [interval, setInterval] = useState("1")
   const [rotating, setRotating] = useState(false)
   const [confirmRotate, setConfirmRotate] = useState(false)
   const [cores, setCores] = useState<CoreOptions>(DEFAULT_CORE_OPTIONS)
-  const [onlyProxy, setOnlyProxy] = useState(false)
-  const iface = useIfaceOption(currentIface(node))
 
-  const seconds = Math.min(3600, Math.max(1, Math.round(Number(interval) || 1)))
-  const command = token && iface.valid ? installCommand(site, token, seconds, iface.flag, cores, onlyProxy) : ""
+  const command = token ? installCommand(site, token, cores) : ""
 
   async function rotate() {
     setRotating(true)
@@ -993,46 +844,21 @@ function InstallDialog({ node, site, onClose, onRotated }: {
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent onOpenAutoFocus={(e) => e.preventDefault()} className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{node.name}</DialogTitle>
+          <DialogTitle>安装代理服务 · {node.name}</DialogTitle>
           <DialogDescription>
-            调整安装选项以生成定制安装命令：
+            选择要在此服务器上安装的代理协议核心，并在目标服务器终端执行安装命令：
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <InstallModeSelector onlyProxy={onlyProxy} onChange={setOnlyProxy} />
-          <CoreOptionsSelector cores={cores} onChange={setCores} onlyProxy={onlyProxy} />
+          <CoreOptionsSelector cores={cores} onChange={setCores} />
 
-          {!onlyProxy ? (
-            <section className="space-y-3">
-              <h3 className="text-sm font-medium">探针监控选项</h3>
-              <OptionRow title="上报间隔" hint="1–3600 秒，默认 1 秒">
-                <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
-                  <Input
-                    inputMode="numeric"
-                    value={interval}
-                    onChange={(e) => setInterval(e.target.value.replace(/\D/g, ""))}
-                    aria-label="上报间隔（秒）"
-                    className="tnum h-8 w-20 bg-background text-right"
-                  />
-                  秒
-                </span>
-              </OptionRow>
-              <IfaceOption option={iface} />
-            </section>
-          ) : (
-            <div className="rounded-md border border-dashed p-2.5 text-xs text-muted-foreground bg-muted/10 flex items-center justify-between">
-              <span>已启用纯代理模式</span>
-              <Badge variant="outline" className="text-[10px] text-indigo-500 border-indigo-500/30">无需配置探针上报参数</Badge>
-            </div>
-          )}
-
-          <section className="space-y-2 border-t pt-5">
+          <section className="space-y-2 border-t pt-4">
             <h3 className="text-sm font-medium">安装命令</h3>
             <Command className={`max-h-40 min-h-24 ${command ? "" : "text-muted-foreground"}`}>
-              {command || (token ? "网卡名有误，改正后显示命令" : "旧版本创建的凭证不可读取，换发后显示")}
+              {command || (token ? "正在生成命令..." : "旧版本创建的凭证不可读取，换发后显示")}
             </Command>
           </section>
-          <OptionRow title="换发凭证" hint="旧凭证立即作废，agent 掉线，需用新命令重装">
+          <OptionRow title="换发凭证" hint="旧凭证立即作废，原有代理服务需用新命令重装">
             <Button variant="outline" size="sm" disabled={rotating} onClick={() => setConfirmRotate(true)}>
               换发
             </Button>
@@ -1654,7 +1480,7 @@ function PingForm({ task, nodes, onClose, onSaved }: {
   )
 }
 
-function Ping({ nodes }: { nodes: Node[] }) {
+export function Ping({ nodes }: { nodes: Node[] }) {
   const [tasks, setTasks] = useState<PingTask[]>([])
   const [editing, setEditing] = useState<Partial<PingTask> | null>(null)
   const [deleting, setDeleting] = useState<PingTask | null>(null)
@@ -1779,15 +1605,22 @@ function useSettings() {
 function SettingsTab({
   updateInfo,
   onOpenUpdateDialog,
+  probeUrl,
+  onProbeUrlChange,
 }: {
   updateInfo?: UpdateInfo | null
   onOpenUpdateDialog?: () => void
+  probeUrl?: string
+  onProbeUrlChange?: (url: string) => void
 }) {
   const { s, set, save } = useSettings()
   if (!s) return null
 
   return (
     <div className="space-y-4">
+      {/* 探针监控系统地址设置（纯节点面板独立对接） */}
+      <ProbeMonitorSettingsCard probeUrl={probeUrl} onProbeUrlChange={onProbeUrlChange} />
+
       {/* 系统版本与在线更新卡片 */}
       <Card className="gap-4 p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
@@ -1905,6 +1738,102 @@ function SettingsTab({
       {/* 用户邮箱注册与 SMTP 邮件发信服务设置 */}
       <SmtpSettingsCard />
     </div>
+  )
+}
+
+function ProbeMonitorSettingsCard({
+  probeUrl,
+  onProbeUrlChange,
+}: {
+  probeUrl?: string
+  onProbeUrlChange?: (url: string) => void
+}) {
+  const [url, setUrl] = useState(probeUrl || "")
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    fetch("/api/proxy/settings/probe")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.ok && d.probe_url !== undefined) {
+          setUrl(d.probe_url)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/proxy/settings/probe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ probe_url: url.trim() }),
+      })
+      const d = await res.json()
+      if (d && d.ok) {
+        toast.success(d.message || "探针监控地址已保存")
+        onProbeUrlChange?.(url.trim())
+      } else {
+        toast.error(d?.message || "保存失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card className="gap-4 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Activity className="size-4 text-emerald-500" /> 探针监控系统配置 (Probe Monitor)
+          </h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            ProxyProbe 面板为纯节点中枢。探针由您按需在任意 VPS 独立部署（如 Komari、哪吒探针、Uptime Kuma 等）。
+          </p>
+        </div>
+        {url && (
+          <Button
+            size="sm"
+            variant="outline"
+            asChild
+            className="shrink-0 h-8 text-xs border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
+          >
+            <a href={url} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="size-3.5 mr-1" /> 测试打开探针
+            </a>
+          </Button>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs font-medium">探针系统访问地址 (URL)</Label>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="例如：https://hub.yohoo.xyz 或留空默认为根路径 /"
+              className="text-xs font-mono h-9 flex-1"
+            />
+            <Button
+              size="sm"
+              disabled={saving}
+              onClick={handleSave}
+              className="shrink-0 h-9 text-xs"
+            >
+              {saving ? "保存中..." : "保存探针地址"}
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            在此填写部署后的探针大屏地址。保存后，顶部导航栏和登录界面的【探针监控】直达入口将自动跳转到该地址。
+          </p>
+        </div>
+      </div>
+    </Card>
   )
 }
 
@@ -4408,7 +4337,7 @@ function TelegramBackupCard({ go, onOpenPicker }: { go?: (to: string) => void; o
   )
 }
 
-function Data({ go }: { go?: (to: string) => void }) {
+export function Data({ go }: { go?: (to: string) => void }) {
   const [info, setInfo] = useState<DbInfo | null>(null)
   const [busy, setBusy] = useState("")
   const [confirm, setConfirm] = useState<"vacuum" | null>(null)
@@ -4615,9 +4544,7 @@ const ADMIN_SECTIONS = [
   { path: "/admin/tiers", label: "套餐管理", icon: PackageCheck },
   { path: "/admin/announcements", label: "公告通知", icon: Megaphone },
   { path: "/admin/rules", label: "规则配置", icon: SlidersHorizontal },
-  { path: "/admin/ping", label: "延迟", icon: Radio },
   { path: "/admin/notify", label: "通知", icon: Bell },
-  { path: "/admin/data", label: "数据", icon: Database },
   { path: "/admin/security", label: "安全", icon: Shield },
   { path: "/admin/settings", label: "设置", icon: Settings },
 ] as const
@@ -4631,6 +4558,8 @@ export function Admin({
   refusal,
   updateInfo,
   onOpenUpdateDialog,
+  probeUrl,
+  onProbeUrlChange,
 }: {
   path: string
   go: (to: string) => void
@@ -4640,6 +4569,8 @@ export function Admin({
   refusal: string
   updateInfo?: UpdateInfo | null
   onOpenUpdateDialog?: () => void
+  probeUrl?: string
+  onProbeUrlChange?: (url: string) => void
 }) {
   const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null)
 
@@ -4713,28 +4644,24 @@ export function Admin({
       </nav>
 
       <div className="min-w-0 flex-1">
-        {path === "/admin/overview" ? (
+        {path.endsWith("/overview") ? (
           <ProxyDashboard onNavigate={go} />
-        ) : path === "/admin/proxy" ? (
+        ) : path.endsWith("/proxy") ? (
           <ProxyNodes nodes={nodes} />
-        ) : path === "/admin/users" ? (
+        ) : path.endsWith("/users") ? (
           <ProxyUsers />
-        ) : path === "/admin/tiers" ? (
+        ) : path.endsWith("/tiers") ? (
           <TiersManagementTab />
-        ) : path === "/admin/announcements" ? (
+        ) : path.endsWith("/announcements") ? (
           <AnnouncementsTab />
-        ) : path === "/admin/rules" ? (
+        ) : path.endsWith("/rules") ? (
           <ProxyRules />
-        ) : path === "/admin/ping" ? (
-          <Ping nodes={nodes} />
-        ) : path === "/admin/notify" ? (
+        ) : path.endsWith("/notify") ? (
           <Notify nodes={nodes} refresh={refresh} />
-        ) : path === "/admin/data" ? (
-          <Data go={go} />
-        ) : path === "/admin/security" ? (
+        ) : path.endsWith("/security") ? (
           <Security site={site} />
-        ) : path === "/admin/settings" ? (
-          <SettingsTab updateInfo={updateInfo} onOpenUpdateDialog={onOpenUpdateDialog} />
+        ) : path.endsWith("/settings") ? (
+          <SettingsTab updateInfo={updateInfo} onOpenUpdateDialog={onOpenUpdateDialog} probeUrl={probeUrl} onProbeUrlChange={onProbeUrlChange} />
         ) : (
           <Nodes nodes={nodes} refresh={refresh} site={site} refusal={refusal} />
         )}

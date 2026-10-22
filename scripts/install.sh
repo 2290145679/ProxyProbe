@@ -12,11 +12,11 @@ PATH="$PATH:/usr/sbin:/sbin"
 # Binary and token in one directory, the same one the hub uses, giving a node a
 # single path to inspect and a single path to remove.
 ROOT="/opt/proxyprobe"
-BIN="$ROOT/monitor-agent"
+BIN="$ROOT/komari-agent"
 ENV_FILE="$ROOT/agent.env"
-UNIT_FILE="/etc/systemd/system/monitor-agent.service"
-RC_FILE="/etc/init.d/monitor-agent"
-LOG_FILE="/var/log/monitor-agent.log"
+UNIT_FILE="/etc/systemd/system/komari-agent.service"
+RC_FILE="/etc/init.d/komari-agent"
+LOG_FILE="/var/log/komari-agent.log"
 SERVER=""
 TOKEN=""
 REGISTER=""
@@ -138,25 +138,30 @@ fi
 # hub may be installed in $ROOT as well, so the directory is removed only once
 # empty.
 if [ -n "$UNINSTALL" ]; then
+	rc-service komari-agent stop 2>/dev/null || true
 	rc-service monitor-agent stop 2>/dev/null || true
+	rc-service proxy-agent stop 2>/dev/null || true
+	rc-update del komari-agent default >/dev/null 2>&1 || true
 	rc-update del monitor-agent default >/dev/null 2>&1 || true
+	systemctl disable --now komari-agent 2>/dev/null || true
 	systemctl disable --now monitor-agent 2>/dev/null || true
 	systemctl disable --now proxy-agent 2>/dev/null || true
 	systemctl disable --now xray 2>/dev/null || true
 	systemctl disable --now sing-box 2>/dev/null || true
 	systemctl disable --now realm 2>/dev/null || true
-	pkill -9 -f "monitor-agent|proxy-agent|xray|sing-box|realm" 2>/dev/null || true
+	pkill -9 -f "komari-agent|monitor-agent|proxy-agent|xray|sing-box|realm" 2>/dev/null || true
 	rm -f "$UNIT_FILE" "$RC_FILE" "$LOG_FILE" "$BIN" "$ENV_FILE"
-	rm -f /etc/systemd/system/proxy-agent.service /etc/systemd/system/xray.service /etc/systemd/system/sing-box.service /etc/systemd/system/realm.service
+	rm -f /etc/systemd/system/komari-agent.service /etc/systemd/system/monitor-agent.service /etc/systemd/system/proxy-agent.service
+	rm -f /etc/systemd/system/xray.service /etc/systemd/system/sing-box.service /etc/systemd/system/realm.service
 	rm -f "$ROOT/proxy_agent.py" /opt/monitor/proxy_agent.py 2>/dev/null || true
-	rm -f /usr/local/bin/xray /usr/local/bin/sing-box /usr/local/bin/realm /usr/local/bin/monitor-agent
+	rm -f /usr/local/bin/xray /usr/local/bin/sing-box /usr/local/bin/realm /usr/local/bin/monitor-agent /usr/local/bin/komari-agent
 	rm -rf /usr/local/share/xray /usr/local/etc/xray
 	rm -rf /etc/xray /etc/sing-box /etc/realm /var/log/xray /var/log/sing-box
 	systemctl daemon-reload 2>/dev/null || true
 	userdel monitor-agent 2>/dev/null || true
 	groupdel monitor-agent 2>/dev/null || true
 	rm -rf "$ROOT" /opt/monitor 2>/dev/null || true
-	echo "monitor-agent and proxy services uninstalled"
+	echo "komari-agent, monitor-agent and proxy services uninstalled"
 	exit 0
 fi
 
@@ -276,28 +281,41 @@ fi
 # registration, so a host where this fails keeps the agent it already runs and
 # spends no registration key. OpenRC has no equivalent and Alpine ships no
 # useradd, which is why this is confined to systemd.
-if [ "$INIT" = systemd ]; then
-	id -u monitor-agent >/dev/null 2>&1 ||
-		useradd --system --no-create-home --shell /usr/sbin/nologin monitor-agent ||
-		{ echo "cannot create the system user monitor-agent" >&2; exit 1; }
-fi
-
 case "$(uname -m)" in
-x86_64 | amd64) ARCH=x86_64 ;;
-aarch64 | arm64) ARCH=aarch64 ;;
+x86_64 | amd64) ARCH=amd64 ;;
+aarch64 | arm64) ARCH=arm64 ;;
+i386 | i686) ARCH=386 ;;
+armv7* | armv6*) ARCH=arm ;;
 *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-# The hub relays the binary, so a node need only reach the hub it already talks
-# to: an IPv6-only or blocked machine cannot resolve github.com. A hub unable to
-# fetch releases itself is configured with a GitHub proxy in its own settings,
-# which is why none is requested here.
-URL="${SERVER%/}/agent/$ARCH"
+FILE_NAME="komari-agent-linux-$ARCH"
+DOWNLOAD_URLS="
+${SERVER%/}/$FILE_NAME
+https://ghproxy.net/https://github.com/komari-monitor/komari-agent/releases/latest/download/$FILE_NAME
+https://github.com/komari-monitor/komari-agent/releases/latest/download/$FILE_NAME
+"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
-echo "downloading monitor-agent ($ARCH)"
-curl -fsSL --max-time 300 "$URL" -o "$TMP"
+DL_OK=""
+for u in $DOWNLOAD_URLS; do
+	echo "downloading komari-agent from $u"
+	if curl -fsSL ${INSECURE:+ -k} --connect-timeout 15 --max-time 180 "$u" -o "$TMP" && [ -s "$TMP" ]; then
+		if head -n 1 "$TMP" | grep -q -E '<html|<!DOCTYPE' ; then
+			rm -f "$TMP"
+			continue
+		fi
+		DL_OK=1
+		break
+	fi
+	rm -f "$TMP"
+done
+
+if [ -z "$DL_OK" ]; then
+	echo "failed to download komari-agent from all sources" >&2
+	exit 1
+fi
 
 # Downloaded before the registration below, because that step spends a node: the
 # key returns a token and the panel gains a row, while the env file recording it
@@ -358,9 +376,11 @@ fi
 # unlinking rather than failing with ETXTBSY. Placed after the download, so a
 # node that cannot fetch the binary keeps running.
 if [ "$INIT" = openrc ]; then
+	rc-service komari-agent stop 2>/dev/null || true
 	rc-service monitor-agent stop 2>/dev/null || true
 	rc-service proxy-agent stop 2>/dev/null || true
 else
+	systemctl stop komari-agent 2>/dev/null || true
 	systemctl stop monitor-agent 2>/dev/null || true
 	systemctl stop proxy-agent 2>/dev/null || true
 fi
@@ -375,38 +395,31 @@ install -m 0755 "$TMP" "$BIN"
 (
 	umask 077
 	cat >"$ENV_FILE" <<ENV
-MONITOR_SERVER=$SERVER
-MONITOR_TOKEN=$TOKEN
+KOMARI_SERVER=$SERVER
+KOMARI_TOKEN=$TOKEN
 ENV
-	[ -z "$IFACE" ] || printf 'MONITOR_IFACE=%s\n' "$IFACE" >>"$ENV_FILE"
+	[ -z "$IFACE" ] || printf 'KOMARI_IFACE=%s\n' "$IFACE" >>"$ENV_FILE"
 )
 
 if [ "$INIT" = openrc ]; then
 	cat >"$RC_FILE" <<RC
 #!/sbin/openrc-run
-description="monitor agent"
+description="komari agent"
 command="$BIN"
-command_args="--interval $INTERVAL${INSECURE:+ --insecure}"
+command_args="-e $SERVER -t $TOKEN --interval ${INTERVAL:-1}${INSECURE:+ -u}"
 supervisor="supervise-daemon"
-respawn_delay=5
+respawn_delay=3
 output_log="$LOG_FILE"
 error_log="$LOG_FILE"
 
 depend() {
 	need net
 }
-
-# The token stays in the root-only env file rather than the service script.
-start_pre() {
-	set -a
-	. $ENV_FILE
-	set +a
-}
 RC
 	chmod 0755 "$RC_FILE"
-	rc-update add monitor-agent default >/dev/null
-	rc-service monitor-agent restart
-	echo "monitor-agent installed; follow it with: tail -f $LOG_FILE"
+	rc-update add komari-agent default >/dev/null 2>&1 || true
+	rc-service komari-agent restart
+	echo "komari-agent installed; follow it with: tail -f $LOG_FILE"
 	if [ "${NO_PROXY:-}" = "1" ]; then
 		echo ""
 		echo "=================================================="
@@ -428,44 +441,29 @@ fi
 
 cat >"$UNIT_FILE" <<UNIT
 [Unit]
-Description=monitor agent
+Description=Komari Agent Service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=$ENV_FILE
-ExecStart=$BIN --interval $INTERVAL${INSECURE:+ --insecure}
+WorkingDirectory=$ROOT
+ExecStart=$BIN -e $SERVER -t $TOKEN --interval ${INTERVAL:-1}${INSECURE:+ -u}
 Restart=always
-RestartSec=5
-# A fixed user rather than DynamicUser=: when the mount namespace cannot be
-# created, as in an LXC container without nesting, systemd skips ProtectSystem=
-# and the other mount sandboxing for a unit with a static User=, but refuses to
-# start one with DynamicUser= and exits 226/NAMESPACE. DynamicUser= also implied
-# RestrictSUIDSGID=, which is therefore stated below.
-User=monitor-agent
-NoNewPrivileges=yes
-RestrictSUIDSGID=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-PrivateDevices=yes
-# AF_NETLINK is how getifaddrs(3) obtains this host's own addresses from the
-# kernel; without it the agent reports none.
-RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
-MemoryMax=64M
+RestartSec=3
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable monitor-agent >/dev/null
-# restart rather than `enable --now`: --now leaves an already-running service
-# untouched, so reinstalling over a live agent would keep the old binary
-# running.
-systemctl restart monitor-agent
-echo "monitor-agent installed; follow it with: journalctl -u monitor-agent -f"
+systemctl stop monitor-agent 2>/dev/null || true
+systemctl disable monitor-agent 2>/dev/null || true
+rm -f /etc/systemd/system/monitor-agent.service
+systemctl enable komari-agent >/dev/null 2>&1 || true
+systemctl restart komari-agent
+echo "komari-agent installed; follow it with: journalctl -u komari-agent -f"
 
 # 自动联动安装代理节点服务
 if [ "${NO_PROXY:-}" = "1" ]; then

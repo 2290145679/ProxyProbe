@@ -29,6 +29,10 @@ from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlparse
 try:
+    import modules.komari_engine as komari_engine
+except ImportError:
+    komari_engine = None
+try:
     import license_guard
 except ImportError:
     license_guard = None
@@ -42,7 +46,7 @@ if getattr(sys, 'frozen', False):
 
 BASE_DIR = "/opt/proxyprobe" if os.path.exists("/opt/proxyprobe") else "/opt/monitor"
 DATA_DIR = os.path.join(BASE_DIR, "data")
-DB_PATH = os.path.join(DATA_DIR, "proxyprobe.db") if os.path.exists(os.path.join(DATA_DIR, "proxyprobe.db")) else os.path.join(DATA_DIR, "monitor.db")
+DB_PATH = os.path.join(DATA_DIR, "monitor.db") if os.path.exists(os.path.join(DATA_DIR, "monitor.db")) else os.path.join(DATA_DIR, "proxyprobe.db")
 XRAY_BIN = "/usr/local/bin/xray"
 XRAY_CONFIG = "/etc/xray/config.json"
 SINGBOX_BIN = "/usr/local/bin/sing-box"
@@ -790,11 +794,28 @@ def get_current_user(headers):
     try:
         cookie_str = headers.get("Cookie", "")
         session_token = None
+        komari_session_token = None
         for item in cookie_str.split(";"):
             item = item.strip()
             if item.startswith("monitor_session="):
                 session_token = item.split("=", 1)[1].strip()
-                break
+            elif item.startswith("session_token="):
+                komari_session_token = item.split("=", 1)[1].strip()
+
+        # 优先检查 Komari session_token 互通
+        if not session_token and komari_session_token and komari_engine:
+            try:
+                k_username = komari_engine.verify_komari_session(komari_session_token)
+                if k_username:
+                    conn = get_db()
+                    cur = conn.execute("SELECT * FROM proxy_user WHERE username = ? OR is_admin = 1 ORDER BY is_admin DESC LIMIT 1", (k_username,))
+                    k_user_row = cur.fetchone()
+                    conn.close()
+                    if k_user_row:
+                        return dict(k_user_row)
+            except Exception as e:
+                print(f"[get_current_user komari session check error] {e}")
+
         if not session_token:
             auth_header = headers.get("Authorization", "").strip()
             if auth_header.startswith("Bearer "):
@@ -1321,6 +1342,116 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         elif path == "/api/proxy/agent-client-script":
             self.send_text(PROXY_AGENT_PY, 200, "text/x-python; charset=utf-8")
+            return
+
+        # 核心鉴权状态查询接口 (供管理端 SPA 与探针系统无缝调用)
+        if path in ("/api/me", "/api/proxy/me"):
+            user = get_current_user(self.headers)
+            is_authed = user is not None
+            site_name = get_setting("site_name", "HHUB") or "HHUB"
+            base_url = get_request_base_url(self.headers)
+            self.send_json({
+                "authed": is_authed,
+                "github": False,
+                "site_name": site_name,
+                "public_page": True,
+                "site": base_url,
+                "logged_in": is_authed,
+                "username": user.get("username", "Guest") if user else "Guest",
+                "is_admin": bool(user.get("is_admin", 0)) if user else False
+            })
+            return
+
+        # 兼容节点列表接口 (供管理端 SPA useNodes 获取)
+        if path == "/api/nodes":
+            user = get_current_user(self.headers)
+            is_adm = user is not None and user.get("is_admin") == 1
+            nodes_list = []
+            
+            komari_tele = {}
+            if komari_engine:
+                try:
+                    komari_tele = komari_engine.get_komari_clients_telemetry()
+                except Exception as e:
+                    print(f"[!] error getting komari telemetry: {e}")
+
+            conn = get_db()
+            try:
+                cur_nodes = conn.execute("SELECT * FROM node ORDER BY sort ASC, id ASC")
+                for r in cur_nodes.fetchall():
+                    d = dict(r)
+                    tok = d.get("token")
+                    tele = komari_tele.get(tok) if tok else None
+                    if tele:
+                        d["online"] = tele.get("online", False)
+                        d["metrics"] = tele.get("metrics")
+                        if tele.get("last_seen"):
+                            d["last_seen"] = tele.get("last_seen")
+                        for k in ("os", "kernel", "arch", "cpu_name", "cpu_cores", "mem_total", "disk_total", "ipv4", "ipv6"):
+                            if tele.get(k) and not d.get(k):
+                                d[k] = tele.get(k)
+                        if tele.get("ipv4") and not d.get("ip"):
+                            d["ip"] = tele.get("ipv4")
+                        if tele.get("region") and not d.get("country"):
+                            d["country"] = tele.get("region")
+                        
+                        # 同步写回 monitor.db 保存持久化元数据与心跳
+                        try:
+                            with conn:
+                                conn.execute("""
+                                    UPDATE node 
+                                    SET last_seen = ?, 
+                                        os = COALESCE(NULLIF(os, ''), ?), 
+                                        kernel = COALESCE(NULLIF(kernel, ''), ?), 
+                                        arch = COALESCE(NULLIF(arch, ''), ?), 
+                                        cpu_name = COALESCE(NULLIF(cpu_name, ''), ?), 
+                                        ipv4 = COALESCE(NULLIF(ipv4, ''), ?), 
+                                        ipv6 = COALESCE(NULLIF(ipv6, ''), ?), 
+                                        ip = COALESCE(NULLIF(ip, ''), ?)
+                                    WHERE id = ?
+                                """, (
+                                    tele.get("last_seen", 0),
+                                    tele.get("os", ""),
+                                    tele.get("kernel", ""),
+                                    tele.get("arch", ""),
+                                    tele.get("cpu_name", ""),
+                                    tele.get("ipv4", ""),
+                                    tele.get("ipv6", ""),
+                                    tele.get("ipv4", ""),
+                                    d.get("id")
+                                ))
+                        except Exception:
+                            pass
+                    else:
+                        d["online"] = False
+                        d["metrics"] = None
+                    nodes_list.append(d)
+            except Exception as e:
+                print(f"[!] /api/nodes error: {e}")
+            conn.close()
+            self.send_json({"nodes": nodes_list, "admin": is_adm})
+            return
+
+        # 兼容系统基础设置接口 (供管理端 SPA 基础状态与注册窗口读取)
+        if path == "/api/settings":
+            conn = get_db()
+            cur = conn.execute("SELECT key, value FROM setting")
+            s_map = {r[0]: r[1] for r in cur.fetchall()}
+            conn.close()
+            defaults = {
+                "sitename": s_map.get("site_name", "HHUB"),
+                "register_key": s_map.get("register_key", ""),
+                "register_until": s_map.get("register_until", "0"),
+                "public_page": "true",
+                "site_url": s_map.get("site_url", ""),
+            }
+            defaults.update(s_map)
+            self.send_json(defaults)
+            return
+
+        # 兼容活跃会话查询接口
+        if path == "/api/sessions":
+            self.send_json([])
             return
 
         # License status API (开源社区版全功能开放，消除任何商业限制)
@@ -2325,6 +2456,31 @@ class ProxyHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/proxy/probe/komari/settings":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            settings = komari_engine.get_probe_settings() if komari_engine else {}
+            status = komari_engine.get_probe_status() if komari_engine else {}
+            self.send_json({"ok": True, "settings": settings, "status": status})
+            return
+
+        if path == "/api/proxy/probe/komari/ping-tasks":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            tasks = komari_engine.get_ping_tasks() if komari_engine else []
+            self.send_json({"ok": True, "tasks": tasks})
+            return
+
+        if path == "/api/proxy/probe/komari/themes":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            t_data = komari_engine.get_themes_config() if komari_engine else {}
+            self.send_json({"ok": True, **t_data})
+            return
+
         if path == "/api/proxy/settings/display":
             if not check_auth(self.headers):
                 self.send_json({"error": "Unauthorized"}, 401)
@@ -2366,6 +2522,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/proxy/settings/probe":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            self.send_json({
+                "ok": True,
+                "probe_url": get_setting("probe_url", "")
+            })
+            return
+
         if path == "/api/proxy/auth/config":
             self.send_json({
                 "ok": True,
@@ -2373,7 +2539,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "smtp_enabled": get_setting("smtp_enabled", "0") == "1",
                 "site_name": get_setting("site_name", "HHUB-加速中心"),
                 "support_tg_enabled": get_setting("support_tg_enabled", "0") == "1",
-                "support_tg_url": get_setting("support_tg_url", "") if get_setting("support_tg_enabled", "0") == "1" else ""
+                "support_tg_url": get_setting("support_tg_url", "") if get_setting("support_tg_enabled", "0") == "1" else "",
+                "probe_url": get_setting("probe_url", "")
             })
             return
 
@@ -3038,7 +3205,149 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True})
             return
 
+        if path == "/api/proxy/probe/komari/settings":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            if not komari_engine:
+                self.send_json({"error": "Komari engine not initialized"}, 500)
+                return
+            ok, msg = komari_engine.update_probe_settings(req)
+            self.send_json({"ok": ok, "message": msg})
+            return
+
+        if path == "/api/proxy/probe/komari/restart":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            if not komari_engine:
+                self.send_json({"error": "Komari engine not initialized"}, 500)
+                return
+            ok, msg = komari_engine.restart_komari_service()
+            self.send_json({"ok": ok, "message": msg})
+            return
+
         # User authentication & self-service endpoints
+        if path in ("/api/auth/logout", "/api/proxy/auth/logout"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Set-Cookie", "monitor_session=; Path=/; Max-Age=0; HttpOnly")
+            self.send_header("Set-Cookie", "session_token=; Path=/; Max-Age=0; HttpOnly")
+            resp_b = b'{"ok":true}'
+            self.send_header("Content-Length", str(len(resp_b)))
+            self.end_headers()
+        if path == "/api/agent/register":
+            auth_h = self.headers.get("Authorization", "")
+            key = auth_h.replace("Bearer ", "").strip()
+            reg_key = get_setting("register_key", "")
+            try:
+                until = int(get_setting("register_until", "0"))
+            except ValueError:
+                until = 0
+            if not key or key != reg_key or time.time() > until:
+                self.send_text("Invalid or expired registration key", 403)
+                return
+            held_token = self.headers.get("X-Node-Token", "").strip()
+            conn = get_db()
+            if held_token:
+                chk = conn.execute("SELECT id, token FROM node WHERE token = ?", (held_token,)).fetchone()
+                if chk:
+                    conn.close()
+                    if komari_engine:
+                        komari_engine.sync_client_to_komari(held_token, "")
+                    self.send_text(held_token, 200)
+                    return
+            name = body_data.strip() if body_data and not body_data.startswith("{") else f"node-{secrets.token_hex(3)}"
+            token = secrets.token_hex(32)
+            now = int(time.time())
+            with conn:
+                cur = conn.execute("""
+                    INSERT INTO node (name, token, created_at, sort, public, cost, cost_currency, billing_cycle)
+                    VALUES (?, ?, ?, 0, 1, 0.0, 'USD', 'monthly')
+                """, (name, token, now))
+            conn.close()
+            if komari_engine:
+                komari_engine.sync_client_to_komari(token, name)
+            self.send_text(token, 200)
+            return
+
+        if path == "/api/nodes":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            name = (req.get("name") or "Node").strip()
+            new_token = secrets.token_hex(32)
+            now = int(time.time())
+            conn = get_db()
+            with conn:
+                cur = conn.execute("""
+                    INSERT INTO node (name, token, created_at, sort, public, cost, cost_currency, billing_cycle)
+                    VALUES (?, ?, ?, 0, 1, 0.0, 'USD', 'monthly')
+                """, (name, new_token, now))
+                new_id = cur.lastrowid
+            conn.close()
+            if komari_engine:
+                komari_engine.sync_client_to_komari(new_token, name)
+            self.send_json({"id": new_id, "name": name, "token": new_token}, 200)
+            return
+
+        if path.startswith("/api/nodes/") and path.endswith("/token"):
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            try:
+                node_id = int(path.split("/")[3])
+            except Exception:
+                self.send_json({"error": "Invalid node ID"}, 400)
+                return
+            new_token = secrets.token_hex(32)
+            conn = get_db()
+            cur = conn.execute("SELECT name FROM node WHERE id = ?", (node_id,))
+            r = cur.fetchone()
+            name = r[0] if r else "Node"
+            with conn:
+                conn.execute("UPDATE node SET token = ? WHERE id = ?", (new_token, node_id))
+            conn.close()
+            if komari_engine:
+                komari_engine.sync_client_to_komari(new_token, name)
+            self.send_json({"token": new_token}, 200)
+            return
+
+        if path == "/api/proxy/probe/komari/settings":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            ok, msg = komari_engine.update_probe_settings(req) if komari_engine else (False, "Komari engine not loaded")
+            self.send_json({"ok": ok, "message": msg}, 200 if ok else 400)
+            return
+
+        if path == "/api/proxy/probe/komari/ping-tasks":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            ok, msg = komari_engine.save_ping_task(req) if komari_engine else (False, "Komari engine not loaded")
+            self.send_json({"ok": ok, "message": msg}, 200 if ok else 400)
+            return
+
+        if path == "/api/proxy/probe/komari/themes":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            ok, msg = komari_engine.save_theme_config(req.get("theme"), req.get("config")) if komari_engine else (False, "Komari engine not loaded")
+            self.send_json({"ok": ok, "message": msg}, 200 if ok else 400)
+            return
+
+        if path == "/api/register-window":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            reg_key = secrets.token_hex(16)
+            until = int(time.time()) + 1800
+            set_setting("register_key", reg_key)
+            set_setting("register_until", str(until))
+            self.send_json({"register_key": reg_key, "register_until": str(until)})
+            return
+
         if path == "/api/proxy/auth/login":
             username = req.get("username", "").strip()
             password = req.get("password", "").strip()
@@ -3062,21 +3371,37 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
             user = dict(user_row)
             pw_ok = verify_password(password, user.get("password_hash", ""))
+            
+            # 若密码未匹配且当前为管理员，自动尝试从 Komari 探针数据库 (users 表) 校验并无感自愈同步
             if not pw_ok and user.get("is_admin") == 1:
-                # 兼容平滑过渡：若当前为管理员且 proxy_user 密码不匹配，自动尝试校验底层 setting 的 admin_password_hash (Argon2)
-                adm_argon_h = get_setting("admin_password_hash", "")
-                if adm_argon_h:
+                if komari_engine:
                     try:
-                        from argon2 import PasswordHasher
-                        ph = PasswordHasher()
-                        if ph.verify(adm_argon_h, password):
+                        k_ok, k_uuid = komari_engine.verify_komari_password(username or "admin", password)
+                        if k_ok:
                             pw_ok = True
                             # 自动将该密码同步回 proxy_user 表，实现双端永久自愈与密码统一
                             new_h = hash_password(password)
                             with conn:
                                 conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (new_h, user["id"]))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[komari password verify error] {e}")
+
+                if not pw_ok:
+                    # 兼容平滑过渡：校验底层 setting 的 admin_password_hash (Argon2)
+                    adm_argon_h = get_setting("admin_password_hash", "")
+                    if adm_argon_h:
+                        try:
+                            from argon2 import PasswordHasher
+                            ph = PasswordHasher()
+                            if ph.verify(adm_argon_h, password):
+                                pw_ok = True
+                                new_h = hash_password(password)
+                                with conn:
+                                    conn.execute("UPDATE proxy_user SET password_hash = ? WHERE id = ?", (new_h, user["id"]))
+                                if komari_engine:
+                                    komari_engine.sync_komari_admin_password(password, username or "admin")
+                        except Exception:
+                            pass
 
             if not pw_ok:
                 conn.close()
@@ -3099,11 +3424,27 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 conn.execute("INSERT OR REPLACE INTO proxy_session_user (token_hash, user_id, created_at) VALUES (?, ?, ?)", (token_hash, user["id"], int(time.time())))
             conn.close()
 
-            # Set cookie
-            cookie_header = f"monitor_session={raw_token}; Path=/; Max-Age={session_days*86400}; SameSite=Lax; HttpOnly"
+            # Set cookies: 同时颁发 ProxyProbe 的 monitor_session 和 Komari 的 session_token
+            cookie_headers = [
+                f"monitor_session={raw_token}; Path=/; Max-Age={session_days*86400}; SameSite=Lax; HttpOnly"
+            ]
+
+            if user.get("is_admin") == 1 and komari_engine:
+                try:
+                    k_uuid = komari_engine.get_komari_admin_uuid(user["username"])
+                    if k_uuid:
+                        client_ip = self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or self.client_address[0]
+                        ua_str = self.headers.get("User-Agent", "")
+                        k_session = komari_engine.create_komari_session(k_uuid, expires_sec=session_days*86400, user_agent=ua_str, ip=client_ip)
+                        if k_session:
+                            cookie_headers.append(f"session_token={k_session}; Path=/; Max-Age={session_days*86400}; SameSite=Lax; HttpOnly")
+                except Exception as e:
+                    print(f"[komari session sync error] {e}")
+
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Set-Cookie", cookie_header)
+            for ch in cookie_headers:
+                self.send_header("Set-Cookie", ch)
             resp_body = json.dumps({
                 "ok": True,
                 "user": {
@@ -4253,6 +4594,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": str(e)}, 400)
             return
 
+        elif path == "/api/proxy/settings/probe":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            probe_url = (req.get("probe_url") or "").strip()
+            set_setting("probe_url", probe_url)
+            self.send_json({"ok": True, "message": "探针监控地址已保存", "probe_url": probe_url})
+            return
+
         elif path == "/api/proxy/settings/support":
             if not check_auth(self.headers):
                 self.send_json({"error": "Unauthorized"}, 401)
@@ -4515,12 +4865,65 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "message": "服务器到期提醒设置已成功保存"})
             return
 
-        elif path == "/api/proxy/server-expiry/test-notify":
+        elif path == "/api/proxy/probe/komari/settings":
             if not check_auth(self.headers):
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
-            ok, msg = check_server_expirations(force=True)
+            ok, msg = komari_engine.update_probe_settings(req) if komari_engine else (False, "Komari engine not loaded")
             self.send_json({"ok": ok, "message": msg})
+            return
+
+        elif path == "/api/proxy/probe/komari/ping-tasks":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            ok, msg = komari_engine.save_ping_task(req) if komari_engine else (False, "Komari engine not loaded")
+            self.send_json({"ok": ok, "message": msg})
+            return
+
+        elif path == "/api/proxy/probe/komari/restart":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            ok = komari_engine.restart_komari_service() if komari_engine else False
+            self.send_json({"ok": ok, "message": "Komari 探针核心已成功重启" if ok else "重启失败"})
+            return
+
+        elif path == "/api/proxy/probe/komari/theme/switch":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            th = req.get("theme", "")
+            ok, msg = komari_engine.save_theme_config(th) if komari_engine else (False, "Komari engine not loaded")
+            self.send_json({"ok": ok, "message": msg})
+            return
+
+        elif path == "/api/proxy/probe/komari/theme/import-url":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            url = req.get("url", "")
+            cid = req.get("custom_id")
+            ok, msg = komari_engine.import_theme_from_url(url, cid) if komari_engine else (False, "Komari engine not loaded")
+            self.send_json({"ok": ok, "message": msg})
+            return
+
+        elif path == "/api/proxy/probe/komari/theme/upload":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            import base64
+            b64_data = req.get("data", "")
+            filename = req.get("filename", "theme.zip")
+            if not b64_data:
+                self.send_json({"ok": False, "message": "未接收到主题文件数据"}, 400)
+                return
+            try:
+                raw_bytes = base64.b64decode(b64_data)
+                ok, msg = komari_engine.import_theme_from_zip(raw_bytes, filename)
+                self.send_json({"ok": ok, "message": msg})
+            except Exception as e:
+                self.send_json({"ok": False, "message": f"解码主题包失败: {e}"}, 400)
             return
 
         self.send_json({"error": "Not Found"}, 404)
@@ -4625,17 +5028,118 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         conn.execute(f"DELETE FROM proxy_node_latency WHERE node_id IN ({','.join('?' for _ in del_node_ids)})", del_node_ids)
                     except Exception:
                         pass
+                del_tok_row = conn.execute("SELECT token FROM node WHERE id = ?", (server_id,)).fetchone()
+                del_tok = del_tok_row[0] if del_tok_row else None
                 conn.execute("DELETE FROM node_proxy_status WHERE node_id = ?", (server_id,))
                 conn.execute("DELETE FROM node WHERE id = ?", (server_id,))
+                if del_tok and komari_engine:
+                    komari_engine.delete_komari_client_by_token(del_tok)
             conn.close()
             threading.Thread(target=apply_all_configs, daemon=True).start()
-            self.send_json({"ok": True, "message": f"服务器及关联的 {len(del_node_ids)} 个节点已彻底清除"})
+            self.send_json({"ok": True, "message": "服务器已删除"})
             return
+
+        if path == "/api/register-window":
+            set_setting("register_key", "")
+            set_setting("register_until", "0")
+            self.send_json({"ok": True})
+            return
+
+        if path.startswith("/api/proxy/probe/komari/ping-tasks/"):
+            try:
+                task_id = int(path.split("/")[-1])
+                ok, msg = komari_engine.delete_ping_task(task_id) if komari_engine else (False, "Komari engine not loaded")
+                self.send_json({"ok": ok, "message": msg}, 200 if ok else 400)
+                return
+            except Exception as e:
+                self.send_json({"ok": False, "message": str(e)}, 400)
+                return
+
+        if path.startswith("/api/proxy/probe/komari/themes/"):
+            try:
+                th_id = path.split("/")[-1]
+                ok, msg = komari_engine.delete_theme(th_id) if komari_engine else (False, "Komari engine not loaded")
+                self.send_json({"ok": ok, "message": msg}, 200 if ok else 400)
+                return
+            except Exception as e:
+                self.send_json({"ok": False, "message": str(e)}, 400)
+                return
+
+        if path.startswith("/api/nodes/"):
+            try:
+                node_id = int(path.split("/")[3])
+                conn = get_db()
+                row = conn.execute("SELECT token FROM node WHERE id = ?", (node_id,)).fetchone()
+                tok = row[0] if row else None
+                with conn:
+                    conn.execute("DELETE FROM node WHERE id = ?", (node_id,))
+                    conn.execute("DELETE FROM proxy_node WHERE server_id = ?", (node_id,))
+                    conn.execute("DELETE FROM node_proxy_status WHERE node_id = ?", (node_id,))
+                conn.close()
+                if tok and komari_engine:
+                    komari_engine.delete_komari_client_by_token(tok)
+                self.send_json({"ok": True, "message": "服务器已删除"})
+                return
+            except Exception as e:
+                self.send_json({"ok": False, "message": str(e)}, 400)
+                return
+
+        self.send_json({"error": "Not Found"}, 404)
+
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if not check_auth(self.headers):
+            self.send_json({"error": "Unauthorized"}, 401)
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        req = {}
+        if content_length > 0:
+            try:
+                body = self.rfile.read(content_length).decode("utf-8")
+                req = json.loads(body)
+            except Exception:
+                pass
+
+        if path == "/api/settings":
+            conn = get_db()
+            with conn:
+                for k, v in req.items():
+                    conn.execute("INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)", (k, str(v)))
+            conn.close()
+            self.send_json({"ok": True})
+            return
+
+        if path.startswith("/api/nodes/"):
+            try:
+                node_id = int(path.split("/")[3])
+                conn = get_db()
+                with conn:
+                    if "name" in req:
+                        conn.execute("UPDATE node SET name = ? WHERE id = ?", (req["name"].strip(), node_id))
+                    if "public" in req:
+                        conn.execute("UPDATE node SET public = ? WHERE id = ?", (1 if req["public"] else 0, node_id))
+                row = conn.execute("SELECT token, name FROM node WHERE id = ?", (node_id,)).fetchone()
+                conn.close()
+                if row and komari_engine:
+                    komari_engine.sync_client_to_komari(row[0], row[1])
+                self.send_json({"ok": True})
+                return
+            except Exception as e:
+                self.send_json({"ok": False, "message": str(e)}, 400)
+                return
 
         self.send_json({"error": "Not Found"}, 404)
 
 if __name__ == "__main__":
     init_db()
+    if komari_engine:
+        try:
+            komari_engine.sync_all_nodes_to_komari()
+            komari_engine.remove_probe_nav_widget()
+        except Exception as e:
+            print(f"[!] Startup komari sync error: {e}")
 
     def _initial_ip_heal():
         time.sleep(1)

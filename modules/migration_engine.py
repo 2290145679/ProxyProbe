@@ -80,6 +80,12 @@ http://{new_domain}, http://{new_domain}:80 {{
     handle /api/proxy/* {{
         reverse_proxy 127.0.0.1:28090
     }}
+    handle /api/me {{
+        reverse_proxy 127.0.0.1:28090
+    }}
+    handle /api/auth/* {{
+        reverse_proxy 127.0.0.1:28090
+    }}
     handle /sub* {{
         reverse_proxy 127.0.0.1:28090
     }}
@@ -121,6 +127,12 @@ http://{new_domain}, http://{new_domain}:80 {{
                 domain_block = f"""
 {new_domain} {{
     handle /api/proxy/* {{
+        reverse_proxy 127.0.0.1:28090
+    }}
+    handle /api/me {{
+        reverse_proxy 127.0.0.1:28090
+    }}
+    handle /api/auth/* {{
         reverse_proxy 127.0.0.1:28090
     }}
     handle /sub* {{

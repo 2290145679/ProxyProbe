@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { AlertTriangle, ExternalLink, LogOut, Moon, Sun } from "lucide-react"
+import { Activity, AlertTriangle, ExternalLink, LogOut, Moon, Sun } from "lucide-react"
 import { Toaster } from "sonner"
 
 import { Admin } from "@/components/Admin"
@@ -15,7 +15,11 @@ type Me = { authed: boolean; github: boolean; site_name: string; public_page: bo
 // `/admin` alone is not a page; it is normalised to the first section so that a
 // bookmark and the OAuth redirect both resolve to a real route.
 function normalise(p: string) {
-  return p === "/admin" || p === "/admin/" ? "/admin/overview" : p.replace(/\/$/, "") || "/admin/overview"
+  if (p === "/admin" || p === "/admin/" || p === "" || p === "/") return "/admin/overview"
+  if (p === "/panel" || p === "/panel/") return "/admin/overview"
+  if (p.startsWith("/panel/")) return p.replace("/panel/", "/admin/")
+  if (!p.startsWith("/admin/")) return "/admin/overview"
+  return p.replace(/\/$/, "") || "/admin/overview"
 }
 
 function usePath() {
@@ -100,6 +104,22 @@ export default function App() {
 
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
+  const [probeUrl, setProbeUrl] = useState("")
+
+  const loadProbeUrl = useCallback(() => {
+    fetch("/api/proxy/auth/config")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.probe_url) {
+          setProbeUrl(d.probe_url)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadProbeUrl()
+  }, [loadProbeUrl])
 
   // 自动检测系统更新 (仅管理员鉴权后执行)
   useEffect(() => {
@@ -245,10 +265,11 @@ export default function App() {
               </>
             )}
           </Button>
-          <Button variant="ghost" size="sm" asChild className="shrink-0 px-2 sm:px-3 text-xs h-8">
-            <a href="/" title="状态面板">
-              <ExternalLink className="size-3.5 shrink-0" />
-              <span className="hidden sm:inline ml-1">状态面板</span>
+          <Button variant="outline" size="sm" asChild className="shrink-0 px-2.5 sm:px-3 text-xs h-8 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20">
+            <a href={probeUrl || "/"} target="_blank" rel="noopener noreferrer" title="直达探针监控大屏与服务状态">
+              <Activity className="size-3.5 shrink-0 animate-pulse text-emerald-500" />
+              <span className="hidden sm:inline ml-1.5 font-medium">探针监控</span>
+              <ExternalLink className="size-3 ml-1 opacity-70 shrink-0" />
             </a>
           </Button>
           <Button
@@ -281,7 +302,7 @@ export default function App() {
 
       <main className="mx-auto max-w-7xl space-y-5 px-4 py-6">
         {error && <p className="text-sm text-destructive">{error}</p>}
-        {!nodes ? (
+        {nodes === null ? (
           <Skeleton className="h-64" />
         ) : (
           <Admin
@@ -298,6 +319,8 @@ export default function App() {
             refusal={provisionRefusal(location.origin, me.site)}
             updateInfo={updateInfo}
             onOpenUpdateDialog={() => setUpdateDialogOpen(true)}
+            probeUrl={probeUrl}
+            onProbeUrlChange={setProbeUrl}
           />
         )}
       </main>

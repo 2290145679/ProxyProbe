@@ -3,7 +3,6 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 
 export default defineConfig({
-  // Served under /admin/ so its hashed assets cannot collide with a theme's.
   base: "/admin/",
   plugins: [react(), tailwindcss()],
   // import.meta.dirname rather than new URL(...).pathname: the latter is

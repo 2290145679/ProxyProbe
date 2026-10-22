@@ -68,9 +68,12 @@ get_current_config() {
         CUR_PROTO="http"
     fi
 
-    # 2. 从 monitor-hub.service 解析内部 HUB 端口
+    # 2. 从 komari.service (或旧 monitor-hub.service) 解析内部 HUB 端口
     CUR_HUB_PORT="28080"
-    if [ -f /etc/systemd/system/monitor-hub.service ]; then
+    if [ -f /etc/systemd/system/komari.service ]; then
+        _HP=$(grep -oE -- '127\.0\.0\.1:[0-9]+' /etc/systemd/system/komari.service 2>/dev/null | awk -F: '{print $2}' || true)
+        if [ -n "$_HP" ]; then CUR_HUB_PORT="$_HP"; fi
+    elif [ -f /etc/systemd/system/monitor-hub.service ]; then
         _HP=$(grep -oE -- '--listen 127.0.0.1:[0-9]+' /etc/systemd/system/monitor-hub.service 2>/dev/null | awk -F: '{print $2}' || true)
         if [ -n "$_HP" ]; then CUR_HUB_PORT="$_HP"; fi
     fi
@@ -117,7 +120,11 @@ view_status() {
     }
 
     _check_service "caddy" "Caddy 网关服务      "
-    _check_service "monitor-hub" "探针主控服务 (Rust) "
+    if [ -f /etc/systemd/system/komari.service ]; then
+        _check_service "komari" "Komari 探针核心服务 "
+    else
+        _check_service "monitor-hub" "探针主控服务 (旧版) "
+    fi
     _check_service "proxy-manager" "代理中枢服务 (ProxyManager)"
 
     echo ""
@@ -175,7 +182,11 @@ restart_all() {
     echo ""
     info "正在重启所有 ProxyProbe 服务..."
     _ensure_caddy_runtime_dir
-    systemctl restart monitor-hub proxy-manager caddy
+    if [ -f /etc/systemd/system/komari.service ]; then
+        systemctl restart komari proxy-manager caddy
+    else
+        systemctl restart monitor-hub proxy-manager caddy
+    fi
     sleep 2
     info "服务重启完成！"
     view_status
@@ -185,7 +196,7 @@ restart_all() {
 stop_all() {
     echo ""
     warn "正在停止所有 ProxyProbe 服务..."
-    systemctl stop monitor-hub proxy-manager caddy 2>/dev/null || true
+    systemctl stop komari monitor-hub proxy-manager caddy 2>/dev/null || true
     info "所有服务已停止！"
 }
 
@@ -193,7 +204,11 @@ stop_all() {
 start_all() {
     echo ""
     info "正在启动所有 ProxyProbe 服务..."
-    systemctl start monitor-hub proxy-manager caddy
+    if [ -f /etc/systemd/system/komari.service ]; then
+        systemctl start komari proxy-manager caddy
+    else
+        systemctl start monitor-hub proxy-manager caddy
+    fi
     sleep 2
     info "服务启动完成！"
     view_status
@@ -383,9 +398,9 @@ http://${NEW_DOM}:${TARGET_PORT} {
         file_server
     }
 
-    # 管理后台前端（React SPA）
-    redir /admin /admin/
-    handle_path /admin* {
+    # ProxyProbe 管理面板前端（React SPA）
+    redir /panel /panel/
+    handle_path /panel* {
         root * ${WEB_DIST}
         try_files {path} /index.html
         file_server
@@ -451,9 +466,9 @@ ${CADDY_SITE} {
         file_server
     }
 
-    # 管理后台前端（React SPA）
-    redir /admin /admin/
-    handle_path /admin* {
+    # ProxyProbe 管理面板前端（React SPA）
+    redir /panel /panel/
+    handle_path /panel* {
         root * ${WEB_DIST}
         try_files {path} /index.html
         file_server
@@ -714,11 +729,10 @@ upgrade_system() {
 
     # 确保 Caddyfile 路由配置正确
     if [ -f /etc/caddy/Caddyfile ]; then
-        if grep -q "handle /admin\*" /etc/caddy/Caddyfile; then
-            sed -i 's|handle /admin\*|handle_path /admin*|g' /etc/caddy/Caddyfile
-        fi
-        if ! grep -q "redir /admin /admin/" /etc/caddy/Caddyfile; then
-            sed -i '/handle_path \/admin\*/i \    redir /admin /admin/' /etc/caddy/Caddyfile
+        if grep -q "handle_path /admin\*" /etc/caddy/Caddyfile; then
+            sed -i 's|redir /admin /admin/||g' /etc/caddy/Caddyfile
+            sed -i 's|handle_path /admin\*|handle_path /panel*|g' /etc/caddy/Caddyfile
+            sed -i '/handle_path \/panel\*/i \    redir /panel /panel/' /etc/caddy/Caddyfile
         fi
     fi
 
@@ -736,14 +750,14 @@ view_logs() {
     echo ""
     echo -e "${BOLD}─── 选择要查看的实时运行日志 ───${N}"
     echo "  [1] 代理业务中枢日志 (proxy-manager: 节点同步/设备限制/流量统计)"
-    echo "  [2] 探针核心日志     (monitor-hub: 遥测心跳/前端 API)"
+    echo "  [2] 探针核心日志     (komari: 遥测心跳/大屏 API)"
     echo "  [3] Caddy 网关访问日志 (SSL证书/外部HTTP请求反代)"
     echo "  [0] 返回上级菜单"
     echo ""
     read -r -p "  请选择 [0-3]: " log_choice
     case "$log_choice" in
         1) journalctl -u proxy-manager -f ;;
-        2) journalctl -u monitor-hub -f ;;
+        2) journalctl -u komari -u monitor-hub -f ;;
         3) journalctl -u caddy -f ;;
         *) return ;;
     esac

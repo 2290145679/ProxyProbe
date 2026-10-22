@@ -4,12 +4,41 @@
         reverse_proxy 127.0.0.1:28090
     }
 
+    handle /api/me {
+        reverse_proxy 127.0.0.1:28090
+    }
+
+    handle /api/auth/* {
+        reverse_proxy 127.0.0.1:28090
+    }
+
+    handle /api/nodes* {
+        reverse_proxy 127.0.0.1:28090
+    }
+
+    handle /api/settings* {
+        reverse_proxy 127.0.0.1:28090
+    }
+
+    handle /api/sessions* {
+        reverse_proxy 127.0.0.1:28090
+    }
+
+    handle /api/register-window* {
+        reverse_proxy 127.0.0.1:28090
+    }
+
     # 远端一键代理脚本
     handle /proxy-agent.sh {
         reverse_proxy 127.0.0.1:28090
     }
 
-    # 增强探针安装脚本与 Xray 离线分发
+    # 增强探针安装脚本与 Xray / Komari-agent 离线分发
+    handle /komari-agent-* {
+        root * /opt/proxyprobe/scripts
+        file_server
+    }
+
     handle /install.sh {
         root * /opt/proxyprobe/scripts
         try_files /install.sh
@@ -31,13 +60,17 @@
         file_server
     }
 
-    # 后台静态资源
+    # 根路径直接跳转到纯节点管理面板后台
+    redir / /admin/ 302
+
+    # ProxyProbe 管理中枢面板前端 (React SPA)
     redir /admin /admin/
     handle_path /admin* {
         root * /opt/proxyprobe/web-admin/dist
         try_files {path} /index.html
         file_server
     }
+    redir /panel /admin/ 301
 
     # 原 Monitor 探针 API、WebSocket 与公开状态页
     handle {

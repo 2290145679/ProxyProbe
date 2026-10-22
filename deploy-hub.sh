@@ -461,6 +461,9 @@ if [ "$IS_IP" = "1" ]; then
   # 纯 IP 模式：使用标准 HTTP 监听，禁用 ACME，并为探针主控注入 Header 避免 Origin 拒绝
   cat > /etc/caddy/Caddyfile << CADDY_EOF
 http://$DOMAIN:$WEB_PORT {
+    # 纯节点管理面板首页直接重定向
+    redir / /admin/ 302
+
     # 代理管理 API（订阅、用户、节点等）
     handle /api/proxy/* {
         reverse_proxy 127.0.0.1:$PM_PORT
@@ -495,13 +498,14 @@ http://$DOMAIN:$WEB_PORT {
         file_server
     }
 
-    # 管理后台前端（React SPA）
+    # ProxyProbe 管理面板前端（React SPA）
     redir /admin /admin/
     handle_path /admin* {
         root * $WEB_DIST
         try_files {path} /index.html
         file_server
     }
+    redir /panel /admin/ 301
 
     # 探针主控（纯 IP 模式：注入伪装 Origin 头与 Sec-Fetch-Site 满足安全校验）
     handle {
@@ -525,6 +529,9 @@ else
 }
 
 $CADDY_SITE {
+    # 纯节点管理面板首页直接重定向
+    redir / /admin/ 302
+
     # 代理管理 API（订阅、用户、节点等）
     handle /api/proxy/* {
         reverse_proxy 127.0.0.1:$PM_PORT
@@ -559,13 +566,14 @@ $CADDY_SITE {
         file_server
     }
 
-    # 管理后台前端（React SPA）
+    # ProxyProbe 管理面板前端（React SPA）
     redir /admin /admin/
     handle_path /admin* {
         root * $WEB_DIST
         try_files {path} /index.html
         file_server
     }
+    redir /panel /admin/ 301
 
     # 探针主控（状态页 + WebSocket 心跳 + API）
     handle {

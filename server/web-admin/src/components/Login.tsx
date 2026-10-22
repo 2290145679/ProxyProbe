@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Send, ArrowLeft } from "lucide-react"
+import { Send, ArrowLeft, Activity, ExternalLink } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -44,12 +44,14 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
     site_name: string
     support_tg_enabled: boolean
     support_tg_url: string
+    probe_url: string
   }>({
     register_enabled: true,
     smtp_enabled: false,
     site_name: "网络聚合代理服务",
     support_tg_enabled: false,
     support_tg_url: "",
+    probe_url: "",
   })
 
   useEffect(() => {
@@ -63,6 +65,7 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
             site_name: d.site_name || "网络聚合代理服务",
             support_tg_enabled: !!d.support_tg_enabled,
             support_tg_url: d.support_tg_url || "",
+            probe_url: d.probe_url || "",
           })
         }
       })
@@ -120,9 +123,11 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
       if (!res.ok || !data.ok) {
         throw new Error(data.message || data.error || "登录失败，请检查账号密码")
       }
+      toast.success("登录成功，正在进入控制台...")
       onDone()
     } catch (err: any) {
       setError(err.message)
+      toast.error(err.message || "登录失败，请检查账号密码")
     } finally {
       setBusy(false)
     }
@@ -502,20 +507,32 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
             )}
         </div>
 
-        {/* Telegram 在线客服入口（管理员开启时展示，默认关闭时 100% 隐藏） */}
-        {authConfig.support_tg_enabled && authConfig.support_tg_url && (
-          <div className="pt-2 border-t text-center">
+        {/* 底部导航直达区：探针实时监控与在线客服 */}
+        <div className="pt-3 border-t flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <a
+            href={authConfig.probe_url || "/"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 transition-colors py-1 px-1.5 -ml-1.5 rounded-md hover:bg-emerald-500/10"
+            title="直达探针监控大屏与服务状态"
+          >
+            <Activity className="size-3.5 text-emerald-500 shrink-0 animate-pulse" />
+            <span>探针实时监控</span>
+            <ExternalLink className="size-3 opacity-60 shrink-0" />
+          </a>
+
+          {authConfig.support_tg_enabled && authConfig.support_tg_url && (
             <a
               href={authConfig.support_tg_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-[#229ED9] transition-colors"
+              className="inline-flex items-center gap-1.5 hover:text-[#229ED9] transition-colors py-1 px-1.5 rounded-md hover:bg-sky-500/10"
             >
-              <Send className="size-3 text-[#229ED9] fill-[#229ED9]" />
-              <span>联系 Telegram 在线客服</span>
+              <Send className="size-3 text-[#229ED9] fill-[#229ED9] shrink-0" />
+              <span>联系客服</span>
             </a>
-          </div>
-        )}
+          )}
+        </div>
       </Card>
     </div>
   )

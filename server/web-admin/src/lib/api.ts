@@ -318,17 +318,16 @@ export function useNodes() {
     let closed = false
 
     const fetchOnce = () =>
-      api<{ nodes: Node[]; admin: boolean }>("/nodes")
+      api<{ nodes?: Node[]; admin?: boolean; data?: any }>("/nodes")
         .then((d) => {
-          setNodes(d.nodes)
-          setAdmin(d.admin)
+          const list = Array.isArray(d?.nodes) ? d.nodes : (Array.isArray(d?.data) ? d.data : [])
+          setNodes(list)
+          setAdmin(d?.admin ?? true)
           setError(null)
         })
         .catch((e: Error) => {
           setError(e.message)
-          // With the public page switched off, a revoked session receives a 401
-          // here and on the stream, so the frame that would report admin=false
-          // never arrives and the panel would retain the list it already had.
+          setNodes((prev) => prev ?? [])
           if (e instanceof ApiError && e.status === 401) setAdmin(false)
         })
 
