@@ -411,8 +411,8 @@ def sync_traffic_control():
         for r in users_rows:
             uid = int(r["id"])
             custom_mbps = int(r["bandwidth_limit_mbps"] or 0)
-            vip = r["vip_level"] or "vip1"
-            tier_mbps = tier_speed_map.get(vip, 0)
+            vip = r["vip_level"] or ""
+            tier_mbps = tier_speed_map.get(vip, 0) if vip else 0
             eff_mbps = custom_mbps if custom_mbps > 0 else tier_mbps
 
             if eff_mbps > 0:

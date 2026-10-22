@@ -203,6 +203,8 @@ def resolve_server_host(r):
     return ipv4 or pub_ip or "127.0.0.1"
 
 def is_local_node(node):
+    if node.get("is_imported"):
+        return False
     s_id = node.get("server_id", 0)
     s_host = str(node.get("server_host", "")).strip()
     s_name = str(node.get("server_name", "")).strip()

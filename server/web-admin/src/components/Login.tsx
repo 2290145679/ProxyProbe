@@ -509,17 +509,19 @@ export function Login({ github, onDone }: { github: boolean; onDone: () => void 
 
         {/* 底部导航直达区：探针实时监控与在线客服 */}
         <div className="pt-3 border-t flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <a
-            href={authConfig.probe_url || "/"}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 transition-colors py-1 px-1.5 -ml-1.5 rounded-md hover:bg-emerald-500/10"
-            title="直达探针监控大屏与服务状态"
-          >
-            <Activity className="size-3.5 text-emerald-500 shrink-0 animate-pulse" />
-            <span>探针实时监控</span>
-            <ExternalLink className="size-3 opacity-60 shrink-0" />
-          </a>
+          {Boolean(authConfig.probe_url && authConfig.probe_url.trim()) && (
+            <a
+              href={authConfig.probe_url.trim()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 transition-colors py-1 px-1.5 -ml-1.5 rounded-md hover:bg-emerald-500/10"
+              title="直达探针监控大屏与服务状态"
+            >
+              <Activity className="size-3.5 text-emerald-500 shrink-0 animate-pulse" />
+              <span>探针实时监控</span>
+              <ExternalLink className="size-3 opacity-60 shrink-0" />
+            </a>
+          )}
 
           {authConfig.support_tg_enabled && authConfig.support_tg_url && (
             <a

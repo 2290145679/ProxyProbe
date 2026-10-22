@@ -28,6 +28,13 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 export type ManagedUser = {
   id: number
@@ -95,7 +102,8 @@ function formatFullDateTime(ts?: number) {
 export function ProxyUsers() {
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [loading, setLoading] = useState(false)
-  const [vipTiers, setVipTiers] = useState<Array<{ id: number; tier_id: string; name: string }>>([])
+  const [vipTiers, setVipTiers] = useState<Array<{ id: number; tier_id: string; tier_key?: string; name: string; is_active?: number }>>([])
+  const enabledTiers = vipTiers.filter(t => t.is_active === 1)
 
   // 余额调整与充值弹窗状态
   const [balanceModalOpen, setBalanceModalOpen] = useState(false)
@@ -109,7 +117,7 @@ export function ProxyUsers() {
   const [createForm, setCreateForm] = useState({
     username: "",
     password: "",
-    vip_level: "vip1",
+    vip_level: "",
     bandwidth_limit_mbps: "0",
     traffic_limit_gb: "200",
     expires_days: "30",
@@ -122,7 +130,7 @@ export function ProxyUsers() {
   const [editOpen, setEditOpen] = useState(false)
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null)
   const [editForm, setEditForm] = useState({
-    vip_level: "vip1",
+    vip_level: "",
     bandwidth_limit_mbps: "0",
     traffic_limit_gb: "",
     expires_date: "",
@@ -138,7 +146,7 @@ export function ProxyUsers() {
       const res = await fetch("/api/proxy/users")
       const data = await res.json()
       if (data.ok && Array.isArray(data.users)) {
-        setUsers(data.users)
+        setUsers(data.users.filter((u: ManagedUser) => !u.is_admin))
       }
       fetch("/api/proxy/tiers")
         .then(r => r.json())
@@ -160,7 +168,7 @@ export function ProxyUsers() {
           .then(res => res.json())
           .then(data => {
             if (data.ok && Array.isArray(data.users)) {
-              setUsers(data.users)
+              setUsers(data.users.filter((u: ManagedUser) => !u.is_admin))
             }
           })
           .catch(() => {})
@@ -180,7 +188,7 @@ export function ProxyUsers() {
         body: JSON.stringify({
           username: createForm.username,
           password: createForm.password,
-          vip_level: createForm.vip_level || "vip1",
+          vip_level: createForm.vip_level || "",
           bandwidth_limit_mbps: parseInt(createForm.bandwidth_limit_mbps) || 0,
           traffic_limit_gb: parseFloat(createForm.traffic_limit_gb) || 200,
           expires_days: parseInt(createForm.expires_days) || 0,
@@ -192,7 +200,7 @@ export function ProxyUsers() {
       if (data.ok) {
         toast.success("用户创建成功！")
         setCreateOpen(false)
-        setCreateForm({ username: "", password: "", vip_level: "vip1", bandwidth_limit_mbps: "0", traffic_limit_gb: "200", expires_days: "30", device_limit: "0", balance: "0" })
+        setCreateForm({ username: "", password: "", vip_level: "", bandwidth_limit_mbps: "0", traffic_limit_gb: "200", expires_days: "30", device_limit: "0", balance: "0" })
         loadUsers()
       } else {
         toast.error(data.message || "创建失败")
@@ -210,7 +218,7 @@ export function ProxyUsers() {
     const limitGb = user.traffic_limit_bytes > 0 ? (user.traffic_limit_bytes / (1024 * 1024 * 1024)).toFixed(0) : "0"
     const dateStr = user.expires_at > 0 ? new Date(user.expires_at * 1000).toISOString().split("T")[0] : ""
     setEditForm({
-      vip_level: user.vip_level || "vip1",
+      vip_level: user.vip_level || "",
       bandwidth_limit_mbps: (user.bandwidth_limit_mbps ?? 0).toString(),
       traffic_limit_gb: limitGb,
       expires_date: dateStr,
@@ -278,7 +286,7 @@ export function ProxyUsers() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          vip_level: editForm.vip_level || "vip1",
+          vip_level: editForm.vip_level || "",
           bandwidth_limit_mbps: parseInt(editForm.bandwidth_limit_mbps) || 0,
           traffic_limit_gb: parseFloat(editForm.traffic_limit_gb) || 0,
           expires_at: expTs,
@@ -439,9 +447,15 @@ export function ProxyUsers() {
                             普通用户
                           </Badge>
                         )}
-                        <Badge className="text-[10px] py-0 px-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 uppercase font-mono font-bold">
-                          {u.vip_level || "vip1"}
-                        </Badge>
+                        {u.vip_level ? (
+                          <Badge className="text-[10px] py-0 px-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 font-medium">
+                            {vipTiers.find(t => (t.tier_key || t.tier_id) === u.vip_level)?.name || u.vip_level}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1 text-muted-foreground border-muted-foreground/30">
+                            无套餐
+                          </Badge>
+                        )}
                         {/* 速率限制徽章 */}
                         {Boolean(u.bandwidth_limit_mbps && u.bandwidth_limit_mbps > 0) ? (
                           <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400 font-mono font-medium" title="管理员专属限速 (覆盖套餐默认值)">
@@ -669,21 +683,23 @@ export function ProxyUsers() {
               <div className="space-y-1.5">
                 <div className="h-5 flex items-center justify-between">
                   <Label className="text-xs shrink-0 whitespace-nowrap">VIP 套餐等级</Label>
-                  <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">如: vip1, vip2</span>
                 </div>
-                <Input
-                  list="vip-tier-list"
-                  className="text-xs h-9 font-mono"
-                  placeholder="默认 vip1"
-                  value={createForm.vip_level}
-                  onChange={e => setCreateForm(prev => ({ ...prev, vip_level: e.target.value }))}
-                  required
-                />
-                <datalist id="vip-tier-list">
-                  {vipTiers.map(t => (
-                    <option key={t.id} value={t.tier_id}>{t.name}</option>
-                  ))}
-                </datalist>
+                <Select
+                  value={createForm.vip_level || "none"}
+                  onValueChange={v => setCreateForm(prev => ({ ...prev, vip_level: v === "none" ? "" : v }))}
+                >
+                  <SelectTrigger className="text-xs h-9">
+                    <SelectValue placeholder="选择 VIP 套餐" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">无套餐</SelectItem>
+                    {enabledTiers.map(t => (
+                      <SelectItem key={t.id || t.tier_id || t.tier_key} value={t.tier_key || t.tier_id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1.5">
@@ -862,15 +878,28 @@ export function ProxyUsers() {
               <div className="space-y-1.5">
                 <div className="h-5 flex items-center justify-between">
                   <Label className="text-xs shrink-0 whitespace-nowrap">VIP 套餐等级</Label>
-                  <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">如: vip1, vip2</span>
                 </div>
-                <Input
-                  className="text-xs h-9 font-mono"
-                  placeholder="默认 vip1 (用于匹配对应 VIP 节点)"
-                  value={editForm.vip_level}
-                  onChange={e => setEditForm(prev => ({ ...prev, vip_level: e.target.value }))}
-                  required
-                />
+                <Select
+                  value={editForm.vip_level || "none"}
+                  onValueChange={v => setEditForm(prev => ({ ...prev, vip_level: v === "none" ? "" : v }))}
+                >
+                  <SelectTrigger className="text-xs h-9">
+                    <SelectValue placeholder="选择 VIP 套餐" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">无套餐</SelectItem>
+                    {enabledTiers.map(t => (
+                      <SelectItem key={t.id || t.tier_id || t.tier_key} value={t.tier_key || t.tier_id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                    {editForm.vip_level && !enabledTiers.some(t => (t.tier_key || t.tier_id) === editForm.vip_level) && (
+                      <SelectItem value={editForm.vip_level}>
+                        {vipTiers.find(t => (t.tier_key || t.tier_id) === editForm.vip_level)?.name || editForm.vip_level}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1.5">

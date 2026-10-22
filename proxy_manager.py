@@ -227,7 +227,8 @@ def init_db():
             ("last_check_time", "INTEGER DEFAULT 0"),
             ("last_check_error", "TEXT DEFAULT ''"),
             ("bandwidth_limit_mbps", "INTEGER DEFAULT 0"),
-            ("vip_levels", "TEXT DEFAULT ''")
+            ("vip_levels", "TEXT DEFAULT ''"),
+            ("is_imported", "INTEGER DEFAULT 0")
         ]:
             try:
                 conn.execute(f"ALTER TABLE proxy_node ADD COLUMN {col_name} {col_type}")
@@ -282,6 +283,7 @@ def init_db():
             ("price_quarterly", "REAL DEFAULT 0"),
             ("price_yearly", "REAL DEFAULT 0"),
             ("traffic_gb", "REAL DEFAULT 0"),
+            ("is_active", "INTEGER DEFAULT 0"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE proxy_tier ADD COLUMN {col_name} {col_def}")
@@ -293,6 +295,7 @@ def init_db():
             conn.execute("UPDATE proxy_tier SET price_monthly = 15.0, price_quarterly = 40.0, price_yearly = 150.0 WHERE tier_key = 'vip1' AND (price_monthly = 0 OR price_monthly IS NULL)")
             conn.execute("UPDATE proxy_tier SET price_monthly = 30.0, price_quarterly = 80.0, price_yearly = 300.0 WHERE tier_key = 'vip2' AND (price_monthly = 0 OR price_monthly IS NULL)")
             conn.execute("UPDATE proxy_tier SET price_monthly = 60.0, price_quarterly = 160.0, price_yearly = 600.0 WHERE tier_key = 'vip3' AND (price_monthly = 0 OR price_monthly IS NULL)")
+            conn.execute("UPDATE proxy_tier SET is_active = 0 WHERE is_active IS NULL")
         except Exception:
             pass
 
@@ -959,7 +962,7 @@ from modules.subscription_engine import (
 init_subscription_context(get_db_fn=get_db, get_setting_fn=get_setting)
 
 
-CURRENT_VERSION = "v2.5.34"
+CURRENT_VERSION = "v2.5.36"
 
 def is_legacy_migration_needed() -> bool:
     """
@@ -1583,7 +1586,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
             # VIP 等级隔离：非管理员用户只能订阅其对应 VIP 等级的节点
             if user.get("is_admin") != 1:
-                u_vip = str(user.get("vip_level") or "vip1").strip().lower()
+                u_vip = str(user.get("vip_level") or "").strip().lower()
                 filtered = []
                 for n in nodes:
                     raw_vips = str(n.get("vip_levels") or "").strip().lower()
@@ -1591,7 +1594,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         filtered.append(n)
                     else:
                         vips = [v.strip() for v in raw_vips.split(",") if v.strip()]
-                        if u_vip in vips:
+                        if u_vip and u_vip in vips:
                             filtered.append(n)
                 nodes = filtered
 
@@ -1823,7 +1826,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
             # VIP 等级隔离：非管理员用户只能看到对应 VIP 等级的节点
             if user.get("is_admin") != 1:
-                u_vip = str(user.get("vip_level") or "vip1").strip().lower()
+                u_vip = str(user.get("vip_level") or "").strip().lower()
                 filtered = []
                 for n in nodes:
                     raw_vips = str(n.get("vip_levels") or "").strip().lower()
@@ -1831,7 +1834,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         filtered.append(n)
                     else:
                         vips = [v.strip() for v in raw_vips.split(",") if v.strip()]
-                        if u_vip in vips:
+                        if u_vip and u_vip in vips:
                             filtered.append(n)
                 nodes = filtered
 
@@ -1847,7 +1850,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         # VIP 套餐列表接口 (公开/用户端与管理端通用)
         if path == "/api/proxy/tiers":
             conn = get_db()
-            cur = conn.execute("SELECT id, tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at, tier_id, price_monthly, price_quarterly, price_yearly, traffic_gb FROM proxy_tier ORDER BY sort_order ASC, id ASC")
+            cur = conn.execute("SELECT id, tier_key, name, description, speed_limit_mbps, device_limit, sort_order, created_at, tier_id, price_monthly, price_quarterly, price_yearly, traffic_gb, is_active FROM proxy_tier ORDER BY sort_order ASC, id ASC")
             tiers = []
             for r in cur.fetchall():
                 d = dict(r)
@@ -1858,6 +1861,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 d["price_yearly"] = round(float(d.get("price_yearly") or 0.0), 2)
                 d["traffic_gb"] = round(float(d.get("traffic_gb") or 0.0), 2)
                 d["bandwidth_limit_mbps"] = int(d.get("speed_limit_mbps") or 0)
+                d["is_active"] = int(d.get("is_active") or 0)
                 tiers.append(d)
             conn.close()
             self.send_json({"ok": True, "tiers": tiers})
@@ -2668,7 +2672,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         if path == "/api/proxy/users":
             conn = get_db()
-            cur = conn.execute("SELECT * FROM proxy_user ORDER BY id ASC")
+            cur = conn.execute("SELECT * FROM proxy_user WHERE is_admin = 0 ORDER BY id ASC")
             users = [dict(r) for r in cur.fetchall()]
             tier_speed_map = {}
             try:
@@ -2702,8 +2706,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 
                 # 速率限制指标计算 (独享限速优先于套餐限速)
                 custom_limit = int(u.get("bandwidth_limit_mbps") or 0)
-                u_vip = u.get("vip_level") or "vip1"
-                tier_limit = tier_speed_map.get(u_vip, 0)
+                u_vip = u.get("vip_level") or ""
+                tier_limit = tier_speed_map.get(u_vip, 0) if u_vip else 0
                 eff_limit = custom_limit if custom_limit > 0 else tier_limit
                 u["bandwidth_limit_mbps"] = custom_limit
                 u["tier_speed_limit_mbps"] = tier_limit
@@ -4085,7 +4089,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             bandwidth_limit_mbps = int(req.get("bandwidth_limit_mbps", 0))
             expires_days = int(req.get("expires_days", 0))
             device_limit = int(req.get("device_limit", 0))
-            vip_level = (req.get("vip_level") or "vip1").strip()
+            vip_level = (req.get("vip_level") or "").strip()
             balance = float(req.get("balance", 0.0) or 0.0)
 
             if not username:
@@ -4193,7 +4197,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 if email is not None:
                     conn.execute("UPDATE proxy_user SET email = ? WHERE id = ?", (str(email).strip(), user_id))
                 if vip_level is not None:
-                    conn.execute("UPDATE proxy_user SET vip_level = ? WHERE id = ?", (str(vip_level).strip() or "vip1", user_id))
+                    conn.execute("UPDATE proxy_user SET vip_level = ? WHERE id = ?", (str(vip_level).strip() if vip_level else "", user_id))
                 if balance is not None:
                     conn.execute("UPDATE proxy_user SET balance = ? WHERE id = ?", (max(0.0, float(balance)), user_id))
                 if new_pwd:
@@ -4594,6 +4598,66 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "message": str(e)}, 400)
             return
 
+        elif path == "/api/proxy/nodes/import":
+            if not check_auth(self.headers):
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            nodes_data = req.get("nodes") or []
+            if not isinstance(nodes_data, list) or not nodes_data:
+                self.send_json({"ok": False, "message": "导入列表为空或格式不正确"}, 400)
+                return
+            conn = get_db()
+            inserted_count = 0
+            now = int(time.time())
+            for n in nodes_data:
+                name = str(n.get("name") or "").strip()
+                if not name:
+                    continue
+                proto = str(n.get("protocol") or "vless_reality").strip()
+                host = str(n.get("server_host") or "127.0.0.1").strip()
+                port = int(n.get("port") or 443)
+                uuid_val = str(n.get("uuid") or "").strip()
+                flow_val = str(n.get("flow") or "").strip()
+                sni_val = str(n.get("sni") or "").strip()
+                dest_val = str(n.get("dest") or "").strip()
+                pbk_val = str(n.get("public_key") or "").strip()
+                pvk_val = str(n.get("private_key") or "").strip()
+                sid_val = str(n.get("short_id") or "").strip()
+                path_val = str(n.get("ws_path") or "").strip()
+                method_val = str(n.get("method") or "").strip()
+                pwd_val = str(n.get("password") or "").strip()
+                uname_val = str(n.get("username") or "").strip()
+                vip_levels_val = str(n.get("vip_levels") or "").strip()
+                conn.execute("""
+                    INSERT INTO proxy_node (
+                        server_id, server_name, server_host, name, protocol, port,
+                        uuid, flow, sni, dest, public_key, private_key, short_id, ws_path,
+                        method, password, username, is_relay, relay_server_id, relay_port,
+                        remote_host, remote_port, target_node_id, bandwidth_limit_mbps,
+                        vip_levels, is_imported, enabled, created_at
+                    ) VALUES (
+                        0, '外部保底', ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, 0, 0, 0,
+                        '', 0, 0, 0,
+                        ?, 1, 1, ?
+                    )
+                """, (
+                    host, name, proto, port,
+                    uuid_val, flow_val, sni_val, dest_val, pbk_val, pvk_val, sid_val, path_val,
+                    method_val, pwd_val, uname_val,
+                    vip_levels_val, now
+                ))
+                inserted_count += 1
+            conn.commit()
+            conn.close()
+            self.send_json({
+                "ok": True,
+                "message": f"成功导入 {inserted_count} 个保底节点！",
+                "count": inserted_count
+            })
+            return
+
         elif path == "/api/proxy/settings/probe":
             if not check_auth(self.headers):
                 self.send_json({"error": "Unauthorized"}, 401)
@@ -4671,6 +4735,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             price_quarterly = float(req.get("price_quarterly", 0.0) or 0.0)
             price_yearly = float(req.get("price_yearly", 0.0) or 0.0)
             traffic_gb = float(req.get("traffic_gb", 0.0) or 0.0)
+            is_active = int(req.get("is_active", 0) or 0)
 
             if not tier_key:
                 self.send_json({"ok": False, "message": "套餐标识（tier_key / tier_id）不能为空"}, 400)
@@ -4685,15 +4750,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     conn.execute("""
                         UPDATE proxy_tier
                         SET tier_key = ?, tier_id = ?, name = ?, description = ?, speed_limit_mbps = ?, device_limit = ?, sort_order = ?,
-                            price_monthly = ?, price_quarterly = ?, price_yearly = ?, traffic_gb = ?
+                            price_monthly = ?, price_quarterly = ?, price_yearly = ?, traffic_gb = ?, is_active = ?
                         WHERE id = ?
-                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, traffic_gb, int(t_id)))
+                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, traffic_gb, is_active, int(t_id)))
                     saved_id = int(t_id)
                 else:
                     cur = conn.execute("""
-                        INSERT INTO proxy_tier (tier_key, tier_id, name, description, speed_limit_mbps, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, traffic_gb, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, traffic_gb, int(time.time())))
+                        INSERT INTO proxy_tier (tier_key, tier_id, name, description, speed_limit_mbps, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, traffic_gb, is_active, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (tier_key, tier_id_val, name, description, speed_limit, device_limit, sort_order, price_monthly, price_quarterly, price_yearly, traffic_gb, is_active, int(time.time())))
                     saved_id = cur.lastrowid
             conn.close()
             self.send_json({"ok": True, "id": saved_id, "tier_id": saved_id, "message": "VIP 套餐已成功保存"})

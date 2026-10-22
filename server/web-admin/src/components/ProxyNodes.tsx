@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { 
-  GitFork, Layers, Plus, RefreshCw, Copy, Check, Trash2, 
-  QrCode, Box, Download, AlertCircle, ArrowRightLeft,
+  Layers, Plus, RefreshCw, Copy, Check, Trash2, 
+  QrCode, Download, AlertCircle, ArrowRightLeft,
   SlidersHorizontal, Sparkles, Pencil, ChevronDown, ChevronUp
 } from "lucide-react"
 import { toast } from "sonner"
@@ -51,6 +51,7 @@ export interface ProxyNode {
   target_node_id?: number
   bandwidth_limit_mbps?: number
   vip_levels?: string
+  is_imported?: number
 }
 
 export interface ProxyServer {
@@ -73,12 +74,272 @@ export interface ProxyServer {
   last_seen?: number
 }
 
+export interface ParsedImportNode {
+  id: string
+  name: string
+  protocol: string
+  server_host: string
+  port: number
+  uuid?: string
+  flow?: string
+  sni?: string
+  dest?: string
+  public_key?: string
+  short_id?: string
+  ws_path?: string
+  method?: string
+  password?: string
+  username?: string
+  raw_link: string
+}
 
+function parseSingleLink(link: string): ParsedImportNode | null {
+  const trimmed = link.trim()
+  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) return null
+  if (!trimmed.includes("://")) return null
 
-interface CoreStatus {
-  installed: boolean
-  version: string
-  running: boolean
+  const [scheme, rest] = trimmed.split("://")
+  const s = scheme.toLowerCase()
+
+  // VMess base64
+  if (s === "vmess") {
+    try {
+      let b64 = rest.trim()
+      let tag = ""
+      if (b64.includes("#")) {
+        const parts = b64.split("#")
+        b64 = parts[0]
+        tag = parts[1]
+      }
+      const pad = b64.length % 4
+      if (pad) b64 += "=".repeat(4 - pad)
+      const decoded = decodeURIComponent(escape(atob(b64.replace(/-/g, "+").replace(/_/g, "/"))))
+      const v = JSON.parse(decoded)
+      const host = String(v.add || "").trim()
+      const port = Number(v.port) || 443
+      const name = String(v.ps || "").trim() || (tag ? decodeURIComponent(tag) : `VMess-${host}:${port}`)
+      return {
+        id: Math.random().toString(36).substring(2, 9),
+        name,
+        protocol: "vmess_ws",
+        server_host: host,
+        port,
+        uuid: String(v.id || "").trim(),
+        ws_path: String(v.path || "/vmess-ws").trim(),
+        sni: String(v.host || v.sni || "").trim(),
+        dest: `${v.host || host}:443`,
+        raw_link: trimmed
+      }
+    } catch {
+      return null
+    }
+  }
+
+  let name = ""
+  let mainPart = rest
+  if (mainPart.includes("#")) {
+    const parts = mainPart.split("#")
+    mainPart = parts[0]
+    try {
+      name = decodeURIComponent(parts.slice(1).join("#")).trim()
+    } catch {
+      name = parts.slice(1).join("#").trim()
+    }
+  }
+
+  const queryParams: Record<string, string> = {}
+  if (mainPart.includes("?")) {
+    const [beforeQ, rawQ] = mainPart.split("?")
+    mainPart = beforeQ
+    const sp = new URLSearchParams(rawQ)
+    sp.forEach((val, key) => {
+      queryParams[key] = val
+    })
+  }
+
+  let userinfo = ""
+  let hostPort = mainPart
+  if (mainPart.includes("@")) {
+    const idx = mainPart.lastIndexOf("@")
+    userinfo = mainPart.substring(0, idx)
+    hostPort = mainPart.substring(idx + 1)
+  }
+
+  let host = ""
+  let port = 443
+  if (hostPort.startsWith("[") && hostPort.includes("]:")) {
+    const pIdx = hostPort.lastIndexOf("]:")
+    host = hostPort.substring(1, pIdx)
+    port = Number(hostPort.substring(pIdx + 2)) || 443
+  } else if (hostPort.includes(":")) {
+    const pIdx = hostPort.lastIndexOf(":")
+    host = hostPort.substring(0, pIdx)
+    port = Number(hostPort.substring(pIdx + 1)) || 443
+  } else {
+    host = hostPort
+    port = 443
+  }
+
+  if (!name) {
+    name = `${s.toUpperCase()}-${host}:${port}`
+  }
+
+  try {
+    userinfo = decodeURIComponent(userinfo)
+  } catch {}
+
+  if (s === "vless") {
+    const sec = queryParams["security"] || ""
+    const netType = queryParams["type"] || "tcp"
+    const pbk = queryParams["pbk"] || ""
+    const sid = queryParams["sid"] || ""
+    const sni = queryParams["sni"] || ""
+    const flow = queryParams["flow"] || ""
+    const pathVal = queryParams["path"] || ""
+
+    let proto = "vless_reality"
+    if (sec === "reality") {
+      if (netType === "xhttp" || netType === "splithttp") {
+        proto = "vless_reality_xhttp"
+      } else {
+        proto = "vless_reality"
+      }
+    } else if (netType === "ws") {
+      proto = "vless_ws"
+    }
+
+    return {
+      id: Math.random().toString(36).substring(2, 9),
+      name,
+      protocol: proto,
+      server_host: host,
+      port,
+      uuid: userinfo,
+      public_key: pbk,
+      short_id: sid,
+      sni,
+      flow,
+      ws_path: pathVal || (proto === "vless_reality_xhttp" ? "/xhttp" : "/ws-proxy"),
+      dest: sni ? `${sni}:443` : `${host}:443`,
+      raw_link: trimmed
+    }
+  }
+
+  if (s === "hysteria2" || s === "hy2") {
+    const sni = queryParams["sni"] || ""
+    return {
+      id: Math.random().toString(36).substring(2, 9),
+      name,
+      protocol: "hysteria2",
+      server_host: host,
+      port,
+      password: userinfo,
+      sni: sni || "bing.com",
+      dest: `${sni || "bing.com"}:443`,
+      raw_link: trimmed
+    }
+  }
+
+  if (s === "trojan") {
+    const sni = queryParams["sni"] || ""
+    return {
+      id: Math.random().toString(36).substring(2, 9),
+      name,
+      protocol: "trojan",
+      server_host: host,
+      port,
+      password: userinfo,
+      sni: sni || "bing.com",
+      dest: `${sni || "bing.com"}:443`,
+      raw_link: trimmed
+    }
+  }
+
+  if (s === "ss") {
+    let method = "2022-blake3-aes-128-gcm"
+    let password = userinfo
+    if (!userinfo.includes(":")) {
+      try {
+        let b = userinfo
+        const pad = b.length % 4
+        if (pad) b += "=".repeat(4 - pad)
+        const dec = atob(b.replace(/-/g, "+").replace(/_/g, "/"))
+        if (dec.includes(":")) {
+          const parts = dec.split(":")
+          method = parts[0]
+          password = parts.slice(1).join(":")
+        }
+      } catch {}
+    } else {
+      const parts = userinfo.split(":")
+      method = parts[0]
+      password = parts.slice(1).join(":")
+    }
+    return {
+      id: Math.random().toString(36).substring(2, 9),
+      name,
+      protocol: "ss2022",
+      server_host: host,
+      port,
+      method,
+      password,
+      dest: `${host}:${port}`,
+      raw_link: trimmed
+    }
+  }
+
+  if (s === "socks5") {
+    let username = ""
+    let password = ""
+    if (userinfo.includes(":")) {
+      const parts = userinfo.split(":")
+      username = parts[0]
+      password = parts.slice(1).join(":")
+    } else {
+      username = userinfo
+    }
+    return {
+      id: Math.random().toString(36).substring(2, 9),
+      name,
+      protocol: "socks5",
+      server_host: host,
+      port,
+      username,
+      password,
+      dest: `${host}:${port}`,
+      raw_link: trimmed
+    }
+  }
+
+  return null
+}
+
+function parseAllLinks(text: string): ParsedImportNode[] {
+  let content = text.trim()
+  if (!content) return []
+
+  // Check if entire text is a Base64 subscription
+  if (!content.includes("://") && content.length > 20 && !content.includes("\n")) {
+    try {
+      let b64 = content
+      const pad = b64.length % 4
+      if (pad) b64 += "=".repeat(4 - pad)
+      const decoded = decodeURIComponent(escape(atob(b64.replace(/-/g, "+").replace(/_/g, "/"))))
+      if (decoded.includes("://")) {
+        content = decoded
+      }
+    } catch {}
+  }
+
+  const lines = content.split(/\r?\n/)
+  const result: ParsedImportNode[] = []
+  for (const line of lines) {
+    const parsed = parseSingleLink(line)
+    if (parsed) {
+      result.push(parsed)
+    }
+  }
+  return result
 }
 
 const PROTOCOL_OPTIONS = [
@@ -99,23 +360,18 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
   const [subToken, setSubToken] = useState<string>("")
   const [recommendedPort, setRecommendedPort] = useState<number>(20443)
   const [ipType, setIpType] = useState<"ipv4" | "ipv6" | "custom">("ipv4")
-  const [loading, setLoading] = useState(false)
-  const [statusLoading, setStatusLoading] = useState(false)
-  const [coreActionLoading, setCoreActionLoading] = useState<string | null>(null)
-  const [xrayStatus, setXrayStatus] = useState<CoreStatus>({
-    installed: true,
-    version: "Xray 26.3.27 (Xray, Penetrates Everything.) d2758a0 (go1.26.1 linux/amd64)",
-    running: true,
-  })
-  const [singboxStatus, setSingboxStatus] = useState<CoreStatus>({
-    installed: true,
-    version: "sing-box version 1.14.1 (linux/amd64)",
-    running: true,
-  })
+
+  // Import Dialog states
+  const [importOpen, setImportOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importText, setImportText] = useState("")
+  const [parsedImportNodes, setParsedImportNodes] = useState<ParsedImportNode[]>([])
+  const [importVip, setImportVip] = useState<string>("all")
+  const [importError, setImportError] = useState<string>("")
+
   const [nodeMode, setNodeMode] = useState<"direct" | "relay">("direct")
   const [relayTargetMode, setRelayTargetMode] = useState<"link_existing" | "custom">("link_existing")
   const [selectedTargetNodeId, setSelectedTargetNodeId] = useState<string>("")
-
 
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [subCopied, setSubCopied] = useState(false)
@@ -223,33 +479,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
     })
   }
 
-  const loadStatus = useCallback(async () => {
-    setStatusLoading(true)
-    try {
-      const res = await fetch("/api/proxy/status")
-      if (res.ok) {
-        const data = await res.json()
-        if (data.xray) {
-          setXrayStatus(data.xray)
-        } else if (data.installed !== undefined) {
-          setXrayStatus({ installed: data.installed, version: data.version, running: data.running })
-        }
-        if (data.singbox) {
-          setSingboxStatus(data.singbox)
-        }
-      }
-    } catch {
-      // Keep default
-    } finally {
-      setStatusLoading(false)
-    }
-  }, [])
-
-
-
-
   const loadData = useCallback(async () => {
-    setLoading(true)
     try {
       const res = await fetch("/api/proxy/nodes")
       if (!res.ok) throw new Error("获取节点列表失败")
@@ -266,45 +496,61 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           setServers(sData.servers)
         }
       }
-
-
     } catch (e: any) {
       toast.error(e.message || "加载代理节点失败")
-    } finally {
-      setLoading(false)
     }
   }, [])
 
-  const handleCoreAction = async (core: "xray" | "singbox" | "realm", action: "install" | "uninstall") => {
-    const coreName = core === "xray" ? "Xray-Core" : (core === "singbox" ? "Sing-box" : "Realm")
-    const actionName = action === "install" ? "安装" : "卸载"
-    if (action === "uninstall" && !confirm(`确定要${actionName} ${coreName} 核心吗？卸载后依赖此核心的节点将停止服务。`)) {
+  const handleImportSubmit = async () => {
+    if (parsedImportNodes.length === 0) {
+      setImportError("请至少粘贴一个有效的节点链接！")
       return
     }
-
-    setCoreActionLoading(`${core}-${action}`)
+    setImportError("")
+    setImporting(true)
     try {
-      const res = await fetch(`/api/proxy/core/${core}/${action}`, {
-        method: "POST"
+      const res = await fetch("/api/proxy/nodes/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nodes: parsedImportNodes.map(n => ({
+            name: n.name,
+            protocol: n.protocol,
+            server_host: n.server_host,
+            port: n.port,
+            uuid: n.uuid || "",
+            flow: n.flow || "",
+            sni: n.sni || "",
+            dest: n.dest || (n.sni ? `${n.sni}:443` : ""),
+            public_key: n.public_key || "",
+            short_id: n.short_id || "",
+            ws_path: n.ws_path || "",
+            method: n.method || "2022-blake3-aes-128-gcm",
+            password: n.password || "",
+            username: n.username || "",
+            vip_levels: importVip === "all" ? "all" : importVip
+          }))
+        })
       })
       const data = await res.json()
       if (data.ok) {
-        toast.success(data.message || `${coreName} 核心${actionName}成功！`)
-        await loadStatus()
+        toast.success(data.message || `成功导入 ${data.count || parsedImportNodes.length} 个保底节点！`)
+        setImportOpen(false)
+        setImportText("")
+        setParsedImportNodes([])
         await loadData()
       } else {
-        toast.error(data.message || `${coreName} 核心${actionName}失败`)
+        setImportError(data.message || "导入失败，请检查节点数据")
       }
     } catch (e: any) {
-      toast.error(e.message || `请求执行${actionName}失败`)
+      setImportError(e.message || "网络请求异常，导入失败")
     } finally {
-      setCoreActionLoading(null)
+      setImporting(false)
     }
   }
 
   useEffect(() => {
     loadData()
-    loadStatus()
     fetch("/api/proxy/tiers")
       .then(res => res.json())
       .then(data => {
@@ -313,7 +559,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         }
       })
       .catch(() => {})
-  }, [loadData, loadStatus])
+  }, [loadData])
 
   // Keygen helper
   const handleKeygen = async (proto: string, method?: string) => {
@@ -556,7 +802,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
       toast.success(data.message || "节点创建成功！")
       setDialogOpen(false)
       loadData()
-      loadStatus()
     } catch (err: any) {
       toast.error(err.message || "创建节点出错")
     } finally {
@@ -679,140 +924,7 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
 
   return (
     <div className="space-y-5">
-      {/* Row 1: Dual Core Status: Xray & Sing-box side by side */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {/* Left Card: Xray-Core 核心状态 */}
-        <Card className="p-5 flex flex-col justify-between rounded-xl border bg-card shadow-sm">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <GitFork className="size-4 text-foreground/80" />
-                <h3 className="font-semibold text-sm">Xray-Core 核心状态</h3>
-              </div>
-              {!xrayStatus.installed ? (
-                <Badge variant="outline" className="border-neutral-300 text-muted-foreground rounded-full px-2.5 py-0.5 text-xs font-normal">
-                  未安装
-                </Badge>
-              ) : (
-                <Badge 
-                  className={xrayStatus.running ? "bg-emerald-600 hover:bg-emerald-600 text-white rounded-full px-2.5 py-0.5 text-xs font-normal" : "bg-destructive text-destructive-foreground rounded-full px-2.5 py-0.5 text-xs font-normal"}
-                >
-                  {xrayStatus.running ? "运行中" : "未运行"}
-                </Badge>
-              )}
-            </div>
-
-            <p className="text-xs text-muted-foreground leading-relaxed font-mono whitespace-pre-wrap break-all mb-4">
-              {!xrayStatus.installed 
-                ? "当前服务器尚未安装 Xray-Core 核心。点击下方按钮即可一键自动安装。" 
-                : (xrayStatus.version || "Xray 26.3.27 (Xray, Penetrates Everything.)\n(go1.26.1 linux/amd64)")}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5 pt-2">
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => { loadStatus(); loadData() }} 
-              disabled={statusLoading || loading || !!coreActionLoading}
-              className="text-xs h-8 gap-1.5"
-            >
-              <RefreshCw className={`size-3.5 ${(statusLoading || loading) ? "animate-spin" : ""}`} />
-              刷新状态
-            </Button>
-
-            {!xrayStatus.installed ? (
-              <Button 
-                size="sm" 
-                onClick={() => handleCoreAction("xray", "install")}
-                disabled={!!coreActionLoading}
-                className="text-xs h-8 gap-1.5 bg-black hover:bg-neutral-800 text-white dark:bg-white dark:text-black dark:hover:bg-neutral-200"
-              >
-                <Download className="size-3.5" />
-                {coreActionLoading === "xray-install" ? "正在安装..." : "安装核心"}
-              </Button>
-            ) : (
-              <Button 
-                variant="outline"
-                size="sm" 
-                onClick={() => handleCoreAction("xray", "uninstall")}
-                disabled={!!coreActionLoading}
-                className="text-xs h-8 gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 border-red-200 dark:border-red-900/50"
-              >
-                <Trash2 className="size-3.5" />
-                {coreActionLoading === "xray-uninstall" ? "正在卸载..." : "卸载核心"}
-              </Button>
-            )}
-          </div>
-        </Card>
-
-        {/* Right Card: Sing-box 核心状态 (样式与 Xray 1:1 对齐) */}
-        <Card className="p-5 flex flex-col justify-between rounded-xl border bg-card shadow-sm">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Box className="size-4 text-foreground/80" />
-                <h3 className="font-semibold text-sm">Sing-box 核心状态</h3>
-              </div>
-              {!singboxStatus.installed ? (
-                <Badge variant="outline" className="border-neutral-300 text-muted-foreground rounded-full px-2.5 py-0.5 text-xs font-normal">
-                  未安装
-                </Badge>
-              ) : (
-                <Badge 
-                  className={singboxStatus.running ? "bg-emerald-600 hover:bg-emerald-600 text-white rounded-full px-2.5 py-0.5 text-xs font-normal" : "bg-destructive text-destructive-foreground rounded-full px-2.5 py-0.5 text-xs font-normal"}
-                >
-                  {singboxStatus.running ? "运行中" : "未运行"}
-                </Badge>
-              )}
-            </div>
-
-            <p className="text-xs text-muted-foreground leading-relaxed font-mono whitespace-pre-wrap break-all mb-4">
-              {!singboxStatus.installed
-                ? "当前服务器尚未安装 Sing-box 核心。安装后可运行 Hysteria 2、TUIC 等 UDP 高速协议。"
-                : (singboxStatus.version || "sing-box version 1.14.1 (linux/amd64)")}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5 pt-2">
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => { loadStatus(); loadData() }} 
-              disabled={statusLoading || loading || !!coreActionLoading}
-              className="text-xs h-8 gap-1.5"
-            >
-              <RefreshCw className={`size-3.5 ${(statusLoading || loading) ? "animate-spin" : ""}`} />
-              刷新状态
-            </Button>
-
-            {!singboxStatus.installed ? (
-              <Button 
-                size="sm" 
-                onClick={() => handleCoreAction("singbox", "install")}
-                disabled={!!coreActionLoading}
-                className="text-xs h-8 gap-1.5 bg-black hover:bg-neutral-800 text-white dark:bg-white dark:text-black dark:hover:bg-neutral-200"
-              >
-                <Download className="size-3.5" />
-                {coreActionLoading === "singbox-install" ? "正在安装..." : "安装核心"}
-              </Button>
-            ) : (
-              <Button 
-                variant="outline"
-                size="sm" 
-                onClick={() => handleCoreAction("singbox", "uninstall")}
-                disabled={!!coreActionLoading}
-                className="text-xs h-8 gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 border-red-200 dark:border-red-900/50"
-              >
-                <Trash2 className="size-3.5" />
-                {coreActionLoading === "singbox-uninstall" ? "正在卸载..." : "卸载核心"}
-              </Button>
-            )}
-          </div>
-        </Card>
-      </div>
-
-      {/* Row 2: 聚合订阅服务 (一键导入所有节点) - 独立全宽下移 */}
+      {/* 聚合订阅服务 (一键导入所有节点) */}
       <Card className="p-5 flex flex-col justify-between rounded-xl border bg-card shadow-sm">
         <div>
           <div className="flex items-center justify-between mb-3">
@@ -877,19 +989,33 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
               size="sm" 
               variant="outline"
               onClick={() => {
+                setImportText("")
+                setParsedImportNodes([])
+                setImportError("")
+                setImportVip("all")
+                setImportOpen(true)
+              }}
+              className="order-2 sm:order-3 flex-1 sm:flex-initial text-xs h-8 gap-1.5 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 shadow-sm font-medium"
+            >
+              <Download className="size-3.5" />
+              导入节点
+            </Button>
+
+            <Button 
+              size="sm" 
+              variant="outline"
+              onClick={() => {
                 if (serverOptions.length === 0) {
                   toast.error("暂无可用的服务器！请先添加探针服务器。")
                   return
                 }
                 setBatchDialogOpen(true)
               }}
-              className="order-2 sm:order-3 flex-1 sm:flex-initial text-xs h-8 gap-1.5 border-primary/40 text-primary hover:bg-primary/10 shadow-sm font-medium"
+              className="order-3 sm:order-2 flex-1 sm:flex-initial text-xs h-8 gap-1.5 border-primary/40 text-primary hover:bg-primary/10 shadow-sm font-medium"
             >
               <Sparkles className="size-3.5" />
               一键全家桶
             </Button>
-
-
 
             <div className="order-4 sm:order-2 flex items-center justify-between sm:justify-start gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs shrink-0 select-none">
               <div className="flex items-center gap-1.5">
@@ -975,6 +1101,11 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                                   <div className="flex items-center gap-1.5 font-medium text-foreground">
                                     {n.flag && <span className="text-sm select-none leading-none shrink-0">{n.flag}</span>}
                                     <span className="truncate max-w-[120px] font-semibold" title={n.name}>{n.name}</span>
+                                    {Boolean(n.is_imported) && (
+                                      <Badge variant="outline" className="text-[10px] px-1 py-0 border-indigo-500/40 text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 shrink-0 font-normal">
+                                        保底
+                                      </Badge>
+                                    )}
                                   </div>
                                 </TableCell>
 
@@ -1095,6 +1226,169 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                   </Card>
                 )
               })}
+            {/* 外部保底节点分组卡片 */}
+            {(() => {
+              const importedNodes = proxyNodes.filter(n => n.is_imported || n.server_id === 0)
+              if (importedNodes.length === 0) return null
+              const isCollapsed = Boolean(collapsedServers["imported"])
+              return (
+                <Card key="imported_group" className="overflow-hidden border border-indigo-500/30 shadow-xs">
+                  <div
+                    onClick={() => setCollapsedServers(prev => ({ ...prev, imported: !prev.imported }))}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-3.5 bg-indigo-500/5 hover:bg-indigo-500/10 transition cursor-pointer select-none gap-2.5"
+                  >
+                    <div className="flex items-center justify-between w-full sm:w-auto min-w-0 gap-2">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <span className="size-2.5 rounded-full bg-indigo-500 shrink-0" />
+                        <span className="font-bold text-sm text-foreground break-all sm:truncate">
+                          外部保底节点 (第三方/备用)
+                        </span>
+                      </div>
+                      <div className="flex sm:hidden items-center gap-1 text-[11px] text-muted-foreground shrink-0 bg-background/80 px-2 py-0.5 rounded border">
+                        <span>{isCollapsed ? "展开" : "折叠"}</span>
+                        {isCollapsed ? <ChevronDown className="size-3.5" /> : <ChevronUp className="size-3.5" />}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-xs font-mono text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded">
+                        独立直连
+                      </span>
+                      <Badge variant="secondary" className="text-[11px] px-2 py-0.5 font-normal bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20">
+                        {importedNodes.length} 个保底节点
+                      </Badge>
+                      <div className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground ml-1">
+                        <span>{isCollapsed ? "点击展开" : "点击折叠"}</span>
+                        {isCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+                      </div>
+                    </div>
+                  </div>
+
+                  {!isCollapsed && (
+                    <div className="w-full overflow-x-auto border-t">
+                      <Table>
+                        <TableHeader className="bg-muted/10">
+                          <TableRow className="hover:bg-transparent">
+                            <TableHead className="sticky left-0 z-20 bg-background min-w-[130px] max-w-[160px] text-xs font-semibold shadow-[2px_0_4px_-1px_rgba(0,0,0,0.1)]">
+                              节点名称
+                            </TableHead>
+                            <TableHead className="w-[100px] text-xs font-medium">VIP 权限</TableHead>
+                            <TableHead className="w-[140px] text-xs font-medium">协议</TableHead>
+                            <TableHead className="w-[85px] text-xs font-medium">端口</TableHead>
+                            <TableHead className="text-xs font-medium">伪装目标 / SNI</TableHead>
+                            <TableHead className="w-[65px] text-xs font-medium">状态</TableHead>
+                            <TableHead className="w-[190px] text-right text-xs font-medium">操作</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {importedNodes.map((n) => (
+                            <TableRow key={n.id} className="hover:bg-muted/30">
+                              <TableCell className="sticky left-0 z-10 bg-background min-w-[130px] max-w-[160px] text-xs font-medium shadow-[2px_0_4px_-1px_rgba(0,0,0,0.1)]">
+                                <div className="flex items-center gap-1.5 font-medium text-foreground">
+                                  {n.flag && <span className="text-sm select-none leading-none shrink-0">{n.flag}</span>}
+                                  <span className="truncate max-w-[120px] font-semibold" title={n.name}>{n.name}</span>
+                                  <Badge variant="outline" className="text-[10px] px-1 py-0 border-indigo-500/40 text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 shrink-0 font-normal">
+                                    保底
+                                  </Badge>
+                                </div>
+                              </TableCell>
+
+                              <TableCell className="text-xs">
+                                {n.vip_levels ? (
+                                  <div className="flex flex-wrap gap-1">
+                                    {n.vip_levels.split(",").map(v => v.trim()).filter(Boolean).map(v => (
+                                      <Badge key={v} className="text-[10px] py-0 px-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 uppercase font-mono font-semibold">
+                                        {v}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <Badge variant="outline" className="text-[10px] py-0 px-1 text-muted-foreground">
+                                    全员
+                                  </Badge>
+                                )}
+                              </TableCell>
+
+                              <TableCell className="text-xs">
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <span className="inline-block bg-[#7c3aed] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium shadow-sm">
+                                    {formatProtocolBadge(n.protocol)}
+                                  </span>
+                                </div>
+                              </TableCell>
+
+                              <TableCell className="text-xs font-mono text-muted-foreground">
+                                {n.port}
+                              </TableCell>
+
+                              <TableCell className="text-xs font-mono text-muted-foreground truncate max-w-[150px]" title={n.sni || n.server_host}>
+                                {n.sni || n.server_host}
+                              </TableCell>
+
+                              <TableCell>
+                                <Switch
+                                  checked={n.enabled === 1}
+                                  onCheckedChange={() => handleToggle(n.id)}
+                                  className="data-[state=checked]:bg-black dark:data-[state=checked]:bg-white"
+                                />
+                              </TableCell>
+
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  {n.link && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground px-2"
+                                      onClick={() => copyLink(n.link!, n.id)}
+                                    >
+                                      {copiedId === n.id ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+                                      复制链接
+                                    </Button>
+                                  )}
+                                  {n.link && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-7 text-muted-foreground hover:text-foreground"
+                                      onClick={() => showQr(n)}
+                                      title="手机扫码"
+                                    >
+                                      <QrCode className="size-3.5" />
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7 text-muted-foreground hover:text-foreground"
+                                    onClick={() => {
+                                      setEditNode(n)
+                                      setEditOpen(true)
+                                    }}
+                                    title="编辑节点配置"
+                                  >
+                                    <Pencil className="size-3.5" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                    onClick={() => handleDelete(n.id, n.name)}
+                                    title="删除节点"
+                                  >
+                                    <Trash2 className="size-3.5" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </Card>
+              )
+            })()}
           </div>
         ) : (
           <div className="w-full overflow-x-auto">
@@ -1120,13 +1414,18 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
                       <div className="flex items-center gap-1.5 font-medium text-foreground">
                         {n.flag && <span className="text-sm select-none leading-none shrink-0">{n.flag}</span>}
                         <span className="truncate max-w-[120px] font-semibold" title={n.name}>{n.name}</span>
+                        {Boolean(n.is_imported) && (
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 border-indigo-500/40 text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 shrink-0 font-normal">
+                            保底
+                          </Badge>
+                        )}
                       </div>
                     </TableCell>
 
                     <TableCell className="text-xs">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`size-2 rounded-full shrink-0 ${n.is_relay ? "bg-blue-500" : "bg-emerald-500"}`} />
-                        <span className="font-medium text-foreground">{n.server_name}</span>
+                        <span className={`size-2 rounded-full shrink-0 ${n.is_imported ? "bg-indigo-500" : (n.is_relay ? "bg-blue-500" : "bg-emerald-500")}`} />
+                        <span className="font-medium text-foreground">{n.is_imported ? "外部保底" : n.server_name}</span>
                         <Badge 
                           variant={n.server_host.includes(":") ? "secondary" : "outline"} 
                           className={`text-[10px] py-0 px-1 font-mono shrink-0 ${
@@ -1296,6 +1595,150 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Import Node Modal */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="w-[96vw] max-w-2xl max-h-[88vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <div className="size-8 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <Download className="size-4" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-semibold">导入外部保底节点</DialogTitle>
+                <DialogDescription className="text-xs">
+                  批量导入第三方或备用节点链接（支持 vless://, vmess://, hysteria2://, trojan://, ss://, socks5:// 及 Base64 订阅文本）。
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">节点链接或 Base64 订阅内容</Label>
+                <span className="text-[11px] text-muted-foreground font-mono">每行一个节点</span>
+              </div>
+              <textarea
+                value={importText}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setImportText(val)
+                  setImportError("")
+                  const parsed = parseAllLinks(val)
+                  setParsedImportNodes(parsed)
+                }}
+                rows={5}
+                placeholder={"粘贴节点链接或 Base64 订阅内容，每行一个节点：\nvless://uuid@host:port?security=reality&...#美国01保底\nhysteria2://password@host:port?sni=bing.com#香港02保底\ntrojan://password@host:port?sni=bing.com#日本03保底"}
+                className="w-full text-xs font-mono p-3 rounded-lg border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-y"
+              />
+              {importError && (
+                <p className="text-xs text-destructive mt-1 flex items-center gap-1">
+                  <AlertCircle className="size-3.5 shrink-0" />
+                  <span>{importError}</span>
+                </p>
+              )}
+              {importText.trim() && parsedImportNodes.length === 0 && !importError && (
+                <p className="text-xs text-destructive mt-1 flex items-center gap-1">
+                  <AlertCircle className="size-3.5 shrink-0" />
+                  <span>未能识别到有效节点，请确认链接是否包含协议头（如 vless://、hysteria2:// 等）</span>
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">可见 VIP 权限等级</Label>
+                <span className="text-[11px] text-muted-foreground font-mono">保底节点权限控制</span>
+              </div>
+              <Select value={importVip} onValueChange={setImportVip}>
+                <SelectTrigger className="text-xs h-8 w-full">
+                  <SelectValue placeholder="选择 VIP 访问权限" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" className="text-xs font-medium">
+                    🌐 所有用户可见 (全员开放，无权限限制)
+                  </SelectItem>
+                  {vipTiers.map((t) => (
+                    <SelectItem key={t.id || t.tier_key} value={t.tier_key} className="text-xs font-mono">
+                      ⭐ {t.name} ({t.tier_key})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {parsedImportNodes.length > 0 && (
+              <div className="space-y-2 border rounded-lg p-3 bg-muted/20">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Check className="size-4 text-emerald-600" />
+                    <span className="text-xs font-medium text-foreground">
+                      已成功解析 <span className="font-bold text-emerald-600">{parsedImportNodes.length}</span> 个节点
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground">可在下方直接修改节点名称</span>
+                </div>
+
+                <div className="max-h-[220px] overflow-y-auto space-y-2 pr-1">
+                  {parsedImportNodes.map((n, idx) => (
+                    <div key={n.id} className="flex items-center gap-2 p-2 rounded-md bg-background border text-xs">
+                      <span className="text-[11px] font-mono text-muted-foreground w-5 shrink-0">#{idx + 1}</span>
+                      <Badge className="text-[10px] px-1.5 py-0 uppercase shrink-0 font-mono">
+                        {n.protocol.replace("_reality", "").replace("_ws", "").replace("2022", "")}
+                      </Badge>
+                      <Input
+                        value={n.name}
+                        onChange={(e) => {
+                          const newName = e.target.value
+                          setParsedImportNodes(prev => prev.map(item => item.id === n.id ? { ...item, name: newName } : item))
+                        }}
+                        className="h-7 text-xs flex-1"
+                        placeholder="节点名称"
+                      />
+                      <span className="text-[11px] font-mono text-muted-foreground shrink-0 max-w-[120px] truncate" title={`${n.server_host}:${n.port}`}>
+                        {n.server_host}:{n.port}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 text-muted-foreground hover:text-destructive shrink-0"
+                        onClick={() => {
+                          setParsedImportNodes(prev => prev.filter(item => item.id !== n.id))
+                        }}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setImportOpen(false)}
+              className="h-8 text-xs"
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={parsedImportNodes.length === 0 || importing}
+              onClick={handleImportSubmit}
+              className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-medium"
+            >
+              {importing ? "正在导入..." : `确认导入 (${parsedImportNodes.length} 个节点)`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create Node Modal */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -1937,11 +2380,8 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         vipTiers={vipTiers}
         onSuccess={() => {
           loadData()
-          loadStatus()
         }}
       />
-
-
 
       {/* 节点编辑 Dialog */}
       <EditNodeDialog
@@ -1951,7 +2391,6 @@ export function ProxyNodes({ nodes }: { nodes: Node[] }) {
         vipTiers={vipTiers}
         onSuccess={() => {
           loadData()
-          loadStatus()
         }}
       />
 

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react"
-import { Activity, AlertTriangle, ExternalLink, LogOut, Moon, Sun } from "lucide-react"
+import { Activity, AlertTriangle, ExternalLink, KeyRound, LogOut, Moon, Sun } from "lucide-react"
 import { Toaster } from "sonner"
 
 import { Admin } from "@/components/Admin"
 import { Login } from "@/components/Login"
+import { ChangePasswordDialog } from "@/components/ChangePasswordDialog"
 import { UpdateDialog, type UpdateInfo } from "@/components/UpdateDialog"
 import { UserDashboard, type UserProfile } from "@/components/UserDashboard"
 import { Button } from "@/components/ui/button"
@@ -104,6 +105,7 @@ export default function App() {
 
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const [probeUrl, setProbeUrl] = useState("")
 
   const loadProbeUrl = useCallback(() => {
@@ -265,12 +267,23 @@ export default function App() {
               </>
             )}
           </Button>
-          <Button variant="outline" size="sm" asChild className="shrink-0 px-2.5 sm:px-3 text-xs h-8 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20">
-            <a href={probeUrl || "/"} target="_blank" rel="noopener noreferrer" title="直达探针监控大屏与服务状态">
-              <Activity className="size-3.5 shrink-0 animate-pulse text-emerald-500" />
-              <span className="hidden sm:inline ml-1.5 font-medium">探针监控</span>
-              <ExternalLink className="size-3 ml-1 opacity-70 shrink-0" />
-            </a>
+          {Boolean(probeUrl && probeUrl.trim()) && (
+            <Button variant="outline" size="sm" asChild className="shrink-0 px-2.5 sm:px-3 text-xs h-8 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20">
+              <a href={probeUrl.trim()} target="_blank" rel="noopener noreferrer" title="直达探针监控大屏与服务状态">
+                <Activity className="size-3.5 shrink-0 animate-pulse text-emerald-500" />
+                <span className="hidden sm:inline ml-1.5 font-medium">探针监控</span>
+                <ExternalLink className="size-3 ml-1 opacity-70 shrink-0" />
+              </a>
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setChangePasswordOpen(true)}
+            className="shrink-0 size-8 text-muted-foreground hover:text-foreground cursor-pointer"
+            title="修改管理员密码"
+          >
+            <KeyRound className="size-4" />
           </Button>
           <Button
             variant="ghost"
@@ -298,6 +311,11 @@ export default function App() {
         onOpenChange={setUpdateDialogOpen}
         updateInfo={updateInfo}
         onUpdateInfoChange={setUpdateInfo}
+      />
+
+      <ChangePasswordDialog
+        open={changePasswordOpen}
+        onOpenChange={setChangePasswordOpen}
       />
 
       <main className="mx-auto max-w-7xl space-y-5 px-4 py-6">

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
-import { Activity, AlertTriangle, BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronRight, Copy, CreditCard, Database, Download, ExternalLink, Globe, GripVertical, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, Shield, SlidersHorizontal, Sparkles, Trash2, Truck, Upload, Users, XCircle } from "lucide-react"
+import { Activity, AlertTriangle, BarChart3, Bell, Bot, CalendarClock, Check, CheckCircle, ChevronDown, ChevronRight, ChevronUp, Copy, CreditCard, Database, Download, ExternalLink, Eye, EyeOff, Globe, GripVertical, Mail, Megaphone, PackageCheck, Pencil, Plus, Radio, RefreshCw, Rocket, Search, Send, Server, Settings, SlidersHorizontal, Sparkles, Trash2, Truck, Upload, Users, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/clipboard"
 
@@ -885,173 +885,7 @@ function InstallDialog({ node, site, onClose, onRotated }: {
   )
 }
 
-function ServerDisplaySettingsDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-}) {
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [settings, setSettings] = useState({
-    public_show_price: false,
-    public_show_expiry: false,
-    public_show_traffic_limit: false,
-    total_cost_currency: "CNY",
-  })
-
-  useEffect(() => {
-    if (open) {
-      setLoading(true)
-      fetch("/api/proxy/settings/display")
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.ok) {
-            setSettings({
-              public_show_price: !!data.public_show_price,
-              public_show_expiry: !!data.public_show_expiry,
-              public_show_traffic_limit: !!data.public_show_traffic_limit,
-              total_cost_currency: data.total_cost_currency || "CNY",
-            })
-          }
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false))
-    }
-  }, [open])
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      const res = await fetch("/api/proxy/settings/display", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      })
-      const data = await res.json()
-      if (data.ok) {
-        toast.success(data.message || "展示权限设置已保存")
-        onOpenChange(false)
-      } else {
-        toast.error(data.message || "保存失败")
-      }
-    } catch {
-      toast.error("网络请求失败")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[94vw] max-w-md sm:max-w-lg p-4 sm:p-6 space-y-4 max-h-[88vh] overflow-y-auto overflow-x-hidden">
-        <DialogHeader>
-          <DialogTitle className="text-base sm:text-lg font-bold flex items-center gap-2">
-            <Shield className="size-5 text-primary" />
-            <span>服务器公开信息展示权限</span>
-          </DialogTitle>
-          <DialogDescription className="text-xs leading-relaxed">
-            选择向公开探针主页展示哪些数据。关闭后相应数据仅管理员可见，访客与已登录客户均不可见，保护服务器成本与配额隐私。
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-3 pt-1">
-          <div className="flex items-start justify-between gap-3 p-3 rounded-lg border bg-muted/20">
-            <div className="space-y-0.5 min-w-0 pr-2">
-              <span className="text-xs font-semibold flex items-center gap-1.5">
-                💰 展示服务器续费价格
-              </span>
-              <p className="text-[11px] text-muted-foreground leading-snug">
-                默认关闭（严格仅超级管理员登录可见；访客与已登录客户均不可见，彻底保护续费成本隐私）。
-              </p>
-            </div>
-            <Switch
-              checked={settings.public_show_price}
-              onCheckedChange={(v) => setSettings((s) => ({ ...s, public_show_price: v }))}
-              disabled={loading || saving}
-              className="shrink-0 mt-0.5"
-            />
-          </div>
-
-          <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/20">
-            <div className="space-y-0.5 min-w-0 pr-2">
-              <span className="text-xs font-semibold flex items-center gap-1.5">
-                💱 总服务器费用统计货币
-              </span>
-              <p className="text-[11px] text-muted-foreground leading-snug">
-                探针首页顶部总费用统一折算展示的币种（单个服务器卡片仍保留原有设置的货币）。
-              </p>
-            </div>
-            <Select
-              value={settings.total_cost_currency || "CNY"}
-              onValueChange={(v) => setSettings((s) => ({ ...s, total_cost_currency: v }))}
-              disabled={loading || saving}
-            >
-              <SelectTrigger className="w-32 h-8 text-xs shrink-0">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="CNY">¥ CNY (人民币)</SelectItem>
-                <SelectItem value="USD">$ USD (美元)</SelectItem>
-                <SelectItem value="EUR">€ EUR (欧元)</SelectItem>
-                <SelectItem value="HKD">HK$ HKD (港币)</SelectItem>
-                <SelectItem value="GBP">£ GBP (英镑)</SelectItem>
-                <SelectItem value="JPY">¥ JPY (日元)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex items-start justify-between gap-3 p-3 rounded-lg border bg-muted/20">
-            <div className="space-y-0.5 min-w-0 pr-2">
-              <span className="text-xs font-semibold flex items-center gap-1.5">
-                ⏳ 展示到期与剩余时间
-              </span>
-              <p className="text-[11px] text-muted-foreground leading-snug">
-                开启后，公开卡片展示到期时间与剩余可用天数；关闭后仅管理员登录可见。
-              </p>
-            </div>
-            <Switch
-              checked={settings.public_show_expiry}
-              onCheckedChange={(v) => setSettings((s) => ({ ...s, public_show_expiry: v }))}
-              disabled={loading || saving}
-              className="shrink-0 mt-0.5"
-            />
-          </div>
-
-          <div className="flex items-start justify-between gap-3 p-3 rounded-lg border bg-muted/20">
-            <div className="space-y-0.5 min-w-0 pr-2">
-              <span className="text-xs font-semibold flex items-center gap-1.5">
-                📊 展示流量限额与剩余流量
-              </span>
-              <p className="text-[11px] text-muted-foreground leading-snug">
-                开启后，公开卡片展示月度限额与剩余比例；关闭后卡片仅显示已用流量（隐藏限额与剩余量）。
-              </p>
-            </div>
-            <Switch
-              checked={settings.public_show_traffic_limit}
-              onCheckedChange={(v) => setSettings((s) => ({ ...s, public_show_traffic_limit: v }))}
-              disabled={loading || saving}
-              className="shrink-0 mt-0.5"
-            />
-          </div>
-        </div>
-
-        <DialogFooter className="flex flex-row justify-end gap-2 pt-2">
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={saving} className="text-xs">
-            取消
-          </Button>
-          <Button size="sm" onClick={handleSave} disabled={loading || saving} className="text-xs">
-            {saving ? "保存中…" : "保存权限设置"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () => void; site: string; refusal: string }) {
-  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Node | null>(null)
   const [billing, setBilling] = useState<Node | null>(null)
@@ -1152,16 +986,6 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
       {refusal && <p className="text-sm text-muted-foreground">{refusal}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <NodeSearch className="mr-auto w-full sm:w-64" value={query} onChange={setQuery} />
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={() => setDisplaySettingsOpen(true)}
-          className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
-          title="服务器公开信息展示权限（访客视图控制）"
-          aria-label="服务器公开信息展示权限"
-        >
-          <Settings className="size-4" />
-        </Button>
         {/* An open window is visible from the list itself, so nobody has to
             remember they left one open. */}
         <Button 
@@ -1375,11 +1199,6 @@ function Nodes({ nodes, refresh, site, refusal }: { nodes: Node[]; refresh: () =
           )}
         </ConfirmDialog>
       )}
-
-      <ServerDisplaySettingsDialog
-        open={displaySettingsOpen}
-        onOpenChange={setDisplaySettingsOpen}
-      />
     </div>
   )
 }
@@ -1729,9 +1548,6 @@ function SettingsTab({
         </div>
       </Card>
 
-      {/* 客户端软件下载与上传专区设置 */}
-      <ClientAppsSettingsCard />
-
       {/* 客服支持与 Telegram 联系渠道设置 */}
       <TelegramSupportSettingsCard />
 
@@ -1816,7 +1632,7 @@ function ProbeMonitorSettingsCard({
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="例如：https://hub.yohoo.xyz 或留空默认为根路径 /"
+              placeholder="例如：https://komari.yohoo.xyz 或留空表示不开启探针入口"
               className="text-xs font-mono h-9 flex-1"
             />
             <Button
@@ -1829,7 +1645,7 @@ function ProbeMonitorSettingsCard({
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground leading-relaxed">
-            在此填写部署后的探针大屏地址。保存后，顶部导航栏和登录界面的【探针监控】直达入口将自动跳转到该地址。
+            默认留空关闭。在此填写独立部署的探针大屏地址（如 Komari、哪吒等）。填写并保存后，顶部导航栏和登录界面的【探针监控】直达入口将自动展示并跳转至该地址；留空则完全隐藏探针入口。
           </p>
         </div>
       </div>
@@ -1851,6 +1667,7 @@ function VipTierSettingsCard() {
     device_limit: "0",
     speed_limit_mbps: "0",
     description: "",
+    is_active: 0,
   })
   const [saving, setSaving] = useState(false)
 
@@ -1866,7 +1683,7 @@ function VipTierSettingsCard() {
 
   const handleOpenCreate = () => {
     setEditingTier(null)
-    setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", speed_limit_mbps: "0", description: "" })
+    setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", speed_limit_mbps: "0", description: "", is_active: 0 })
     setCreateOpen(true)
   }
 
@@ -1882,8 +1699,32 @@ function VipTierSettingsCard() {
       device_limit: String(t.device_limit ?? 0),
       speed_limit_mbps: String(t.speed_limit_mbps ?? t.bandwidth_limit_mbps ?? 0),
       description: t.description || "",
+      is_active: t.is_active === 1 ? 1 : 0,
     })
     setCreateOpen(true)
+  }
+
+  const handleToggleActive = async (t: any) => {
+    try {
+      const nextActive = t.is_active === 1 ? 0 : 1
+      const res = await fetch("/api/proxy/tiers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...t,
+          is_active: nextActive,
+        }),
+      })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(nextActive === 1 ? `已开启【${t.name}】套餐展示` : `已关闭【${t.name}】套餐展示`)
+        loadTiers()
+      } else {
+        toast.error(d.message || "切换状态失败")
+      }
+    } catch {
+      toast.error("网络请求错误")
+    }
   }
 
   const handleSaveTier = async (e: React.FormEvent) => {
@@ -1901,6 +1742,7 @@ function VipTierSettingsCard() {
         speed_limit_mbps: parseInt(form.speed_limit_mbps) || 0,
         bandwidth_limit_mbps: parseInt(form.speed_limit_mbps) || 0,
         description: form.description.trim(),
+        is_active: form.is_active ? 1 : 0,
       }
       if (editingTier) {
         payload.id = editingTier.id
@@ -1915,7 +1757,7 @@ function VipTierSettingsCard() {
         toast.success(d.message || (editingTier ? "VIP 套餐修改成功！" : "VIP 套餐添加成功！"))
         setCreateOpen(false)
         setEditingTier(null)
-        setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", speed_limit_mbps: "0", description: "" })
+        setForm({ tier_id: "", name: "", price_monthly: "0", price_quarterly: "0", price_yearly: "0", traffic_gb: "200", device_limit: "0", speed_limit_mbps: "0", description: "", is_active: 0 })
         loadTiers()
       } else {
         toast.error(d.message || "操作失败")
@@ -1951,7 +1793,7 @@ function VipTierSettingsCard() {
             <Sparkles className="size-4 text-amber-500" /> VIP 等级套餐与节点物理隔离
           </h3>
           <p className="text-xs text-muted-foreground">
-            自定义 VIP 权限等级（如 vip1, vip2）。在节点上标记对应等级后，只有该等级的用户可以获取与订阅，不同等级节点物理隔离不可见。
+            自定义 VIP 权限等级（如 vip1, vip2）。在节点上标记对应等级后，只有该等级的用户可以获取与订阅，不同等级节点物理隔离不可见。默认套餐为关闭状态，按需开启。
           </p>
         </div>
         <Button size="sm" onClick={handleOpenCreate} className="gap-1.5 text-xs h-8">
@@ -1972,9 +1814,20 @@ function VipTierSettingsCard() {
               <div key={t.id} className="p-3.5 rounded-lg border bg-muted/20 space-y-2 flex flex-col justify-between">
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 uppercase font-mono font-bold text-xs">
-                      {t.tier_id}
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 uppercase font-mono font-bold text-xs">
+                        {t.tier_id}
+                      </Badge>
+                      {t.is_active === 1 ? (
+                        <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] py-0 h-4">
+                          已启用
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-muted-foreground text-[10px] py-0 h-4 border-dashed">
+                          已关闭
+                        </Badge>
+                      )}
+                    </div>
                     <span className="font-semibold text-xs text-foreground">{t.name}</span>
                   </div>
                   {t.description && (
@@ -1998,6 +1851,16 @@ function VipTierSettingsCard() {
                   </div>
                 </div>
                 <div className="flex justify-end gap-1 pt-2 border-t">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleToggleActive(t)}
+                    className="h-6 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                    title={t.is_active === 1 ? "点击关闭客户端展示" : "点击开启客户端展示"}
+                  >
+                    {t.is_active === 1 ? <EyeOff className="size-3 text-amber-500" /> : <Eye className="size-3 text-emerald-500" />}
+                    <span>{t.is_active === 1 ? "隐藏" : "启用"}</span>
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -2159,6 +2022,17 @@ function VipTierSettingsCard() {
                 placeholder="如: 包含香港/日本节点，高速低延迟"
                 value={form.description}
                 onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))}
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/20">
+              <div className="space-y-0.5">
+                <Label className="text-xs font-semibold">开启此套餐对外展示</Label>
+                <p className="text-[11px] text-muted-foreground">关闭时客户端用户商城不可见，默认关闭以按需开启</p>
+              </div>
+              <Switch
+                checked={form.is_active === 1}
+                onCheckedChange={(c) => setForm(prev => ({ ...prev, is_active: c ? 1 : 0 }))}
               />
             </div>
 
@@ -2534,118 +2408,8 @@ function AnnouncementsTab() {
     <div className="space-y-4">
       <AnnouncementSettingsCard />
       <GlobalNotificationSettingsCard />
+      <ClientAppsSettingsCard />
     </div>
-  )
-}
-
-function ServerExpirySettingsCard() {
-  const [enabled, setEnabled] = useState(false)
-  const [remindDays, setRemindDays] = useState(3)
-  const [saving, setSaving] = useState(false)
-  const [testing, setTesting] = useState(false)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    fetch("/api/proxy/settings/server-expiry")
-      .then(r => r.json())
-      .then(d => {
-        if (d.ok) {
-          setEnabled(Boolean(d.enabled))
-          if (d.remind_days_before !== undefined) setRemindDays(d.remind_days_before)
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      const res = await fetch("/api/proxy/settings/server-expiry", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enabled: enabled ? 1 : 0,
-          remind_days_before: parseInt(String(remindDays)) || 3,
-        }),
-      })
-      const d = await res.json()
-      if (d.ok) toast.success(d.message || "服务器到期提醒设置已保存")
-      else toast.error(d.message || "保存失败")
-    } catch {
-      toast.error("网络请求错误")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleTestNotify = async () => {
-    setTesting(true)
-    try {
-      const res = await fetch("/api/proxy/server-expiry/test-notify", { method: "POST" })
-      const d = await res.json()
-      if (d.ok) toast.success(d.message || "已执行到期检测与 TG 推送！")
-      else toast.error(d.message || "推送未成功，请检查 TG Bot 配置")
-    } catch {
-      toast.error("网络请求错误")
-    } finally {
-      setTesting(false)
-    }
-  }
-
-  return (
-    <Card className="gap-4 p-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
-        <div className="space-y-1">
-          <h3 className="text-sm font-bold flex items-center gap-2">
-            <CalendarClock className="size-4 text-rose-500" /> 服务器到期提醒与 TG 自动推送
-          </h3>
-          <p className="text-xs text-muted-foreground">
-            自动扫描各服务器的到期时间（expires_at）。在服务器到期前 N 天自动向管理员 Telegram 发送警报通知，防止漏续费导致业务中断。
-          </p>
-        </div>
-        <Badge variant={enabled ? "secondary" : "outline"} className={enabled ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" : ""}>
-          {enabled ? "监控中" : "已关闭"}
-        </Badge>
-      </div>
-
-      <div className="space-y-4 pt-1">
-        <div className="flex items-center gap-2 text-sm">
-          <Switch checked={enabled} onCheckedChange={setEnabled} id="server-expiry-toggle" />
-          <Label htmlFor="server-expiry-toggle" className="cursor-pointer text-xs font-medium">
-            开启服务器到期 Telegram 自动推送提醒
-          </Label>
-        </div>
-
-        {enabled && (
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">提前提醒天数</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  min="1"
-                  max="60"
-                  value={remindDays}
-                  onChange={e => setRemindDays(parseInt(e.target.value) || 3)}
-                  className="text-xs h-9 font-mono w-28"
-                />
-                <span className="text-xs text-muted-foreground">天 (在到期日前持续发送 TG 告警)</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 pt-1">
-          <Button size="sm" onClick={handleSave} disabled={saving || loading} className="text-xs h-8">
-            {saving ? "保存中..." : "保存到期提醒配置"}
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleTestNotify} disabled={testing} className="text-xs h-8 gap-1.5">
-            <Send className="size-3.5" /> {testing ? "检测中..." : "立即检测并测试 TG 推送"}
-          </Button>
-        </div>
-      </div>
-    </Card>
   )
 }
 
@@ -2969,6 +2733,7 @@ function GlobalNotificationSettingsCard() {
 }
 
 function ClientAppsSettingsCard() {
+  const [expanded, setExpanded] = useState(false)
   const [apps, setApps] = useState<any[]>([])
   const [createOpen, setCreateOpen] = useState(false)
   const [editingApp, setEditingApp] = useState<any | null>(null)
@@ -3102,82 +2867,105 @@ function ClientAppsSettingsCard() {
 
   return (
     <Card className="gap-4 p-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+      <div
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer select-none"
+        onClick={() => setExpanded(!expanded)}
+      >
         <div className="space-y-1">
-          <h3 className="text-sm font-bold flex items-center gap-2">
-            <Download className="size-4 text-emerald-500" /> 客户端软件下载与上传专区
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-bold flex items-center gap-2">
+              <Download className="size-4 text-emerald-500" /> 客户端软件下载与上传专区
+            </h3>
+            <Badge variant="outline" className="text-[10px] text-muted-foreground font-mono">
+              {apps.length} 个客户端
+            </Badge>
+          </div>
           <p className="text-xs text-muted-foreground">
-            上传翻墙客户端安装包或提供镜像外链，预设 Clash、NekoBox、FLClash、Hiddify 等。用户在中心专区可自主选择「本地服务器高速下载」或「官方镜像直链下载」。
+            上传翻墙客户端安装包或提供镜像外链，预设 Clash、NekoBox、FLClash、Hiddify 等。用户在中心专区可自主下载。
           </p>
         </div>
-        <Button size="sm" onClick={handleOpenCreate} className="gap-1.5 text-xs h-8">
-          <Plus className="size-3.5" /> 上传 / 添加软件
-        </Button>
+        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          {expanded && (
+            <Button size="sm" onClick={handleOpenCreate} className="gap-1.5 text-xs h-8">
+              <Plus className="size-3.5" /> 上传 / 添加软件
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setExpanded(!expanded)}
+            className="gap-1 text-xs h-8 text-muted-foreground hover:text-foreground"
+          >
+            {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+            <span>{expanded ? "折叠收起" : "展开配置"}</span>
+          </Button>
+        </div>
       </div>
 
-      <div className="pt-2">
-        {apps.length === 0 ? (
-          <div className="p-6 text-center text-xs text-muted-foreground">
-            暂无已添加的软件，点击右上角【上传 / 添加软件】添加翻墙客户端。
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {apps.map((app) => (
-              <div key={app.id} className="p-3.5 rounded-lg border bg-muted/20 space-y-2 flex flex-col justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-foreground truncate">{app.name}</span>
-                    <Badge variant="outline" className="text-[10px] font-mono">
-                      {app.platform}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <span>版本: {app.version || "最新版"}</span>
-                    <span>·</span>
-                    <span>下载: {app.downloads || 0} 次</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1 pt-1">
-                    {app.has_local_file === 1 ? (
-                      <Badge className="text-[10px] bg-emerald-500/10 text-emerald-600 border border-emerald-500/30">
-                        ⚡ 本地高速安装包
+      {expanded && (
+        <div className="pt-2 border-t mt-2">
+          {apps.length === 0 ? (
+            <div className="p-6 text-center text-xs text-muted-foreground">
+              暂无已添加的软件，点击右上角【上传 / 添加软件】添加翻墙客户端。
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {apps.map((app) => (
+                <div key={app.id} className="p-3.5 rounded-lg border bg-muted/20 space-y-2 flex flex-col justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-foreground truncate">{app.name}</span>
+                      <Badge variant="outline" className="text-[10px] font-mono">
+                        {app.platform}
                       </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                        仅外链直链
-                      </Badge>
-                    )}
-                    {app.mirror_url && (
-                      <Badge className="text-[10px] bg-blue-500/10 text-blue-600 border border-blue-500/30">
-                        🌐 官方镜像外链
-                      </Badge>
-                    )}
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>版本: {app.version || "最新版"}</span>
+                      <span>·</span>
+                      <span>下载: {app.downloads || 0} 次</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {app.has_local_file === 1 ? (
+                        <Badge className="text-[10px] bg-emerald-500/10 text-emerald-600 border border-emerald-500/30">
+                          ⚡ 本地高速安装包
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                          仅外链直链
+                        </Badge>
+                      )}
+                      {app.mirror_url && (
+                        <Badge className="text-[10px] bg-blue-500/10 text-blue-600 border border-blue-500/30">
+                          🌐 官方镜像外链
+                        </Badge>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex justify-end gap-1 pt-2 border-t">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleEdit(app)}
-                    className="h-6 px-2 text-primary hover:text-primary hover:bg-primary/10 text-[11px] gap-1"
-                  >
-                    <Pencil className="size-3" /> 编辑
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDelete(app.id)}
-                    className="h-6 px-2 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-[11px] gap-1"
-                  >
-                    <Trash2 className="size-3" /> 删除
-                  </Button>
+                  <div className="flex justify-end gap-1 pt-2 border-t">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleEdit(app)}
+                      className="h-6 px-2 text-primary hover:text-primary hover:bg-primary/10 text-[11px] gap-1"
+                    >
+                      <Pencil className="size-3" /> 编辑
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDelete(app.id)}
+                      className="h-6 px-2 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-[11px] gap-1"
+                    >
+                      <Trash2 className="size-3" /> 删除
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <Dialog open={createOpen} onOpenChange={(open) => {
         setCreateOpen(open)
@@ -3703,42 +3491,7 @@ function ChannelCard({ title, configured, children }: { title: string; configure
   )
 }
 
-// Offline alerts are opt-in per node, so turning them on for a fleet needs one
-// place rather than one dialog per node.
-function OfflineNodes({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
-  const [busy, setBusy] = useState(false)
-
-  async function apply(targets: Node[], on: boolean) {
-    setBusy(true)
-    try {
-      // Awaited in turn, the requests would cost one round trip per node, and
-      // the two-second stream would render each one as it lands.
-      await Promise.all(
-        targets
-          .filter((n) => !!n.notify !== on)
-          .map((n) => api(`/nodes/${n.id}`, { method: "PUT", body: JSON.stringify({ notify: on }) })),
-      )
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      refresh()
-      setBusy(false)
-    }
-  }
-
-  const enabled = new Set(nodes.filter((n) => n.notify).map((n) => n.id))
-  return (
-    <Card className="gap-4 p-5">
-      <div>
-        <h3 className="text-sm font-medium">离线通知</h3>
-        <p className="mt-1 text-xs text-muted-foreground">按服务器打开，默认关。已打开 {enabled.size} / {nodes.length} 台</p>
-      </div>
-      <NodePicker nodes={nodes} chosen={enabled} onPick={apply} disabled={busy} />
-    </Card>
-  )
-}
-
-function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
+function Notify(_props?: { nodes?: Node[]; refresh?: () => void }) {
   const { s, set, save } = useSettings()
   const [testing, setTesting] = useState(false)
   if (!s) return null
@@ -3768,7 +3521,7 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-medium">通知渠道</h3>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Telegram 和 Webhook 配了哪个就发哪个，也可以同时用。离线通知在下方按服务器打开；流量和到期提醒对填了额度、到期日的服务器生效。
+              Telegram 和 Webhook 配了哪个就发哪个，也可以同时用。
             </p>
           </div>
           <Button size="sm" variant="secondary" disabled={testing} onClick={test}>
@@ -3890,45 +3643,6 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
         </div>
       </ChannelCard>
 
-      <OfflineNodes nodes={nodes} refresh={refresh} />
-
-      <Card className="gap-4 p-5">
-        <h3 className="text-sm font-medium">事件</h3>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="离线宽限期（分钟）" hint="断开超过这么久才算离线，1–30">
-            <Input type="number" min={1} max={30}value={text("notify_grace")} onChange={(e) => set("notify_grace", e.target.value)} />
-          </Field>
-          <Field label="流量提醒（%）" hint="本期用量达到该比例和 100% 时各提醒一次，0 关闭">
-            <Input type="number" min={0} max={100} value={text("notify_traffic")} onChange={(e) => set("notify_traffic", e.target.value)} />
-          </Field>
-          <Field label="到期提醒（天）" hint="每天 9 点汇总这么多天内到期的服务器，自动续期时也提醒，0 关闭">
-            <Input type="number" min={0} max={365} value={text("notify_expiry")} onChange={(e) => set("notify_expiry", e.target.value)} />
-          </Field>
-        </div>
-        <div className="flex items-center gap-2 text-sm">
-          <Switch aria-labelledby="notify-login-label" checked={s.notify_login !== "off"} onCheckedChange={(v) => set("notify_login", v ? "on" : "off")} />
-          <span id="notify-login-label">登录后台时提醒</span>
-        </div>
-        <div>
-          <Button
-            size="sm"
-            onClick={() =>
-              save({
-                notify_grace: text("notify_grace"),
-                notify_traffic: text("notify_traffic"),
-                notify_expiry: text("notify_expiry"),
-                notify_login: s.notify_login === "off" ? "off" : "on",
-              })
-            }
-          >
-            保存事件设置
-          </Button>
-        </div>
-      </Card>
-
-      {/* 服务器到期 Telegram 自动推送提醒设置 */}
-      <ServerExpirySettingsCard />
-
       {/* Telegram 双向交互运维机器人卡片 */}
       <Card className="p-5 bg-card/60">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -3974,136 +3688,6 @@ function Notify({ nodes, refresh }: { nodes: Node[]; refresh: () => void }) {
             <div className="font-mono font-semibold text-sky-600 dark:text-sky-400">/nodes</div>
             <div className="text-[11px] text-muted-foreground mt-0.5">查询各节点实时延迟与感知状态</div>
           </div>
-        </div>
-      </Card>
-    </div>
-  )
-}
-
-// The two ways into this panel, on their own page: the GitHub identity it trusts
-// and the password that works when GitHub does not.
-type Session = { id: string; current: boolean; created_at: number }
-
-function Sessions() {
-  const [rows, setRows] = useState<Session[] | null>(null)
-  const [busy, setBusy] = useState("")
-
-  const load = () => api<Session[]>("/sessions").then(setRows).catch((e: Error) => toast.error(e.message))
-  useEffect(() => { load() }, [])
-
-  async function remove(id: string) {
-    setBusy(id)
-    try {
-      await api(`/sessions/${id}`, { method: "DELETE" })
-      toast.success("已删除会话")
-      load()
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      setBusy("")
-    }
-  }
-
-  if (!rows) return null
-  return (
-    <Card className="gap-4 p-5">
-      <div>
-        <h3 className="text-sm font-medium">登录会话</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          每次登录一条，14 天后过期。删除后该设备下一次请求就被登出。
-        </p>
-      </div>
-      <div className="divide-y">
-        {rows.map((s) => (
-          <div key={s.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
-            <div className="flex min-w-0 items-center gap-2 text-sm">
-              <span className="tnum">{new Date(s.created_at * 1000).toLocaleString()}</span>
-              {s.current && <Badge variant="secondary">当前设备</Badge>}
-            </div>
-            {/* 当前会话没有删除按钮：右上角的退出登录做的就是这件事，而在这里删
-                只会让已经渲染好的面板以为自己还登着。 */}
-            {!s.current && (
-              <Button size="icon" variant="ghost" disabled={!!busy} onClick={() => remove(s.id)}>
-                <Trash2 />
-              </Button>
-            )}
-          </div>
-        ))}
-      </div>
-    </Card>
-  )
-}
-
-function Security({ site }: { site: string }) {
-  const { s, set, save } = useSettings()
-  const [password, setPassword] = useState("")
-  if (!s) return null
-  const callback = `${site}/api/auth/github/callback`
-
-  return (
-    <div className="space-y-4">
-      <Sessions />
-
-      <Card className="gap-4 p-5">
-        <div>
-          <h3 className="text-sm font-medium">GitHub 单点登录</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            OAuth App 回调地址 <code className="rounded bg-muted px-1">{callback}</code>
-          </p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Client ID">
-            <Input value={String(s.github_client_id ?? "")} onChange={(e) => set("github_client_id", e.target.value)} />
-          </Field>
-          <Field label="Client Secret" hint={s.github_secret_set ? "已设置，留空不变" : "未设置"}>
-            <Input type="password" placeholder={s.github_secret_set ? "••••••••" : ""} onChange={(e) => set("github_client_secret", e.target.value)} />
-          </Field>
-        </div>
-        {String(s.github_client_id ?? "") !== "" && String(s.github_allowed_users ?? "").trim() === "" && (
-          <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            白名单为空，GitHub 登录拒绝所有人。填入用户名并保存后生效。
-          </p>
-        )}
-        <Field label="允许登录的 GitHub 用户名" hint="逗号分隔。留空 = 拒绝所有人，不是放行所有人">
-          <Input value={String(s.github_allowed_users ?? "")} onChange={(e) => set("github_allowed_users", e.target.value)} placeholder="GitHub 用户名" />
-        </Field>
-        <div>
-          <Button
-            size="sm"
-            onClick={() => {
-              const patch: Record<string, string> = {
-                github_client_id: String(s.github_client_id ?? ""),
-                github_allowed_users: String(s.github_allowed_users ?? ""),
-              }
-              if (typeof s.github_client_secret === "string" && s.github_client_secret) {
-                patch.github_client_secret = s.github_client_secret
-              }
-              save(patch)
-            }}
-          >
-            保存 GitHub 设置
-          </Button>
-        </div>
-      </Card>
-
-      <Card className="gap-4 p-5">
-        <div>
-          <h3 className="text-sm font-medium">应急密码</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            GitHub 不可用时的备用入口。修改后其它设备登录立即失效，当前设备不受影响。
-          </p>
-        </div>
-        <Field label="新密码" hint="至少 12 位">
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-        </Field>
-        <div>
-          <Button
-            size="sm"
-            disabled={password.length < 12}
-            onClick={() => save({ admin_password: password }).then(() => setPassword(""))}
-          >
-            修改密码
-          </Button>
         </div>
       </Card>
     </div>
@@ -4545,7 +4129,6 @@ const ADMIN_SECTIONS = [
   { path: "/admin/announcements", label: "公告通知", icon: Megaphone },
   { path: "/admin/rules", label: "规则配置", icon: SlidersHorizontal },
   { path: "/admin/notify", label: "通知", icon: Bell },
-  { path: "/admin/security", label: "安全", icon: Shield },
   { path: "/admin/settings", label: "设置", icon: Settings },
 ] as const
 
@@ -4658,8 +4241,6 @@ export function Admin({
           <ProxyRules />
         ) : path.endsWith("/notify") ? (
           <Notify nodes={nodes} refresh={refresh} />
-        ) : path.endsWith("/security") ? (
-          <Security site={site} />
         ) : path.endsWith("/settings") ? (
           <SettingsTab updateInfo={updateInfo} onOpenUpdateDialog={onOpenUpdateDialog} probeUrl={probeUrl} onProbeUrlChange={onProbeUrlChange} />
         ) : (

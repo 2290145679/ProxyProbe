@@ -976,13 +976,13 @@ export function UserDashboard({
                 </div>
               </div>
 
-              {tiers.length === 0 ? (
+              {tiers.filter((t) => t.is_active === 1).length === 0 ? (
                 <div className="py-12 text-center text-xs text-muted-foreground">
-                  管理员暂未配置套餐价格，请联系客服获取订阅支持。
+                  当前暂未开放套餐购买，如需升级服务请联系管理员。
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
-                  {tiers.map((t) => {
+                  {tiers.filter((t) => t.is_active === 1).map((t) => {
                     const isCurrent = (user.vip_level || "VIP1").toLowerCase() === (t.tier_key || "").toLowerCase()
                     const mPrice = t.price_monthly ?? 0
                     const qPrice = t.price_quarterly ?? (mPrice ? mPrice * 3 * 0.9 : 0)

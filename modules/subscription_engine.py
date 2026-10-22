@@ -72,7 +72,7 @@ def format_node_link(node, user=None, server_country_map=None):
         proto = node.get("protocol") or ""
         uuid_str = node.get("uuid") or ""
         pwd_str = node.get("password") or uuid_str
-        if user:
+        if user and not node.get("is_imported"):
             u_uuid, u_pwd = ensure_user_credentials(user)
             uuid_str = u_uuid
             if proto != "ss2022":
@@ -137,7 +137,7 @@ def format_node_link(node, user=None, server_country_map=None):
 
         elif proto == "socks5":
             uname = (node.get("username") or "").strip()
-            if user:
+            if user and not node.get("is_imported"):
                 uname = user.get("username", "")
             if uname:
                 return f"socks5://{quote(uname)}:{quote(pwd_str)}@{uri_host}:{port}#{name}"
@@ -580,7 +580,7 @@ rules:
         port = int(n.get("port") or 20443)
         uuid_str = n.get("uuid") or ""
         pwd_str = n.get("password") or uuid_str
-        if user:
+        if user and not n.get("is_imported"):
             u_uuid, u_pwd = ensure_user_credentials(user)
             uuid_str = u_uuid
             if proto != "ss2022":
@@ -919,7 +919,7 @@ def generate_singbox_client_config(nodes, user=None, warning_msg=None, server_co
         port = int(n.get("port") or 20443)
         uuid_str = n.get("uuid") or ""
         pwd_str = n.get("password") or uuid_str
-        if user:
+        if user and not n.get("is_imported"):
             u_uuid, u_pwd = ensure_user_credentials(user)
             uuid_str = u_uuid
             if proto != "ss2022":
